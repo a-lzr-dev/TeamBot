@@ -1,0 +1,143 @@
+from telethon import TelegramClient, events
+from telethon.tl.types import MessageActionChatAddUser
+
+from ....core.converters import (
+    chat_type_from_telethon,
+    chat_type_to_str,
+    user_info_from_telethon,
+)
+from ....db.managers import db_manager
+from ....db.repositories.chats import ChatRepository
+from ....db.repositories.users import UserRepository
+from ....exceptions import log_exceptions
+from ....logger import tg_logger
+from ....models import ChatMemberStatus
+
+
+@log_exceptions(tg_logger)
+async def handle_chat_action(event: events.ChatAction.Event, client: TelegramClient) -> None:
+    """Обработка действий в чате (присоединение/выход участников)"""
+    # Игнорирование действий нашего бота
+    try:
+        me = await client.get_me()
+        if event.user_id == me.id:
+            return
+    except Exception as err:
+        tg_logger.warning(f"⚠️ Failed to get me: {err}")
+        return
+
+    tg_logger.debug(f"🔄 Chat action in {event.chat_id}: {event}")
+
+    async with db_manager.get_session() as session:
+        try:
+            # Получение информации о пользователе
+            try:
+                user = await client.get_entity(event.user_id)
+                user_info = user_info_from_telethon(user)
+
+                await UserRepository.save_user(
+                    session=session,
+                    user_id=user_info["user_id"],
+                    is_bot=user_info["is_bot"],
+                    first_name=user_info["first_name"],
+                    last_name=user_info["last_name"],
+                    username=user_info["username"],
+                )
+            except Exception as err:
+                tg_logger.warning(f"⚠️ Failed to get user {event.user_id}: {err}")
+                return
+
+            # Получение информации о чате
+            try:
+                chat = await client.get_entity(event.chat_id)
+                chat_type = chat_type_from_telethon(chat)
+
+                await ChatRepository.save_chat(
+                    session=session,
+                    chat_id=chat.id,
+                    chat_type=chat_type_to_str(chat_type),
+                    title=getattr(chat, "title", None),
+                    is_active=True,
+                )
+            except Exception as err:
+                tg_logger.warning(f"⚠️ Failed to get chat {event.chat_id}: {err}")
+                return
+
+            # Обработка разных типов действий
+            if event.user_joined:
+                # Присоединение пользователя к чату
+                tg_logger.info(f"👤 User {event.user_id} joined chat {event.chat_id}")
+
+                await ChatRepository.save_chat_member(
+                    session=session,
+                    user_id=event.user_id,
+                    chat_id=event.chat_id,
+                    status=ChatMemberStatus.MEMBER.value,
+                    is_active=True,
+                )
+
+                # Отправка приветствия
+                try:
+                    await client.send_message(
+                        event.chat_id, f"👋 Добро пожаловать, {user_info['first_name'] or 'пользователь'}!"
+                    )
+                except Exception as err:
+                    tg_logger.warning(f"⚠️ Failed to send welcome message: {err}")
+
+            elif event.user_left:
+                # Выход пользователя из чата
+                tg_logger.info(f"👤 User {event.user_id} left chat {event.chat_id}")
+
+                await ChatRepository.remove_chat_member(session=session, user_id=event.user_id, chat_id=event.chat_id)
+
+            elif event.user_kicked:
+                # Удаление пользователя из чата
+                tg_logger.info(f"👤 User {event.user_id} kicked from chat {event.chat_id}")
+
+                await ChatRepository.remove_chat_member(session=session, user_id=event.user_id, chat_id=event.chat_id)
+
+            elif hasattr(event, "action") and isinstance(event.action, MessageActionChatAddUser):
+                # Добавление нескольких пользователей в чат
+                for user_id in event.action.users:
+                    try:
+                        user = await client.get_entity(user_id)
+                        user_info = user_info_from_telethon(user)
+
+                        if user_info["user_id"] != me.id:
+                            await UserRepository.save_user(
+                                session=session,
+                                user_id=user_info["user_id"],
+                                is_bot=user_info["is_bot"],
+                                first_name=user_info["first_name"],
+                                last_name=user_info["last_name"],
+                                username=user_info["username"],
+                            )
+
+                            await ChatRepository.save_chat_member(
+                                session=session,
+                                user_id=user_info["user_id"],
+                                chat_id=event.chat_id,
+                                status=ChatMemberStatus.MEMBER.value,
+                                is_active=True,
+                            )
+                    except Exception as err:
+                        tg_logger.warning(f"⚠️ Failed to process added user {user_id}: {err}")
+
+            await session.commit()
+            tg_logger.debug(f"✅ Chat action processed for {event.chat_id}")
+
+        except Exception as err:
+            tg_logger.error(f"❌ Failed to handle chat action: {err}", exc_info=True)
+            await session.rollback()
+
+
+@log_exceptions(tg_logger)
+async def handle_user_update(event: events.UserUpdate.Event) -> None:
+    """Обработка обновлений пользователя (статус, активность)"""
+    tg_logger.debug(f"🔄 User update: {event.user_id}")
+
+
+__all__ = [
+    "handle_chat_action",
+    "handle_user_update",
+]
