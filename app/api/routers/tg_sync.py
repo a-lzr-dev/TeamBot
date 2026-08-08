@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import db_manager
+from ...api.dependencies import get_session
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ChatType
@@ -64,13 +64,34 @@ class SyncAllChatsResponse(BaseModel):
     timestamp: str = Field(..., description="Время синхронизации")
 
 
+class SyncStatusResponse(BaseModel):
+    """Модель ответа для статуса синхронизации"""
+
+    success: bool = Field(..., description="Успешность операции")
+    last_sync: str | None = Field(None, description="Время последней синхронизации")
+    total_syncs: int = Field(0, description="Всего синхронизаций")
+    failed_syncs: int = Field(0, description="Неудачных синхронизаций")
+    total_chats_synced: int = Field(0, description="Всего синхронизировано чатов")
+    total_members_synced: int = Field(0, description="Всего синхронизировано участников")
+    cache_size: int = Field(0, description="Размер кеша")
+    is_syncing: bool = Field(False, description="Идет ли синхронизация")
+    timestamp: str = Field(..., description="Время запроса")
+
+
+class ClearCacheResponse(BaseModel):
+    """Модель ответа для очистки кеша"""
+
+    success: bool = Field(..., description="Успешность операции")
+    message: str = Field(..., description="Сообщение о результате")
+    timestamp: str = Field(..., description="Время операции")
+
+
 # ============ Вспомогательные функции ============
 
 
 async def get_telegram_manager() -> Any:
     """Получение экземпляра TelegramManager"""
     try:
-        # Ленивый импорт внутри функции для избежания циклических зависимостей
         from ...tg import tg_manager
 
         status = await tg_manager.get_status()
@@ -84,10 +105,48 @@ async def get_telegram_manager() -> Any:
         raise HTTPException(status_code=503, detail="Telegram service unavailable") from e
 
 
-async def get_db_session() -> Any:
-    """Получение сессии БД"""
-    async with db_manager.get_session() as session:
-        yield session
+async def check_telethon_availability(tg_manager: Any) -> None:
+    """
+    Проверка доступности Telethon клиента.
+
+    Args:
+        tg_manager: Экземпляр TelegramManager
+
+    Raises:
+        HTTPException: Если Telethon клиент недоступен
+    """
+    status = await tg_manager.get_status()
+    telethon_status = status.get("telethon", {})
+
+    if not telethon_status.get("connected", False):
+        raise HTTPException(
+            status_code=503, detail="Telegram client not available. Telethon client is required for sync."
+        )
+
+
+async def check_account_type(tg_manager: Any) -> str:
+    """
+    Проверка типа аккаунта.
+
+    Args:
+        tg_manager: Экземпляр TelegramManager
+
+    Returns:
+        str: Тип аккаунта
+
+    Raises:
+        HTTPException: Если аккаунт бот
+    """
+    status = await tg_manager.get_status()
+    account_type = status.get("account_type", "unknown")
+    account_type_str: str = str(account_type) if account_type is not None else "unknown"
+
+    if account_type_str == "bot":
+        raise HTTPException(
+            status_code=400, detail="Cannot sync all chats with bot account. Use /sync/chat for individual chats."
+        )
+
+    return account_type_str
 
 
 # ============ ЭНДПОИНТЫ СИНХРОНИЗАЦИИ ============
@@ -102,23 +161,16 @@ async def get_db_session() -> Any:
 @log_exceptions(api_logger)
 async def sync_chat(
     request: SyncChatRequest,
-    session: AsyncSession = Depends(get_db_session),
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Синхронизация участников конкретного чата"""
     api_logger.info(f"🔄 Syncing chat {request.chat_id} (force={request.force})")
 
     try:
-        # Ленивый импорт внутри функции
         from ...tg import tg_manager
 
         # Проверка доступности клиента
-        status = await tg_manager.get_status()
-        telethon_status = status.get("telethon", {})
-
-        if not telethon_status.get("connected", False):
-            raise HTTPException(
-                status_code=503, detail="Telegram client not available. Telethon client is required for sync."
-            )
+        await check_telethon_availability(tg_manager)
 
         # Синхронизация чата
         result = await tg_manager.sync_chat(chat_id=request.chat_id, session=session, force=request.force)
@@ -128,17 +180,17 @@ async def sync_chat(
 
             return JSONResponse(
                 status_code=200,
-                content={
-                    "success": True,
-                    "chat_id": request.chat_id,
-                    "processed": result.get("processed", 0),
-                    "added": result.get("added", 0),
-                    "deactivated": result.get("deactivated", 0),
-                    "errors": result.get("errors", 0),
-                    "from_cache": result.get("from_cache", False),
-                    "message": f"Chat {request.chat_id} synced successfully",
-                    "timestamp": get_timestamp(),
-                },
+                content=SyncChatResponse(
+                    success=True,
+                    chat_id=request.chat_id,
+                    processed=result.get("processed", 0),
+                    added=result.get("added", 0),
+                    deactivated=result.get("deactivated", 0),
+                    errors=result.get("errors", 0),
+                    from_cache=result.get("from_cache", False),
+                    message=f"Chat {request.chat_id} synced successfully",
+                    timestamp=get_timestamp(),
+                ).model_dump(),
             )
         else:
             error_msg = result.get("error", "Unknown error")
@@ -146,17 +198,17 @@ async def sync_chat(
 
             return JSONResponse(
                 status_code=500,
-                content={
-                    "success": False,
-                    "chat_id": request.chat_id,
-                    "processed": result.get("processed", 0),
-                    "added": 0,
-                    "deactivated": 0,
-                    "errors": 1,
-                    "from_cache": False,
-                    "message": f"Failed to sync chat: {error_msg}",
-                    "timestamp": get_timestamp(),
-                },
+                content=SyncChatResponse(
+                    success=False,
+                    chat_id=request.chat_id,
+                    processed=result.get("processed", 0),
+                    added=0,
+                    deactivated=0,
+                    errors=1,
+                    from_cache=False,
+                    message=f"Failed to sync chat: {error_msg}",
+                    timestamp=get_timestamp(),
+                ).model_dump(),
             )
 
     except HTTPException:
@@ -165,17 +217,17 @@ async def sync_chat(
         api_logger.error(f"❌ Failed to sync chat {request.chat_id}: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={
-                "success": False,
-                "chat_id": request.chat_id,
-                "processed": 0,
-                "added": 0,
-                "deactivated": 0,
-                "errors": 1,
-                "from_cache": False,
-                "message": f"Internal error: {str(e)}",
-                "timestamp": get_timestamp(),
-            },
+            content=SyncChatResponse(
+                success=False,
+                chat_id=request.chat_id,
+                processed=0,
+                added=0,
+                deactivated=0,
+                errors=1,
+                from_cache=False,
+                message=f"Internal error: {str(e)}",
+                timestamp=get_timestamp(),
+            ).model_dump(),
         )
 
 
@@ -201,20 +253,10 @@ async def sync_all_chats(
         from ...tg import tg_manager
 
         # Проверка доступности клиента
-        status = await tg_manager.get_status()
-        telethon_status = status.get("telethon", {})
-
-        if not telethon_status.get("connected", False):
-            raise HTTPException(
-                status_code=503, detail="Telegram client not available. Telethon client is required for sync."
-            )
+        await check_telethon_availability(tg_manager)
 
         # Проверка типа аккаунта
-        account_type = status.get("account_type", "unknown")
-        if account_type == "bot":
-            raise HTTPException(
-                status_code=400, detail="Cannot sync all chats with bot account. Use /sync/chat for individual chats."
-            )
+        await check_account_type(tg_manager)
 
         # Преобразование ChatType в строку
         chat_types_str = None
@@ -229,23 +271,28 @@ async def sync_all_chats(
         if result.get("success", False):
             api_logger.info("✅ All chats synced successfully")
 
+            processed = result.get("processed", {})
+            added = result.get("added", {})
+            deactivated = result.get("deactivated", {})
+            errors = result.get("errors", {})
+
             return JSONResponse(
                 status_code=200,
-                content={
-                    "success": True,
-                    "message": "All chats synced successfully",
-                    "processed_chats": result.get("processed", {}).get("chats", 0),
-                    "processed_members": result.get("processed", {}).get("members", 0),
-                    "added_chats": result.get("added", {}).get("chats", 0),
-                    "added_members": result.get("added", {}).get("members", 0),
-                    "deactivated_chats": result.get("deactivated", {}).get("chats", 0),
-                    "deactivated_members": result.get("deactivated", {}).get("members", 0),
-                    "errors_chats": result.get("errors", {}).get("chats", 0),
-                    "errors_members": result.get("errors", {}).get("members", 0),
-                    "skipped": result.get("skipped", 0),
-                    "duration_seconds": result.get("duration_seconds"),
-                    "timestamp": get_timestamp(),
-                },
+                content=SyncAllChatsResponse(
+                    success=True,
+                    message="All chats synced successfully",
+                    processed_chats=processed.get("chats", 0),
+                    processed_members=processed.get("members", 0),
+                    added_chats=added.get("chats", 0),
+                    added_members=added.get("members", 0),
+                    deactivated_chats=deactivated.get("chats", 0),
+                    deactivated_members=deactivated.get("members", 0),
+                    errors_chats=errors.get("chats", 0),
+                    errors_members=errors.get("members", 0),
+                    skipped=result.get("skipped", 0),
+                    duration_seconds=result.get("duration_seconds"),
+                    timestamp=get_timestamp(),
+                ).model_dump(),
             )
         else:
             error_msg = result.get("error", "Unknown error")
@@ -253,21 +300,21 @@ async def sync_all_chats(
 
             return JSONResponse(
                 status_code=500,
-                content={
-                    "success": False,
-                    "message": f"Failed to sync all chats: {error_msg}",
-                    "processed_chats": 0,
-                    "processed_members": 0,
-                    "added_chats": 0,
-                    "added_members": 0,
-                    "deactivated_chats": 0,
-                    "deactivated_members": 0,
-                    "errors_chats": 1,
-                    "errors_members": 0,
-                    "skipped": 0,
-                    "duration_seconds": None,
-                    "timestamp": get_timestamp(),
-                },
+                content=SyncAllChatsResponse(
+                    success=False,
+                    message=f"Failed to sync all chats: {error_msg}",
+                    processed_chats=0,
+                    processed_members=0,
+                    added_chats=0,
+                    added_members=0,
+                    deactivated_chats=0,
+                    deactivated_members=0,
+                    errors_chats=1,
+                    errors_members=0,
+                    skipped=0,
+                    duration_seconds=None,
+                    timestamp=get_timestamp(),
+                ).model_dump(),
             )
 
     except HTTPException:
@@ -276,21 +323,21 @@ async def sync_all_chats(
         api_logger.error(f"❌ Failed to sync all chats: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={
-                "success": False,
-                "message": f"Internal error: {str(e)}",
-                "processed_chats": 0,
-                "processed_members": 0,
-                "added_chats": 0,
-                "added_members": 0,
-                "deactivated_chats": 0,
-                "deactivated_members": 0,
-                "errors_chats": 1,
-                "errors_members": 0,
-                "skipped": 0,
-                "duration_seconds": None,
-                "timestamp": get_timestamp(),
-            },
+            content=SyncAllChatsResponse(
+                success=False,
+                message=f"Internal error: {str(e)}",
+                processed_chats=0,
+                processed_members=0,
+                added_chats=0,
+                added_members=0,
+                deactivated_chats=0,
+                deactivated_members=0,
+                errors_chats=1,
+                errors_members=0,
+                skipped=0,
+                duration_seconds=None,
+                timestamp=get_timestamp(),
+            ).model_dump(),
         )
 
 
@@ -301,7 +348,6 @@ async def get_sync_status() -> JSONResponse:
     api_logger.info("📊 Getting sync status...")
 
     try:
-        # Ленивый импорт внутри функции
         from ...tg import tg_manager
 
         status = await tg_manager.get_status()
@@ -309,17 +355,17 @@ async def get_sync_status() -> JSONResponse:
 
         return JSONResponse(
             status_code=200,
-            content={
-                "success": True,
-                "last_sync": sync_status.get("last_sync"),
-                "total_syncs": sync_status.get("metrics", {}).get("total_syncs", 0),
-                "failed_syncs": sync_status.get("metrics", {}).get("failed_syncs", 0),
-                "total_chats_synced": sync_status.get("metrics", {}).get("total_chats_synced", 0),
-                "total_members_synced": sync_status.get("metrics", {}).get("total_members_synced", 0),
-                "cache_size": sync_status.get("cache_size", 0),
-                "is_syncing": False,
-                "timestamp": get_timestamp(),
-            },
+            content=SyncStatusResponse(
+                success=True,
+                last_sync=sync_status.get("last_sync"),
+                total_syncs=sync_status.get("metrics", {}).get("total_syncs", 0),
+                failed_syncs=sync_status.get("metrics", {}).get("failed_syncs", 0),
+                total_chats_synced=sync_status.get("metrics", {}).get("total_chats_synced", 0),
+                total_members_synced=sync_status.get("metrics", {}).get("total_members_synced", 0),
+                cache_size=sync_status.get("cache_size", 0),
+                is_syncing=False,
+                timestamp=get_timestamp(),
+            ).model_dump(),
         )
 
     except Exception as e:
@@ -338,18 +384,17 @@ async def clear_sync_cache(chat_id: int | None = None) -> JSONResponse:
     api_logger.info(f"🧹 Clearing sync cache (chat_id={chat_id or 'all'})")
 
     try:
-        # Ленивый импорт внутри функции
         from ...tg import tg_manager
 
         await tg_manager.clear_sync_cache(chat_id)
 
         return JSONResponse(
             status_code=200,
-            content={
-                "success": True,
-                "message": f"Cache cleared for {chat_id if chat_id else 'all chats'}",
-                "timestamp": get_timestamp(),
-            },
+            content=ClearCacheResponse(
+                success=True,
+                message=f"Cache cleared for {chat_id if chat_id else 'all chats'}",
+                timestamp=get_timestamp(),
+            ).model_dump(),
         )
 
     except Exception as e:
@@ -359,4 +404,10 @@ async def clear_sync_cache(chat_id: int | None = None) -> JSONResponse:
 
 __all__ = [
     "router",
+    "SyncChatRequest",
+    "SyncChatResponse",
+    "SyncAllChatsRequest",
+    "SyncAllChatsResponse",
+    "SyncStatusResponse",
+    "ClearCacheResponse",
 ]

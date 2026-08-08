@@ -4,15 +4,14 @@ from typing import TYPE_CHECKING
 from aiogram.enums import ContentType
 from telethon import TelegramClient, events
 
-from .... import settings
+from ....config import settings
 from ....core.converters import chat_type_from_telethon, user_info_from_telethon
-from ....db.managers import db_manager
-from ....db.repositories import UserRepository
+from ....db.manager import db_manager
+from ....db.repositories import ChatRepository, MessageRepository, UserRepository
 from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import (
     ChatMessageModel,
-    ChatModel,
     ErrorCategory,
     MessageSource,
     MessageType,
@@ -59,8 +58,8 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
     chat_created = False
     async with db_manager.get_session() as session:
         try:
-            # Проверка существования чата
-            existing_chat = await session.get(ChatModel, message.chat_id)
+            # Проверка существования чата через репозиторий
+            existing_chat = await ChatRepository.get_chat_by_id(session, message.chat_id)
 
             if existing_chat is None:
                 tg_logger.info(f"🆕 Creating new chat {message.chat_id} in database")
@@ -69,12 +68,17 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                 chat_entity = await client.get_entity(message.chat_id)
                 chat_type = chat_type_from_telethon(chat_entity)
 
-                chat = ChatModel(
-                    FID=message.chat_id, FTitle=getattr(chat_entity, "title", None), FType=chat_type, FFlagActive=True
-                )
-                session.add(chat)
+                # Создание чата через репозиторий
+                from ....core.converters import chat_type_to_str
 
-                await session.commit()
+                await ChatRepository.save_chat(
+                    session=session,
+                    chat_id=message.chat_id,
+                    chat_type=chat_type_to_str(chat_type),
+                    title=getattr(chat_entity, "title", None),
+                    is_active=True,
+                )
+
                 chat_created = True
                 tg_logger.debug(f"✅ Chat {message.chat_id} created and committed")
             else:
@@ -110,14 +114,16 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                 tg_logger.debug(f"ℹ️ Skipping sender save for non-user ID: {user_id}")
                 user_id = None
 
-            # Проверка, не удалено ли уже сообщение
-            existing_message = await session.get(ChatMessageModel, message.id)
+            # Проверка существования сообщения через репозиторий
+            existing_message = await MessageRepository.get_message_by_id(session, message.id)
             if existing_message:
                 if existing_message.FFlagDeleted:
                     tg_logger.debug(f"⏭️ Message {message.id} already marked as deleted, skipping")
                     return
-                # Обновление существующего сообщения (например, если было отредактировано)
-                existing_message.FText = message.text or getattr(message, "caption", None) or ""
+
+                # Обновление существующего сообщения
+                message_text = message.text or getattr(message, "caption", None) or ""
+                existing_message.FText = message_text
                 existing_message.FDateEdited = message.edit_date.replace(tzinfo=None) if message.edit_date else None
                 await session.commit()
                 tg_logger.debug(f"✅ Message {message.id} updated in database")
@@ -208,6 +214,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                     "sender_id": message.sender_id,
                     "is_valid_user": is_valid_user,
                 },
+                session=session,
             )
 
 
@@ -223,7 +230,8 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
 
     async with db_manager.get_session() as session:
         try:
-            db_message = await session.get(ChatMessageModel, message.id)
+            # Получение сообщения через репозиторий
+            db_message = await MessageRepository.get_message_by_id(session, message.id)
 
             if db_message:
                 # Не обновляем удаленные сообщения
@@ -259,6 +267,7 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
                 message_id=message.id,
                 category=ErrorCategory.TASK_EXECUTION,
                 context={"event_type": "edited_message"},
+                session=session,
             )
 
 
@@ -274,7 +283,7 @@ async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
         try:
             # Определение, какое сообщение вызвало удаление
             deleted_by_message_id = None
-            deleted_by_type = None
+            deleted_by_type = "system"
 
             # Попытка определения, что вызвало удаление
             if hasattr(event, "action") and event.action:
@@ -283,12 +292,11 @@ async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
                     deleted_by_type = "user"
                 elif hasattr(event.action, "by_id"):
                     deleted_by_type = "admin"
-            else:
-                deleted_by_type = "system"
 
             deleted_count = 0
             for msg_id in event.deleted_ids:
-                db_message = await session.get(ChatMessageModel, msg_id)
+                # Получение сообщения через репозиторий
+                db_message = await MessageRepository.get_message_by_id(session, msg_id)
                 if db_message and not db_message.FFlagDeleted:
                     db_message.FFlagDeleted = True
                     db_message.FDateDeleted = datetime_now()
@@ -316,6 +324,7 @@ async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
                     "message_ids": event.deleted_ids[:10],
                     "deleted_count": len(event.deleted_ids),
                 },
+                session=session,
             )
 
 

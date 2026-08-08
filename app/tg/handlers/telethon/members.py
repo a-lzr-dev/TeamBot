@@ -6,7 +6,7 @@ from ....core.converters import (
     chat_type_to_str,
     user_info_from_telethon,
 )
-from ....db.managers import db_manager
+from ....db.manager import db_manager
 from ....db.repositories.chats import ChatRepository
 from ....db.repositories.users import UserRepository
 from ....exceptions import log_exceptions

@@ -1,17 +1,17 @@
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import settings
-from ...db import db_manager
+from ...config import settings
+from ...db.repositories.users import UserRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
-from ...models import UserModel
 from ...services.automation_service import automation_service
 from ...utils.datetime import get_timestamp
+from ..dependencies import get_session
 
 router = APIRouter(prefix="/automation", tags=["Automation"])
 
@@ -66,18 +66,6 @@ class RequestStatusResponse(BaseModel):
     count: int = Field(0, description="Количество заявок")
     error: str | None = Field(None, description="Сообщение об ошибке")
     timestamp: str = Field(..., description="Время операции")
-
-
-# ============ Вспомогательные функции ============
-
-
-async def get_user(user_id: int) -> UserModel | None:
-    """Получение пользователя из БД"""
-    async with db_manager.get_session() as session:
-        stmt = select(UserModel).where(UserModel.FID == user_id)
-        result = await session.execute(stmt)
-        user: UserModel | None = result.scalar_one_or_none()
-        return user
 
 
 # ============ ЭНДПОИНТЫ ============
@@ -253,7 +241,10 @@ async def convert_doc_to_pdf_base64(request: ConvertDocRequest) -> JSONResponse:
     description="Создает новую заявку на автоматизацию",
 )
 @log_exceptions(api_logger)
-async def create_automation_request(request: AutomationRequest) -> JSONResponse:
+async def create_automation_request(
+    request: AutomationRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """
     Создание заявки на автоматизацию
     """
@@ -264,8 +255,8 @@ async def create_automation_request(request: AutomationRequest) -> JSONResponse:
     if request.priority not in valid_priorities:
         raise HTTPException(status_code=400, detail=f"Неверный приоритет. Допустимые: {', '.join(valid_priorities)}")
 
-    # Проверка пользователя
-    user = await get_user(request.user_id)
+    # Проверка пользователя через репозиторий
+    user = await UserRepository.get_user_by_id(session, request.user_id)
     if not user:
         return JSONResponse(
             status_code=404,
@@ -284,6 +275,7 @@ async def create_automation_request(request: AutomationRequest) -> JSONResponse:
             description=request.description,
             priority=request.priority,
             chat_id=request.chat_id,
+            session=session,
         )
 
         if not result["success"]:
@@ -318,7 +310,10 @@ async def create_automation_request(request: AutomationRequest) -> JSONResponse:
     description="Возвращает список заявок на автоматизацию",
 )
 @log_exceptions(api_logger)
-async def get_automation_requests(user_id: int | None = None, status: str | None = None) -> JSONResponse:
+async def get_automation_requests(
+    user_id: int | None = None,
+    status: str | None = None,
+) -> JSONResponse:
     """
     Получение списка заявок
     """
@@ -350,7 +345,11 @@ async def get_automation_requests(user_id: int | None = None, status: str | None
     description="Обновляет статус заявки на автоматизацию",
 )
 @log_exceptions(api_logger)
-async def update_request_status(request_id: int, status: str, note: str | None = None) -> JSONResponse:
+async def update_request_status(
+    request_id: int,
+    status: str,
+    note: str | None = None,
+) -> JSONResponse:
     """
     Обновление статуса заявки
     """
@@ -378,3 +377,13 @@ async def update_request_status(request_id: int, status: str, note: str | None =
             status_code=500,
             content={"success": False, "error": f"Ошибка обновления: {str(e)}", "timestamp": get_timestamp()},
         )
+
+
+__all__ = [
+    "router",
+    "ConvertDocRequest",
+    "ConvertDocResponse",
+    "AutomationRequest",
+    "AutomationRequestResponse",
+    "RequestStatusResponse",
+]

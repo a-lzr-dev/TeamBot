@@ -1,20 +1,10 @@
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from ...logger import tg_logger
 from .base import BaseCallbackHandler, CallbackHandler
-
-if TYPE_CHECKING:
-    from ...tg import TelegramManager
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ...tg import tg_manager
-
-    return tg_manager
 
 
 class AdminCallbackHandler(BaseCallbackHandler):

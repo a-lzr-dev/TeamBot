@@ -1,6 +1,6 @@
 import re
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -14,10 +14,8 @@ from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import ErrorCategory, MessageActionType, MessageType, datetime_now
 from ....services.error_service import error_service
+from ....tg.dependencies import get_tg_manager
 from ...keyboards import AuthKeyboard
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
 
 router = Router(name="aiogram_auth")
 
@@ -31,13 +29,6 @@ class AuthStates(StatesGroup):
 
 # Хранилище для временного хранения данных авторизации
 _auth_cache: dict[int, dict[str, Any]] = {}
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
 
 
 async def is_user_authenticated(user_id: int) -> bool:
@@ -291,7 +282,12 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     except Exception as e:
         tg_logger.error(f"❌ Authentication error: {e}", exc_info=True)
 
-        await error_service.log_error(error=e, component="auth", category=ErrorCategory.SYSTEM)
+        await error_service.log_error(
+            error=e,
+            component="auth",
+            category=ErrorCategory.SYSTEM,
+            session=session,
+        )
 
         await tg_manager.send_answer(
             text="❌ Произошла ошибка при авторизации.\n\n"

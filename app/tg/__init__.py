@@ -1,6 +1,4 @@
 from ..utils.datetime import get_timestamp
-
-# Новые экспорты из callbacks
 from .callbacks import (
     ActionCallbackHandler,
     AdminCallbackHandler,
@@ -28,8 +26,6 @@ from .handlers.aiogram import (
 from .handlers.telethon import (
     setup_telethon_handlers,
 )
-
-# Новые экспорты из keyboards
 from .keyboards import (
     BUTTONS_PER_ROW_ACTIONS,
     BUTTONS_PER_ROW_GROUPS,

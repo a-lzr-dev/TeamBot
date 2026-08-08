@@ -1,7 +1,7 @@
-from typing import TYPE_CHECKING
-
+from .api.dependencies import get_api_manager
 from .config import settings
 from .core.application import ApplicationManager, app_manager, get_app_manager
+from .db.dependencies import get_db_manager
 from .logger import admin_logger, api_logger, app_logger, db_logger, logger_setup, tg_logger
 from .services import (
     ErrorService,
@@ -11,33 +11,7 @@ from .services import (
     notification_service,
     reminder_service,
 )
-
-if TYPE_CHECKING:
-    from .api import APIManager
-    from .db import DatabaseManager
-    from .tg import TelegramManager
-
-
-def get_db_manager() -> "DatabaseManager":
-    """Ленивая загрузка менеджера БД"""
-    from .db.managers import db_manager
-
-    return db_manager
-
-
-def get_api_manager() -> "APIManager":
-    """Ленивая загрузка менеджера API"""
-    from .api import api_manager
-
-    return api_manager
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Ленивая загрузка менеджера Telegram"""
-    from .tg import tg_manager
-
-    return tg_manager
-
+from .tg.dependencies import get_tg_manager
 
 __all__ = [
     # Логеры

@@ -1,5 +1,3 @@
-from typing import TYPE_CHECKING
-
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -11,18 +9,9 @@ from ....db import db_manager
 from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import ChatMemberModel, ChatModel, MessageActionType, MessageType, UserModel
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
+from ....tg.dependencies import get_tg_manager
 
 router = Router(name="aiogram_commands")
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
 
 
 @router.message(Command("help"))

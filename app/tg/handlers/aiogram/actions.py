@@ -1,12 +1,11 @@
 import contextlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-from sqlalchemy import text
 
 from ....config import settings
 from ....db import AvanpostRepository, db_manager
@@ -14,11 +13,9 @@ from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import ErrorCategory, MessageActionType, MessageType
 from ....services import error_service
+from ....tg.dependencies import get_tg_manager
 from ...keyboards import ActionKeyboard
 from .auth import get_user_group_id, is_user_authenticated
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
 
 router = Router(name="aiogram_actions")
 
@@ -27,34 +24,6 @@ class ActionStates(StatesGroup):
     """Состояния для работы с действиями"""
 
     viewing_menu = State()
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
-
-
-# ============ ФУНКЦИИ ДЛЯ РАБОТЫ С БД ============
-
-
-async def create_chat_actions_table() -> None:
-    """Создание таблицы для хранения сообщений бота (если не существует)"""
-    try:
-        async with db_manager.get_session() as session:
-            from sqlalchemy import text
-
-            try:
-                await session.execute(text("SELECT 1 FROM TChatsActions LIMIT 1"))
-                tg_logger.debug("ℹ️ Table TChatsActions already exists")
-            except Exception:
-                from ....models import BaseModel
-
-                await session.run_sync(BaseModel.metadata.create_all)
-                tg_logger.info("✅ Table TChatsActions created successfully")
-    except Exception as e:
-        tg_logger.error(f"❌ Failed to create TChatsActions table: {e}", exc_info=True)
 
 
 # ============ ОБРАБОТЧИКИ ============
@@ -126,7 +95,13 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
 
             group_id = await get_user_group_id(user_id)
             if group_id:
-                has_children = await check_has_subitems(group_id, action_id)
+                # Используем репозиторий напрямую
+                async with db_manager.get_session("avanpost") as session:
+                    has_children = await AvanpostRepository.has_subitems(
+                        session=session,
+                        group_id=group_id,
+                        item_id=action_id,
+                    )
 
                 if has_children:
                     await tg_manager.send_toast(event=callback)
@@ -374,26 +349,6 @@ async def show_menu(
 # ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
 
 
-async def check_has_subitems(group_id: int, item_id: int) -> bool:
-    """Проверка, есть ли у пункта дочерние элементы"""
-    try:
-        async with db_manager.get_session("avanpost") as session:
-            sql = """
-                EXEC ext.PA_avp_RSAppScenariosGroupsItems_Load
-                    @GroupID = :group_id,
-                    @ParentItemID = :item_id
-            """
-
-            result = await session.execute(text(sql), {"group_id": group_id, "item_id": item_id})
-
-            rows = result.fetchall()
-            return len(rows) > 0
-
-    except Exception as e:
-        tg_logger.error(f"❌ Failed to check subitems: {e}", exc_info=True)
-        return False
-
-
 async def execute_action(callback: CallbackQuery, action_id: int, state: FSMContext) -> None:
     """
     Выполнение действия при выборе конечного пункта меню.
@@ -401,28 +356,32 @@ async def execute_action(callback: CallbackQuery, action_id: int, state: FSMCont
     """
     tg_manager = get_tg_manager()
     try:
-        # Получаем информацию о действии из БД
+        # Получаем group_id из состояния или из данных пользователя
+        state_data = await state.get_data()
+        group_id = state_data.get("group_id")
+
+        if not group_id:
+            # Если group_id нет в состоянии, пробуем получить из БД
+            group_id = await get_user_group_id(callback.from_user.id)
+
+        if not group_id:
+            await tg_manager.send_toast(text="❌ Не удалось определить группу действий", event=callback)
+            return
+
+        # Получаем информацию о действии
         action_info = None
-        try:
-            async with db_manager.get_session("avanpost") as session:
-                # Получаем все пункты меню для группы
-                # Используем group_id=1 или получаем из состояния
-                group_id = 1  # TODO: Получать из контекста пользователя
+        async with db_manager.get_session("avanpost") as session:
+            items = await AvanpostRepository.get_menu_items(
+                session=session,
+                group_id=group_id,
+                parent_item_id=None,
+            )
 
-                items = await AvanpostRepository.get_menu_items(
-                    session=session,
-                    group_id=group_id,
-                    parent_item_id=None,  # Получаем все пункты корневого меню
-                )
-
-                # Ищем нужное действие
-                for item in items:
-                    if item.get("id") == action_id:
-                        action_info = item
-                        break
-
-        except Exception as e:
-            tg_logger.warning(f"⚠️ Could not get action info: {e}")
+            # Ищем нужное действие
+            for item in items:
+                if item.get("id") == action_id:
+                    action_info = item
+                    break
 
         # Формируем текст Toast
         if action_info:
@@ -516,7 +475,6 @@ __all__ = [
     "start_cleanup_scheduler",
     "show_menu",
     "cmd_actions",
-    "check_has_subitems",
     "execute_action",
     "get_menu_items_with_parent",
     "get_menu_items",

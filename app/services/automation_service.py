@@ -5,46 +5,75 @@ import tempfile
 from pathlib import Path
 from typing import Any, TypedDict
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import settings
-from ..db import db_manager
+from ..config import settings
+from ..db import UserRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import MessageType, UserModel, datetime_now
+from ..models import MessageType, datetime_now
 
 # ============ ИМПОРТЫ ДЛЯ PYWIN32 ============
 
 # Проверка, что мы на Windows
 IS_WINDOWS = sys.platform == "win32"
 
+# Импорт pywin32 (только для Windows)
 if IS_WINDOWS:
     try:
+        import pythoncom
+        import win32com.client
+
         HAS_PYWIN32 = True
         app_logger.info("✅ pywin32 loaded successfully (Windows)")
     except ImportError as e:
+        pythoncom = None
+        win32com = None
         HAS_PYWIN32 = False
         app_logger.warning(f"⚠️ pywin32 not installed: {e}. Install: pip install pywin32")
 else:
+    pythoncom = None
+    win32com = None
     HAS_PYWIN32 = False
     app_logger.warning("⚠️ Not running on Windows, pywin32 is not available")
 
-# Для конвертации через LibreOffice (fallback для Linux/macOS)
+# Импорт comtypes (альтернатива для Windows)
+if IS_WINDOWS:
+    try:
+        import comtypes.client
+
+        HAS_COMTYPES = True
+        app_logger.info("✅ comtypes loaded successfully (Windows)")
+    except ImportError as e:
+        comtypes = None
+        HAS_COMTYPES = False
+        app_logger.warning(f"⚠️ comtypes not installed: {e}. Install: pip install comtypes")
+else:
+    comtypes = None
+    HAS_COMTYPES = False
+
+# Импорт subprocess (всегда доступен, но проверяем наличие LibreOffice)
 try:
     import subprocess
 
-    HAS_LIBREOFFICE = True
+    HAS_SUBPROCESS = True
 except ImportError:
-    HAS_LIBREOFFICE = False
+    subprocess = None  # type: ignore[assignment]
+    HAS_SUBPROCESS = False
+    app_logger.warning("⚠️ subprocess module not available")
 
-# Для конвертации через comtypes (альтернатива)
-try:
-    import comtypes.client
-
-    HAS_COMTYPES = True
-except ImportError:
-    HAS_COMTYPES = False
+# Проверка наличия LibreOffice
+HAS_LIBREOFFICE = False
+if HAS_SUBPROCESS and subprocess is not None:
+    try:
+        check_result = subprocess.run(["which", "soffice"], capture_output=True, text=True)
+        if check_result.returncode == 0:
+            HAS_LIBREOFFICE = True
+            app_logger.info("✅ LibreOffice found")
+        else:
+            app_logger.warning("⚠️ LibreOffice not found. Install: sudo apt-get install libreoffice")
+    except Exception as e:
+        app_logger.warning(f"⚠️ LibreOffice check failed: {e}")
 
 
 class ConversionStats(TypedDict, total=False):
@@ -100,6 +129,8 @@ class AutomationService:
         app_logger.info(f"📁 Temp directory: {self._temp_dir}")
         app_logger.info(f"🖥️ Platform: {sys.platform}")
         app_logger.info(f"📦 pywin32 available: {HAS_PYWIN32}")
+        app_logger.info(f"📦 comtypes available: {HAS_COMTYPES}")
+        app_logger.info(f"📦 LibreOffice available: {HAS_LIBREOFFICE}")
 
     # ============ ОСНОВНОЙ МЕТОД КОНВЕРТАЦИИ ============
 
@@ -159,6 +190,7 @@ class AutomationService:
 
         temp_doc_path = None
         temp_pdf_path = None
+        error_message: str | None = None
 
         try:
             # Сохранение временного DOC-файла
@@ -177,7 +209,6 @@ class AutomationService:
 
             # Конвертация выбранным методом
             conversion_success = False
-            error_message: str | None = None
 
             if method == "pywin32" and HAS_PYWIN32:
                 conversion_success, error_message = await self._convert_with_pywin32(
@@ -229,12 +260,12 @@ class AutomationService:
                 "error": None,
             }
 
-        except Exception as e:
+        except Exception as err:
             self._conversion_stats["failed"] = self._conversion_stats.get("failed", 0) + 1
-            app_logger.error(f"❌ DOC to PDF conversion failed: {e}", exc_info=True)
+            app_logger.error(f"❌ DOC to PDF conversion failed: {err}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Ошибка конвертации: {str(e)}",
+                "error": f"Ошибка конвертации: {str(err)}",
                 "pdf_content": None,
                 "pdf_filename": None,
                 "file_size": None,
@@ -248,54 +279,47 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_pywin32(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через pywin32 (использует Microsoft Word)
-        Самый надежный метод на Windows
-        """
-        if not HAS_PYWIN32:
+        """Конвертация через pywin32 (использует Microsoft Word)"""
+        if not HAS_PYWIN32 or win32com is None:
             return False, "pywin32 not available"
 
         try:
-            # Импорт внутри функции
-            import pythoncom
-            import win32com.client
-
             # Инициализация COM в отдельном потоке
             def convert_in_thread() -> tuple[bool, str | None]:
-                pythoncom.CoInitialize()
+                with contextlib.suppress(Exception):
+                    if pythoncom is not None:
+                        pythoncom.CoInitialize()
 
+                word = None
                 try:
-                    word = None
+                    # Создание экземпляра Word
+                    word = win32com.client.Dispatch("Word.Application")
+                    word.Visible = False
+                    word.DisplayAlerts = False
 
-                    try:
-                        # Создание экземпляра Word
-                        word = win32com.client.Dispatch("Word.Application")
-                        word.Visible = False
-                        word.DisplayAlerts = False
+                    # Открытие документа
+                    doc = word.Documents.Open(doc_path)
 
-                        # Открытие документа
-                        doc = word.Documents.Open(doc_path)
+                    # Сохранение как PDF (17 = wdFormatPDF)
+                    doc.SaveAs(pdf_path, FileFormat=17)
 
-                        # Сохранение как PDF
-                        # 17 = wdFormatPDF
-                        doc.SaveAs(pdf_path, FileFormat=17)
+                    # Закрытие документа
+                    doc.Close()
 
-                        # Закрытие документа
-                        doc.Close()
+                    return True, None
 
-                        return True, None
-
-                    except Exception as e:
-                        return False, str(e)
-
-                    finally:
-                        # Закрытие Word
-                        if word:
-                            with contextlib.suppress(BaseException):
-                                word.Quit()
+                except Exception as er:
+                    return False, str(er)
 
                 finally:
-                    pythoncom.CoUninitialize()
+                    # Закрытие Word
+                    if word:
+                        with contextlib.suppress(BaseException):
+                            word.Quit()
+
+                    with contextlib.suppress(Exception):
+                        if pythoncom is not None:
+                            pythoncom.CoInitialize()
 
             # Запуск в отдельном потоке (блокирующая операция)
             success, error = await asyncio.to_thread(convert_in_thread)
@@ -303,17 +327,15 @@ class AutomationService:
             if success:
                 return True, None
             else:
-                return False, f"pywin32 conversion failed: {error}"
+                return False, error or "pywin32 conversion failed"
 
-        except Exception as e:
-            return False, f"pywin32 error: {str(e)}"
+        except Exception as err:
+            return False, f"pywin32 error: {str(err)}"
 
     @staticmethod
     async def _convert_with_comtypes(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через comtypes (альтернатива pywin32)
-        """
-        if not HAS_COMTYPES:
+        """Конвертация через comtypes (альтернатива pywin32)"""
+        if not HAS_COMTYPES or comtypes is None:
             return False, "comtypes not available"
 
         try:
@@ -336,32 +358,26 @@ class AutomationService:
 
                     return True, None
 
-                except Exception as e:
-                    return False, str(e)
+                except Exception as er:
+                    return False, str(er)
 
             success, error = await asyncio.to_thread(convert_in_thread)
 
             if success:
                 return True, None
             else:
-                return False, f"comtypes conversion failed: {error}"
+                return False, error or "comtypes conversion failed"
 
-        except Exception as e:
-            return False, f"comtypes error: {str(e)}"
+        except Exception as err:
+            return False, f"comtypes error: {str(err)}"
 
     @staticmethod
     async def _convert_with_libreoffice(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через LibreOffice (для Linux/macOS)
-        Fallback, если pywin32 не доступен
-        """
+        """Конвертация через LibreOffice (для Linux/macOS)"""
+        if not HAS_LIBREOFFICE or subprocess is None:
+            return False, "LibreOffice not available"
+
         try:
-            # Проверка наличия LibreOffice
-            result = subprocess.run(["which", "soffice"], capture_output=True, text=True)
-
-            if result.returncode != 0:
-                return False, "LibreOffice not found. Install: sudo apt-get install libreoffice"
-
             # Команда конвертации
             cmd = ["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(Path(pdf_path).parent), doc_path]
 
@@ -384,8 +400,8 @@ class AutomationService:
             else:
                 return False, "PDF file not created"
 
-        except Exception as e:
-            return False, f"LibreOffice error: {str(e)}"
+        except Exception as err:
+            return False, f"LibreOffice error: {str(err)}"
 
     @staticmethod
     async def _cleanup_temp_files(doc_path: Path | None, pdf_path: Path | None) -> None:
@@ -395,32 +411,27 @@ class AutomationService:
                 try:
                     path.unlink()
                     app_logger.debug(f"🗑️ Deleted temp file: {path}")
-                except Exception as e:
-                    app_logger.warning(f"⚠️ Could not delete temp file {path}: {e}")
+                except Exception as err:
+                    app_logger.warning(f"⚠️ Could not delete temp file {path}: {err}")
 
     # ============ ЗАЯВКИ НА АВТОМАТИЗАЦИЮ ============
 
     @log_exceptions(app_logger)
     async def create_automation_request(
         self,
+        *,
         user_id: int,
         title: str,
         description: str,
         priority: str = "medium",
         chat_id: int | None = None,
-        session: AsyncSession | None = None,
+        session: AsyncSession,
     ) -> dict[str, Any]:
         """Создание заявки на автоматизацию"""
-        if session is None:
-            async with db_manager.get_session() as sess:
-                return await self.create_automation_request(user_id, title, description, priority, chat_id, sess)
-
         app_logger.info(f"📝 Creating automation request from user {user_id}: {title}")
 
-        # Проверка пользователя
-        stmt = select(UserModel).where(user_id == UserModel.FID)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+        # Используем репозиторий вместо прямого запроса
+        user = await UserRepository.get_user_by_id(session, user_id)
 
         if not user:
             app_logger.warning(f"⚠️ User {user_id} not found")
@@ -472,17 +483,20 @@ class AutomationService:
                 f"Статус: 🆕 Новая"
             )
 
-            result = await tg_manager.send_message(
-                chat_id=chat_id, message_type=MessageType.BOT_RESPONSE, text=message, parse_mode="Markdown"
+            send_result = await tg_manager.send_message(
+                chat_id=chat_id,
+                message_type=MessageType.BOT_RESPONSE,
+                text=message,
+                parse_mode="Markdown",
             )
 
-            if result.get("success"):
+            if send_result.get("success"):
                 app_logger.info(f"✅ Request notification sent to chat {chat_id}")
             else:
-                app_logger.warning(f"⚠️ Failed to send notification: {result.get('error')}")
+                app_logger.warning(f"⚠️ Failed to send notification: {send_result.get('error')}")
 
-        except Exception as e:
-            app_logger.error(f"❌ Failed to send notification: {e}")
+        except Exception as err:
+            app_logger.error(f"❌ Failed to send notification: {err}")
 
     @log_exceptions(app_logger)
     async def get_requests(self, user_id: int | None = None, status: str | None = None) -> list[dict[str, Any]]:
@@ -529,6 +543,8 @@ class AutomationService:
             "by_method": self._conversion_stats.get("by_method", {}),
             "platform": sys.platform,
             "pywin32_available": HAS_PYWIN32,
+            "comtypes_available": HAS_COMTYPES,
+            "libreoffice_available": HAS_LIBREOFFICE,
         }
 
 

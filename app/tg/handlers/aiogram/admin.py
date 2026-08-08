@@ -1,5 +1,3 @@
-from typing import TYPE_CHECKING
-
 from aiogram import Bot, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
@@ -12,10 +10,8 @@ from ....db import ChatRepository, db_manager
 from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import MessageActionType, MessageType, datetime_now
+from ....tg.dependencies import get_tg_manager
 from ...keyboards import AdminKeyboard
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
 
 router = Router(name="aiogram_admin")
 
@@ -33,13 +29,6 @@ class DeleteMessageStates(StatesGroup):
     waiting_for_chat_id = State()
     waiting_for_message_id = State()
     waiting_for_confirmation = State()
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
 
 
 @router.message(Command("broadcast"))

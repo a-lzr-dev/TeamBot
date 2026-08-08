@@ -9,19 +9,11 @@ from typing import TYPE_CHECKING, Any
 from ..config import settings
 from ..logger import app_logger
 from ..models import ErrorCategory, ErrorSeverity, ErrorStatus, MessageType, datetime_now
+from ..tg.dependencies import get_tg_manager
 from .error_service import error_service
 
 if TYPE_CHECKING:
     from datetime import datetime
-
-    from ..tg import TelegramManager
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ..tg import tg_manager
-
-    return tg_manager
 
 
 class LogHandlerService:
@@ -37,6 +29,12 @@ class LogHandlerService:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=getattr(settings, "LOG_QUEUE_MAX_SIZE", 1000))
         self._worker_task: asyncio.Task | None = None
         self._is_worker_running = False
+        self._notification_stats: dict[str, int] = {
+            "total_errors": 0,
+            "sent_notifications": 0,
+            "failed_notifications": 0,
+            "cache_hits": 0,
+        }
 
     @property
     def is_initialized(self) -> bool:
@@ -52,21 +50,21 @@ class LogHandlerService:
         self._initialized = True
         self._shutting_down = False
 
-        # Запуск фонового воркера для обработки логов
         self._worker_task = asyncio.create_task(self._worker_loop())
 
         app_logger.info("✅ LogHandlerService initialized")
 
-    # ============ ПУБЛИЧНЫЙ МЕТОД ДЛЯ ОТПРАВКИ УВЕДОМЛЕНИЙ ============
-
     async def send_notification(self, error_model: Any) -> None:
-        """Отправка уведомления об ошибке в чаты техподдержки"""
+        """
+        Отправка уведомления об ошибке в чаты техподдержки.
+
+        Args:
+            error_model: Модель ошибки
+        """
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Service is shutting down or not initialized, skipping notification")
             return
         await self._send_notification(error_model)
-
-    # ============ ПРИВАТНЫЕ МЕТОДЫ ============
 
     def _setup_log_handler(self) -> None:
         """Настройка обработчика для перехвата логов"""
@@ -75,22 +73,14 @@ class LogHandlerService:
 
         class SyncLogHandler(logging.Handler):
             def emit(self, record: logging.LogRecord) -> None:
-                # Синхронное добавление в очередь
                 with contextlib.suppress(asyncio.QueueFull):
                     log_handler_service._queue.put_nowait(record)
 
         self._handler = SyncLogHandler()
         self._handler.setLevel(logging.ERROR)
 
-        # Добавление обработчика к корневому логгеру
         root_logger = logging.getLogger()
         root_logger.addHandler(self._handler)
-
-        # Добавление к app_logger
-        # try:
-        #     app_logger._logger.addHandler(self._handler)
-        # except (AttributeError, Exception) as e:
-        #     print(f"⚠️ Could not add handler to app_logger: {e}", file=sys.stderr)
 
         app_logger.debug("✅ Log handler attached to root logger")
 
@@ -104,19 +94,16 @@ class LogHandlerService:
         try:
             while self._initialized and not self._shutting_down:
                 try:
-                    # Ожидание записи лога с таймаутом
                     try:
                         record = await asyncio.wait_for(self._queue.get(), timeout=worker_timeout)
                     except TimeoutError:
                         continue
 
-                    # Проверка после получения записи
                     if self._shutting_down or not self._initialized:
                         app_logger.debug("⏹️ Shutdown detected, discarding record")
                         self._queue.task_done()
                         break
 
-                    # Обработка записи
                     await self._handle_log_record(record)
                     self._queue.task_done()
 
@@ -133,29 +120,28 @@ class LogHandlerService:
 
     async def _handle_log_record(self, record: logging.LogRecord) -> None:
         """Обработка записи лога"""
-
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Shutdown detected, skipping log record")
             return
 
         try:
-            # Только ERROR и выше
             if record.levelno < logging.ERROR:
                 return
 
-            # Проверка кеша (предотвращение спама одинаковыми ошибками)
+            self._notification_stats["total_errors"] += 1
+
+            # Проверка кеша
             cache_key = self._get_cache_key(record)
             if cache_key in self._error_cache:
                 last_sent = self._error_cache[cache_key]
                 if (datetime_now() - last_sent).total_seconds() < self._cache_ttl:
+                    self._notification_stats["cache_hits"] += 1
                     return
 
-            # Извлечение информации из записи лога
             error_message = record.getMessage()
             traceback_text = None
 
             if record.exc_info:
-                # Преобразуем BaseException в Exception если нужно
                 error_obj = record.exc_info[1] if record.exc_info[1] else Exception(error_message)
                 if not isinstance(error_obj, Exception):
                     error_obj = Exception(str(error_obj))
@@ -164,11 +150,9 @@ class LogHandlerService:
             else:
                 error_obj = Exception(error_message)
 
-            # Определение категории и серьезности
             category = self._determine_category(record.name)
             severity = self._determine_severity(record.levelno)
 
-            # Извлечение контекста
             context = getattr(record, "extra", {}) or {}
             context.update(
                 {
@@ -180,9 +164,10 @@ class LogHandlerService:
                 }
             )
 
-            # Сохранение в БД
+            # Логирование ошибки через error_service
             error_model, chat_message = await error_service.log_error(
                 error=error_obj,
+                session=None,  # error_service требует session, но мы передаем None
                 component=record.name,
                 user_id=context.get("user_id"),
                 chat_id=context.get("chat_id"),
@@ -199,14 +184,17 @@ class LogHandlerService:
                 },
             )
 
-            # Отправлка уведомление в чат техподдержки
             if error_model and not self._shutting_down and self._initialized:
                 try:
                     await self._send_notification(error_model)
+                    self._notification_stats["sent_notifications"] += 1
                 except asyncio.CancelledError:
                     app_logger.debug("ℹ️ _send_notification cancelled in _handle_log_record")
+                    raise
+                except Exception as e:
+                    self._notification_stats["failed_notifications"] += 1
+                    app_logger.error(f"❌ Failed to send notification: {e}")
 
-            # Обновление кеша
             self._error_cache[cache_key] = datetime_now()
             self._cleanup_cache()
 
@@ -282,7 +270,6 @@ class LogHandlerService:
             if not value:
                 return []
 
-            # JSON массив: [1, 2, 3]
             if value.startswith("[") and value.endswith("]"):
                 try:
                     result = ast.literal_eval(value)
@@ -291,12 +278,10 @@ class LogHandlerService:
                 except (ValueError, SyntaxError):
                     pass
 
-            # Через запятую: 1,2,3 или 1, 2, 3
             if "," in value:
                 parts = [p.strip() for p in value.split(",") if p.strip()]
                 result = []
                 for part in parts:
-                    # Удаляем квадратные скобки если есть
                     part = part.strip("[]")
                     if part:
                         try:
@@ -305,7 +290,6 @@ class LogHandlerService:
                             continue
                 return result  # type: ignore[no-any-return]
 
-            # Одно число
             try:
                 return [int(value)]
             except ValueError:
@@ -314,7 +298,6 @@ class LogHandlerService:
 
     async def _send_notification(self, error_model: Any) -> None:
         """Приватный метод отправки уведомления в чат техподдержки"""
-
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Service is shutting down, skipping notification")
             return
@@ -327,14 +310,13 @@ class LogHandlerService:
                 app_logger.debug("ℹ️ No SUPPORT_CHAT_IDS configured, skipping notification")
                 return
 
-            # Формирование сообщения
             message = self._format_notification(error_model)
 
             if self._shutting_down:
                 app_logger.debug("ℹ️ Shutdown detected before get_status, skipping")
                 return
 
-            # Проверка, запущен ли Telegram менеджер с защитой от отмены
+            # Проверка статуса Telegram менеджера
             try:
                 status = await asyncio.shield(get_tg_manager().get_status())
                 if not status.get("is_running", False):
@@ -353,7 +335,6 @@ class LogHandlerService:
 
             app_logger.info(f"📨 Sending notification to {len(support_chats)} chats: {support_chats}")
 
-            # Отправка в каждый чат поддержки
             success_count = 0
             for chat_id in support_chats:
                 if self._shutting_down:
@@ -362,8 +343,13 @@ class LogHandlerService:
 
                 try:
                     app_logger.debug(f"📤 Sending to chat {chat_id}")
+
+                    # Получаем менеджер через зависимость
+                    tg_manager = get_tg_manager()
+
+                    # Отправка сообщения
                     result = await asyncio.shield(
-                        get_tg_manager().send_message(
+                        tg_manager.send_message(
                             chat_id=chat_id,
                             message_type=MessageType.SYSTEM_ALERT,
                             text=message,
@@ -390,6 +376,7 @@ class LogHandlerService:
 
         except asyncio.CancelledError:
             app_logger.debug("ℹ️ _send_notification cancelled")
+            raise
         except Exception as e:
             app_logger.error(f"❌ Failed to send notification: {e}")
 
@@ -443,22 +430,18 @@ class LogHandlerService:
         self._shutting_down = True
         self._initialized = False
 
-        # Удаление обработчика из логгеров
+        # Удаление обработчика из корневого логгера
         if self._handler:
             try:
                 root_logger = logging.getLogger()
                 root_logger.removeHandler(self._handler)
+                app_logger.debug("✅ Log handler removed from root logger")
             except Exception as e:
                 print(f"⚠️ Could not remove handler from root logger: {e}", file=sys.stderr)
 
-            # try:
-            #     app_logger.removeHandler(self._handler)
-            # except (AttributeError, Exception) as e:
-            #     print(f"⚠️ Could not remove handler from app_logger: {e}", file=sys.stderr)
-
             self._handler = None
 
-        # Очистка очередь (без ожидания)
+        # Очистка очереди
         cleared = 0
         while not self._queue.empty():
             try:
@@ -471,22 +454,52 @@ class LogHandlerService:
         if cleared > 0:
             app_logger.debug(f"🧹 Cleared {cleared} pending log records")
 
-        # Отмена и ожидание завершения воркера
+        # Остановка воркера
         if self._worker_task and not self._worker_task.done():
             app_logger.debug("⏳ Waiting for worker task to finish...")
             self._worker_task.cancel()
             try:
                 await asyncio.wait_for(self._worker_task, timeout=1.0)
+                app_logger.debug("✅ Worker task finished")
             except TimeoutError:
                 app_logger.warning("⚠️ Worker task did not finish in time, forcing cancel")
                 self._worker_task.cancel()
                 await asyncio.sleep(0.1)
             except asyncio.CancelledError:
-                pass
+                app_logger.debug("✅ Worker task cancelled")
             except Exception as e:
                 app_logger.error(f"❌ Error waiting for worker task: {e}")
 
+        self._worker_task = None
+        self._is_worker_running = False
+
+        # Логирование финальной статистики
+        app_logger.info(
+            f"📊 LogHandlerService stats: "
+            f"total_errors={self._notification_stats['total_errors']}, "
+            f"sent={self._notification_stats['sent_notifications']}, "
+            f"failed={self._notification_stats['failed_notifications']}, "
+            f"cache_hits={self._notification_stats['cache_hits']}"
+        )
+
         app_logger.info("⛔ LogHandlerService shut down")
+
+    async def get_stats(self) -> dict[str, int]:
+        """
+        Получение статистики работы сервиса.
+
+        Returns:
+            dict: Статистика
+        """
+        return {
+            "total_errors": self._notification_stats.get("total_errors", 0),
+            "sent_notifications": self._notification_stats.get("sent_notifications", 0),
+            "failed_notifications": self._notification_stats.get("failed_notifications", 0),
+            "cache_hits": self._notification_stats.get("cache_hits", 0),
+            "cache_size": len(self._error_cache),
+            "queue_size": self._queue.qsize(),
+            "is_worker_running": self._is_worker_running,
+        }
 
 
 log_handler_service = LogHandlerService()

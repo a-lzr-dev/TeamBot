@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from ... import settings
-from ...db import db_manager
-from ...db.repositories.chats import ChatRepository
+from ...config import settings
+from ...db.repositories import ChatRepository, MessageRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ChatType, MessageType, datetime_now
-from ...utils.datetime import get_timestamp
+from ...utils import get_timestamp
+from ..dependencies import get_session
 
 router = APIRouter(prefix="/tg/msgs", tags=["Telegram Messages"])
 
@@ -223,15 +223,6 @@ class UnifiedSendRequest(BaseModel):
         return False
 
 
-# ============ Вспомогательная функция для получения сессии БД ============
-
-
-async def get_db_session() -> Any:
-    """Получение сессии БД через контекстный менеджер"""
-    async with db_manager.get_session() as session:
-        yield session
-
-
 # ============ Вспомогательные функции ============
 
 
@@ -325,7 +316,7 @@ async def send_single_message(tg_manager: Any, msg: SendMessageRequest, _: int |
 async def send_message_to_all_chats(tg_manager: Any, msg: SendMessageRequest, session: Any) -> SendMessageToAllResponse:
     """Отправка сообщения во все чаты с поддержкой времени жизни"""
     try:
-        # Получение всех активных чатов из БД
+        # Получение всех активных чатов из БД через репозиторий
         chats = await ChatRepository.get_chats(session, is_active=True)
 
         # Фильтр по типам чатов
@@ -458,7 +449,7 @@ async def send_message_to_all_chats(tg_manager: Any, msg: SendMessageRequest, se
 async def send_message_unified(
     request: UnifiedSendRequest,
     tg_manager: Any = Depends(get_telegram_manager),
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Универсальная отправка сообщений"""
     messages = request.get_messages()
@@ -552,11 +543,9 @@ async def send_message_unified(
 @log_exceptions(api_logger)
 async def set_message_lifetime(
     request: SetLifetimeRequest,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Установка времени жизни сообщения"""
-    from ...db.repositories.messages import MessageRepository
-
     api_logger.info(f"⏰ Setting lifetime for message {request.message_id}: {request.lifetime_seconds}s")
 
     try:
@@ -599,11 +588,9 @@ async def set_message_lifetime(
 @log_exceptions(api_logger)
 async def set_messages_lifetime_batch(
     request: BatchSetLifetimeRequest,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Установка времени жизни для нескольких сообщений"""
-    from ...db.repositories.messages import MessageRepository
-
     # Проверяем, что lifetime_seconds указан
     if request.lifetime_seconds is None:
         raise HTTPException(status_code=400, detail="lifetime_seconds is required for batch operation")
@@ -649,11 +636,9 @@ async def set_messages_lifetime_batch(
 @log_exceptions(api_logger)
 async def get_message_lifetime_stats(
     chat_id: int | None = None,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение статистики по времени жизни"""
-    from ...db.repositories.messages import MessageRepository
-
     api_logger.info(f"📊 Getting message lifetime stats for chat {chat_id or 'all'}")
 
     try:
@@ -704,19 +689,14 @@ async def force_check_expired_messages() -> JSONResponse:
 @log_exceptions(api_logger)
 async def get_message_lifetime_info(
     message_id: int,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение информации о времени жизни сообщения"""
-    from sqlalchemy import select
-
-    from ...models import ChatMessageModel
-
     api_logger.info(f"📊 Getting lifetime info for message {message_id}")
 
     try:
-        stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
-        result = await session.execute(stmt)
-        message = result.scalar_one_or_none()
+        # Используем репозиторий для получения сообщения
+        message = await MessageRepository.get_message_by_id(session, message_id)
 
         if not message:
             raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
@@ -773,7 +753,7 @@ async def get_message_lifetime_info(
 async def get_deleted_messages_stats(
     chat_id: int | None = None,
     days: int = getattr(settings, "API_STATS_DAYS", 7),
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение статистики по удаленным сообщениям."""
     api_logger.info(f"Getting deleted messages stats for chat {chat_id or 'all'}")
@@ -798,12 +778,13 @@ async def get_deleted_messages(
     chat_id: int | None = None,
     limit: int = getattr(settings, "API_DEFAULT_PAGE_SIZE", 50),
     offset: int = 0,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение списка удаленных сообщений."""
     api_logger.info(f"Getting deleted messages for chat {chat_id or 'all'}")
 
     try:
+        # Используем репозиторий для получения сообщений
         messages = await ChatRepository.get_messages(
             session=session, chat_id=chat_id, include_deleted=True, limit=limit, offset=offset
         )
@@ -849,7 +830,7 @@ async def get_deleted_messages_with_initiator(
     chat_id: int | None = None,
     limit: int = getattr(settings, "API_DEFAULT_PAGE_SIZE", 50),
     offset: int = 0,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение удаленных сообщений с информацией об инициаторе."""
     api_logger.info(f"Getting deleted messages with initiator for chat {chat_id or 'all'}")
@@ -878,7 +859,7 @@ async def get_deleted_messages_with_initiator(
 async def get_deletion_stats_by_initiator(
     chat_id: int | None = None,
     days: int = getattr(settings, "API_STATS_DAYS", 7),
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение статистики удалений по типам инициаторов."""
     api_logger.info(f"Getting deletion stats for chat {chat_id or 'all'}")
@@ -901,19 +882,14 @@ async def get_deletion_stats_by_initiator(
 @log_exceptions(api_logger)
 async def get_message_deletion_info(
     message_id: int,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение информации об удалении сообщения."""
     api_logger.info(f"Getting deletion info for message {message_id}")
 
     try:
-        from sqlalchemy import select
-
-        from ...models import ChatMessageModel
-
-        stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
-        result = await session.execute(stmt)
-        message = result.scalar_one_or_none()
+        # Используем репозиторий для получения сообщения
+        message = await MessageRepository.get_message_by_id(session, message_id)
 
         if not message:
             raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
@@ -929,11 +905,10 @@ async def get_message_deletion_info(
                 },
             )
 
+        # Получение инициатора удаления (если есть)
         initiator_info = None
         if message.FK_DeletedByMessage:
-            initiator_stmt = select(ChatMessageModel).where(message.FK_DeletedByMessage == ChatMessageModel.FID)
-            initiator_result = await session.execute(initiator_stmt)
-            initiator = initiator_result.scalar_one_or_none()
+            initiator = await MessageRepository.get_message_by_id(session, message.FK_DeletedByMessage)
             if initiator:
                 initiator_info = {
                     "message_id": initiator.FID,
@@ -971,7 +946,7 @@ async def get_message_deletion_info(
 async def restore_deleted_message(
     message_id: int,
     chat_id: int | None = None,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Восстановление удаленного сообщения."""
     api_logger.info(f"Restoring message {message_id}")
@@ -1067,7 +1042,7 @@ async def get_telegram_status(
 @log_exceptions(api_logger)
 async def get_chats(
     is_active: bool | None = True,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение списка чатов из базы данных."""
     api_logger.info("Getting chats list...")
@@ -1079,12 +1054,8 @@ async def get_chats(
         for chat in chats:
             members = await ChatRepository.get_user_chat_members(session, chat_id=chat.FID, is_active=True)
 
-            from sqlalchemy import func, select
-
-            from ...models import ChatMessageModel
-
-            stmt = select(func.count()).select_from(ChatMessageModel).where(ChatMessageModel.FK_Chat == chat.FID)
-            messages_count = await session.scalar(stmt) or 0
+            # Получение количества сообщений через репозиторий
+            messages_count = await MessageRepository.get_message_count_by_chat(session, chat.FID)
 
             result.append(
                 {
@@ -1114,16 +1085,13 @@ async def get_chats(
 @log_exceptions(api_logger)
 async def get_chat_info(
     chat_id: int,
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение детальной информации о чате."""
     api_logger.info(f"Getting chat info for {chat_id}...")
 
     try:
-        from sqlalchemy import func, select
-
-        from ...models import ChatMessageModel
-
+        # Получение чата через репозиторий
         chats = await ChatRepository.get_chats(session, chat_id=chat_id)
 
         if not chats:
@@ -1133,18 +1101,15 @@ async def get_chat_info(
 
         members = await ChatRepository.get_user_chat_members(session, chat_id=chat.FID, is_active=True)
 
-        stmt = select(func.count()).select_from(ChatMessageModel).where(ChatMessageModel.FK_Chat == chat.FID)
-        messages_count = await session.scalar(stmt) or 0
+        # Получение количества сообщений через репозиторий
+        messages_count = await MessageRepository.get_message_count_by_chat(session, chat.FID)
 
-        stmt = (
-            select(ChatMessageModel)
-            .where(ChatMessageModel.FK_Chat == chat.FID)
-            .order_by(ChatMessageModel.FDateSent.desc())
-            .limit(10)
-        )
-        recent_messages = await session.execute(stmt)
+        # Получение последних сообщений через репозиторий
         recent_messages_list = []
-        for msg in recent_messages.scalars().all():
+        recent_messages = await MessageRepository.get_messages_by_chat(
+            session=session, chat_id=chat.FID, limit=10, include_deleted=True
+        )
+        for msg in recent_messages:
             recent_messages_list.append(
                 {
                     "id": msg.FID,
@@ -1183,103 +1148,22 @@ async def get_chat_info(
 @router.get("/stats", summary="Получить статистику", description="Получает общую статистику по чатам и сообщениям")
 @log_exceptions(api_logger)
 async def get_stats(
-    session: Any = Depends(get_db_session),
+    session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Получение общей статистики по чатам и сообщениям."""
     api_logger.info("Getting stats...")
 
     try:
-        from datetime import timedelta
+        # Статистика отдается через репозитории
+        from ...db.repositories.stats import StatsRepository
 
-        from sqlalchemy import func, select
-
-        from ...models import ChatMessageModel, ChatModel, MessageType, UserModel, datetime_now
-
-        total_chats = await session.scalar(select(func.count()).select_from(ChatModel)) or 0
-        active_chats = (
-            await session.scalar(select(func.count()).select_from(ChatModel).where(ChatModel.FFlagActive)) or 0
-        )
-
-        total_messages = await session.scalar(select(func.count()).select_from(ChatMessageModel)) or 0
-        total_users = await session.scalar(select(func.count()).select_from(UserModel)) or 0
-
-        messages_by_type = {}
-        for msg_type in MessageType:
-            count = (
-                await session.scalar(
-                    select(func.count())
-                    .select_from(ChatMessageModel)
-                    .where(ChatMessageModel.FK_MessageType == msg_type)
-                )
-                or 0
-            )
-            messages_by_type[msg_type.value] = count
-
-        # Статистика по времени жизни
-        with_lifetime = (
-            await session.scalar(
-                select(func.count()).select_from(ChatMessageModel).where(ChatMessageModel.FLifetimeSeconds.is_not(None))
-            )
-            or 0
-        )
-
-        expired = (
-            await session.scalar(
-                select(func.count())
-                .select_from(ChatMessageModel)
-                .where(
-                    ChatMessageModel.FExpiresAt.is_not(None),
-                    ChatMessageModel.FExpiresAt <= datetime_now(),
-                    ChatMessageModel.FFlagDeleted.is_(False),
-                )
-            )
-            or 0
-        )
-
-        now = datetime_now()
-        messages_by_day = {}
-        for i in range(7):
-            day = now - timedelta(days=i)
-            day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day.replace(hour=23, minute=59, second=59, microsecond=999999)
-
-            count = (
-                await session.scalar(
-                    select(func.count())
-                    .select_from(ChatMessageModel)
-                    .where(ChatMessageModel.FDateSent >= day_start, ChatMessageModel.FDateSent <= day_end)
-                )
-                or 0
-            )
-            messages_by_day[day.strftime("%Y-%m-%d")] = count
-
-        top_chats_stmt = (
-            select(ChatModel.FID, ChatModel.FTitle, func.count(ChatMessageModel.FID).label("message_count"))
-            .outerjoin(ChatMessageModel, ChatMessageModel.FK_Chat == ChatModel.FID)
-            .group_by(ChatModel.FID, ChatModel.FTitle)
-            .order_by(func.count(ChatMessageModel.FID).desc())
-            .limit(5)
-        )
-        top_chats = await session.execute(top_chats_stmt)
-        top_chats_list = []
-        for row in top_chats.all():
-            top_chats_list.append(
-                {"chat_id": row.FID, "title": row.FTitle or f"Chat {row.FID}", "message_count": row.message_count}
-            )
+        stats = await StatsRepository.get_full_stats(session)
 
         return JSONResponse(
             status_code=200,
             content={
-                "chats": {"total": total_chats, "active": active_chats, "inactive": total_chats - active_chats},
-                "messages": {
-                    "total": total_messages,
-                    "by_type": messages_by_type,
-                    "by_day": messages_by_day,
-                    "with_lifetime": with_lifetime,
-                    "expired_not_deleted": expired,
-                },
-                "users": {"total": total_users},
-                "top_chats": top_chats_list,
+                "success": True,
+                "stats": stats,
                 "timestamp": get_timestamp(),
             },
         )

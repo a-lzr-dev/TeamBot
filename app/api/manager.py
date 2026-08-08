@@ -71,7 +71,11 @@ class APIManager:
             api_logger.info(f"✅ Telegram manager instance: {tg_manager!r}")
         except Exception as e:
             api_logger.error(f"❌ Telegram manager initialization failed: {e}", exc_info=True)
-            await error_service.log_error(error=e, component="api", context={"phase": "lifespan_start"})
+            await error_service.log_error(
+                error=e,
+                component="api",
+                context={"phase": "lifespan_start"},
+            )
 
         yield  # Приложение работает здесь
 
@@ -87,7 +91,11 @@ class APIManager:
                 api_logger.info("ℹ️ Telegram manager was not running")
         except Exception as e:
             api_logger.error(f"❌ Telegram manager stopping failed: {e}", exc_info=True)
-            await error_service.log_error(error=e, component="api", context={"phase": "lifespan_stop"})
+            await error_service.log_error(
+                error=e,
+                component="api",
+                context={"phase": "lifespan_stop"},
+            )
 
     @log_exceptions(api_logger)
     async def initialize(self) -> None:
@@ -318,7 +326,11 @@ class APIManager:
                 status = await tg_manager.get_status()
                 return {"telegram": status, "timestamp": datetime_now().isoformat() + "Z"}
             except Exception as e:
-                await error_service.log_error(error=e, component="api", context={"endpoint": "debug_telegram_status"})
+                await error_service.log_error(
+                    error=e,
+                    component="api",
+                    context={"endpoint": "debug_telegram_status"},
+                )
                 return {"error": str(e), "timestamp": datetime_now().isoformat() + "Z"}
 
         @self._app.get("/debug/routes")
@@ -422,7 +434,11 @@ class APIManager:
             raise
         except Exception as e:
             api_logger.error(f"❌ API Server failed: {e}", exc_info=True)
-            await error_service.log_error(error=e, component="api", context={"phase": "server_run"})
+            await error_service.log_error(
+                error=e,
+                component="api",
+                context={"phase": "server_run"},
+            )
             raise
 
     @log_exceptions(api_logger)
@@ -441,7 +457,11 @@ class APIManager:
                 api_logger.debug("⛔ API Server stopped")
             except Exception as e:
                 api_logger.error(f"❌ API Server stopping failed: {e}", exc_info=True)
-                await error_service.log_error(error=e, component="api", context={"phase": "server_stop"})
+                await error_service.log_error(
+                    error=e,
+                    component="api",
+                    context={"phase": "server_stop"},
+                )
 
         for task in self._tasks:
             if not task.done():

@@ -14,14 +14,11 @@ from ..config import settings
 from ..db import ChatRepository, UserRepository, db_manager
 from ..exceptions import log_exceptions
 from ..logger import tg_logger
-from ..middlewares.tg import (
-    ChatActivityMiddleware,
-    DatabaseMiddleware,
-    ErrorHandlerMiddleware,
-    LoggingMiddleware,
-    RateLimitMiddleware,
-    ThrottlingMiddleware,
-)
+from ..middlewares.tg.database import DatabaseMiddleware
+from ..middlewares.tg.error_handler import ErrorHandlerMiddleware
+from ..middlewares.tg.logging import ChatActivityMiddleware, LoggingMiddleware
+from ..middlewares.tg.rate_limit import RateLimitMiddleware
+from ..middlewares.tg.throttling import ThrottlingMiddleware
 from ..models import MessageType
 from .clients import AiogramClient, TelethonClient
 from .handlers import setup_aiogram_handlers, setup_telethon_handlers

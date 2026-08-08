@@ -15,12 +15,11 @@ class MessageLifetimeService:
         self._is_running = False
         self._task: asyncio.Task | None = None
 
-        # Настройки
         from ..config import settings
 
-        self.CHECK_INTERVAL = getattr(settings, "MESSAGE_LIFETIME_CHECK_INTERVAL", 60)  # Проверка каждую минуту
-        self.BATCH_SIZE = getattr(settings, "MESSAGE_LIFETIME_BATCH_SIZE", 1000)  # Максимум сообщений за одну проверку
-        self.DEFAULT_LIFETIME = getattr(settings, "MESSAGE_LIFETIME_DEFAULT_SECONDS", 604800)  # 7 дней по умолчанию
+        self.CHECK_INTERVAL = getattr(settings, "MESSAGE_LIFETIME_CHECK_INTERVAL", 60)
+        self.BATCH_SIZE = getattr(settings, "MESSAGE_LIFETIME_BATCH_SIZE", 1000)
+        self.DEFAULT_LIFETIME = getattr(settings, "MESSAGE_LIFETIME_DEFAULT_SECONDS", 604800)
 
         self._stats: dict[str, Any] = {
             "total_checked": 0,
@@ -35,7 +34,6 @@ class MessageLifetimeService:
         return self._is_running
 
     async def start(self) -> None:
-        """Запуск фоновой проверки"""
         if self._is_running:
             app_logger.warning("⚠️ MessageLifetimeService already running")
             return
@@ -45,7 +43,6 @@ class MessageLifetimeService:
         app_logger.info(f"✅ MessageLifetimeService started (interval={self.CHECK_INTERVAL}s)")
 
     async def stop(self) -> None:
-        """Остановка фоновой проверки"""
         self._is_running = False
 
         if self._task and not self._task.done():
@@ -56,7 +53,6 @@ class MessageLifetimeService:
         app_logger.info("⛔ MessageLifetimeService stopped")
 
     async def _check_loop(self) -> None:
-        """Основной цикл проверки"""
         app_logger.debug("🔄 MessageLifetimeService check loop started")
 
         while self._is_running:
@@ -72,12 +68,10 @@ class MessageLifetimeService:
 
     @log_exceptions(app_logger)
     async def _check_expired_messages(self) -> None:
-        """Проверка и пометка истекших сообщений с реальным удалением из Telegram"""
         app_logger.debug("🔍 Checking expired messages...")
 
         async with db_manager.get_session() as session:
             try:
-                # Получение истекших сообщений
                 expired_messages = await MessageRepository.get_expired_messages(session=session, limit=self.BATCH_SIZE)
 
                 self._stats["total_checked"] = self._stats.get("total_checked", 0) + 1
@@ -96,7 +90,6 @@ class MessageLifetimeService:
                 try:
                     from ..tg import tg_manager
 
-                    # Проверка, запущен ли Telegram менеджер
                     status = await tg_manager.get_status()
                     if status.get("is_running", False):
                         for msg in expired_messages:
@@ -133,12 +126,10 @@ class MessageLifetimeService:
                     f"total: {self._stats['total_deleted']})"
                 )
 
-                # Логирование первых 5 сообщений для отладки
                 if deleted_count > 0:
                     sample_ids = message_ids[:5]
                     app_logger.debug(f"📝 Sample expired messages: {sample_ids}")
 
-                # Если есть еще сообщения, продолжим в следующем цикле
                 if len(message_ids) >= self.BATCH_SIZE:
                     app_logger.debug("🔄 More expired messages pending, will continue next cycle")
 
@@ -149,11 +140,9 @@ class MessageLifetimeService:
 
     @log_exceptions(app_logger)
     async def get_stats(self) -> dict[str, Any]:
-        """Получение статистики"""
         async with db_manager.get_session() as session:
             stats = await MessageRepository.get_message_lifetime_stats(session)
 
-        # Безопасное получение значения last_check
         last_check = self._stats.get("last_check")
         last_check_str = last_check.isoformat() + "Z" if last_check else None
 
@@ -174,13 +163,12 @@ class MessageLifetimeService:
 
     @log_exceptions(app_logger)
     async def force_check(self) -> dict[str, int]:
-        """Принудительная проверка истекших сообщений"""
         app_logger.info("🔄 Force check expired messages...")
 
         async with db_manager.get_session() as session:
             expired_messages = await MessageRepository.get_expired_messages(
                 session=session,
-                limit=self.BATCH_SIZE * 10,  # Больше при принудительной проверке
+                limit=self.BATCH_SIZE * 10,
             )
 
             if not expired_messages:

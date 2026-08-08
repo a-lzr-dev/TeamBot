@@ -1,16 +1,18 @@
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import settings
-from ...db import db_manager
+from ...db.repositories import ErrorRepository, NotificationSettingsRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ErrorCategory, ErrorSeverity
-from ...services.error_service import error_service
-from ...utils.datetime import get_timestamp
+from ...services import error_service
+from ...utils import get_timestamp
+from ..dependencies import get_session
 
 router = APIRouter(prefix="/errors", tags=["Errors"])
 
@@ -76,13 +78,6 @@ class ChatNotificationSettingsRequest(BaseModel):
 
 # ============ Вспомогательные функции ============
 
-# def _get_default_chat_id() -> Optional[int]:
-#     """Получение дефолтного чата для отправки сообщения об ошибке (первый из списка)"""
-#     support_chats = getattr(settings, 'SUPPORT_CHAT_IDS', [])
-#     if support_chats and isinstance(support_chats, list) and len(support_chats) > 0:
-#         return support_chats[0]
-#     return None
-
 
 def _get_all_support_chats() -> list:
     """Получение всех чатов поддержки"""
@@ -105,35 +100,6 @@ def _get_all_support_chats() -> list:
     return []
 
 
-# async def _send_error_notification(error_model: ErrorModel) -> None:
-#     """Отправка уведомления об ошибке в чаты техподдержки."""
-#     try:
-#         await log_handler_service.send_notification(error_model)
-#         api_logger.debug(f"✅ Notification sent for error {error_model.FID}")
-#     except Exception as e:
-#         api_logger.error(f"❌ Failed to send notification for error {error_model.FID}: {e}")
-
-
-async def _get_error_message_count(error_id: int) -> int:
-    """Получение количества сообщений, связанных с ошибкой"""
-    try:
-        from sqlalchemy import func, select
-
-        from ...models import ErrorMessageLinkModel
-
-        async with db_manager.get_session() as session:
-            stmt = (
-                select(func.count())
-                .select_from(ErrorMessageLinkModel)
-                .where(ErrorMessageLinkModel.FK_Error == error_id)
-            )
-            result = await session.execute(stmt)
-            return result.scalar() or 0
-    except Exception as e:
-        api_logger.error(f"❌ Failed to get message count: {e}")
-        return 0
-
-
 # ============ Эндпоинты ============
 
 
@@ -141,56 +107,58 @@ async def _get_error_message_count(error_id: int) -> int:
     "/external", summary="Зарегистрировать внешнюю ошибку", description="Регистрация ошибки из внешней системы"
 )
 @log_exceptions(api_logger)
-async def register_external_error(request: ErrorRequest) -> JSONResponse:
+async def register_external_error(
+    request: ErrorRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Регистрация внешней ошибки"""
 
     api_logger.info(f"📝 Registering external error: {request.error_code} from {request.source_system}")
 
     try:
-        async with db_manager.get_session() as session:
-            chat_ids = request.chat_ids
-            if not chat_ids:
-                chat_ids = _get_all_support_chats()
-                if chat_ids:
-                    api_logger.debug(f"ℹ️ Using default chat_ids from settings: {chat_ids}")
+        chat_ids = request.chat_ids
+        if not chat_ids:
+            chat_ids = _get_all_support_chats()
+            if chat_ids:
+                api_logger.debug(f"ℹ️ Using default chat_ids from settings: {chat_ids}")
 
-            if not chat_ids:
-                api_logger.warning("⚠️ No chat_ids provided, message will not be sent to Telegram")
+        if not chat_ids:
+            api_logger.warning("⚠️ No chat_ids provided, message will not be sent to Telegram")
 
-            api_logger.info(f"📨 Will send to {len(chat_ids) if chat_ids else 0} chats: {chat_ids}")
+        api_logger.info(f"📨 Will send to {len(chat_ids) if chat_ids else 0} chats: {chat_ids}")
 
-            # Сохранение ошибки (с отправкой в Telegram во все чаты)
-            error = await error_service.log_external_error(
-                error_code=request.error_code,
-                error_message=request.error_message,
-                source_system=request.source_system,
-                user_id=request.user_id,
-                user_login=request.user_login,
-                category=request.category,
-                severity=request.severity,
-                details=request.details,
-                source_module=request.source_module,
-                chat_ids=chat_ids,
-                send_to_telegram=request.send_to_telegram,
-                session=session,
-            )
+        # Сохранение ошибки (с отправкой в Telegram во все чаты)
+        error = await error_service.log_external_error(
+            error_code=request.error_code,
+            error_message=request.error_message,
+            source_system=request.source_system,
+            user_id=request.user_id,
+            user_login=request.user_login,
+            category=request.category,
+            severity=request.severity,
+            details=request.details,
+            source_module=request.source_module,
+            chat_ids=chat_ids,
+            send_to_telegram=request.send_to_telegram,
+            session=session,
+        )
 
-            # Получение количества связанных сообщений
-            message_count = await _get_error_message_count(error.FID)
+        # Получение количества связанных сообщений через репозиторий
+        message_count = await ErrorRepository.get_linked_message_count(session, error.FID)
 
-            api_logger.info(f"✅ Error saved with ID: {error.FID}, linked messages: {message_count}")
+        api_logger.info(f"✅ Error saved with ID: {error.FID}, linked messages: {message_count}")
 
-            return JSONResponse(
-                status_code=201,
-                content={
-                    "success": True,
-                    "error_id": error.FID,
-                    "linked_messages": message_count,
-                    "chats_sent": chat_ids if chat_ids else [],
-                    "message": "Error registered" + (" and message sent" if message_count > 0 else ""),
-                    "timestamp": get_timestamp(),
-                },
-            )
+        return JSONResponse(
+            status_code=201,
+            content={
+                "success": True,
+                "error_id": error.FID,
+                "linked_messages": message_count,
+                "chats_sent": chat_ids if chat_ids else [],
+                "message": "Error registered" + (" and message sent" if message_count > 0 else ""),
+                "timestamp": get_timestamp(),
+            },
+        )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to register external error: {e}", exc_info=True)
@@ -199,30 +167,33 @@ async def register_external_error(request: ErrorRequest) -> JSONResponse:
 
 @router.post("/{error_id}/resolve", summary="Решение ошибки", description="Проверка исчезновения ошибки и ее решение")
 @log_exceptions(api_logger)
-async def resolve_error(error_id: int, request: ErrorResolveRequest) -> JSONResponse:
+async def resolve_error(
+    error_id: int,
+    request: ErrorResolveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Решение ошибки"""
 
     api_logger.info(f"🔧 Resolving error {error_id} by user {request.resolved_by}")
 
     try:
-        async with db_manager.get_session() as session:
-            success, message = await error_service.check_and_resolve_error(
-                error_id=error_id,
-                resolved_by=request.resolved_by,
-                check_procedure=request.check_procedure,
-                session=session,
-            )
+        success, message = await error_service.check_and_resolve_error(
+            error_id=error_id,
+            resolved_by=request.resolved_by,
+            check_procedure=request.check_procedure,
+            session=session,
+        )
 
-            if success:
-                api_logger.info(f"✅ Error {error_id} resolved successfully")
-                return JSONResponse(
-                    status_code=200, content={"success": True, "message": message, "timestamp": get_timestamp()}
-                )
-            else:
-                api_logger.warning(f"⚠️ Failed to resolve error {error_id}: {message}")
-                return JSONResponse(
-                    status_code=400, content={"success": False, "message": message, "timestamp": get_timestamp()}
-                )
+        if success:
+            api_logger.info(f"✅ Error {error_id} resolved successfully")
+            return JSONResponse(
+                status_code=200, content={"success": True, "message": message, "timestamp": get_timestamp()}
+            )
+        else:
+            api_logger.warning(f"⚠️ Failed to resolve error {error_id}: {message}")
+            return JSONResponse(
+                status_code=400, content={"success": False, "message": message, "timestamp": get_timestamp()}
+            )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to resolve error: {e}", exc_info=True)
@@ -231,25 +202,30 @@ async def resolve_error(error_id: int, request: ErrorResolveRequest) -> JSONResp
 
 @router.post("/{error_id}/reopen", summary="Переоткрыть ошибку", description="Переоткрытие ранее решенной ошибки")
 @log_exceptions(api_logger)
-async def reopen_error(error_id: int) -> JSONResponse:
+async def reopen_error(
+    error_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Переоткрытие ошибки"""
 
     api_logger.info(f"🔁 Reopening error {error_id}")
 
     try:
-        async with db_manager.get_session() as session:
-            success, message = await error_service.reopen_error(error_id=error_id, session=session)
+        success, message = await error_service.reopen_error(
+            error_id=error_id,
+            session=session,
+        )
 
-            if success:
-                api_logger.info(f"✅ Error {error_id} reopened successfully")
-                return JSONResponse(
-                    status_code=200, content={"success": True, "message": message, "timestamp": get_timestamp()}
-                )
-            else:
-                api_logger.warning(f"⚠️ Failed to reopen error {error_id}: {message}")
-                return JSONResponse(
-                    status_code=400, content={"success": False, "message": message, "timestamp": get_timestamp()}
-                )
+        if success:
+            api_logger.info(f"✅ Error {error_id} reopened successfully")
+            return JSONResponse(
+                status_code=200, content={"success": True, "message": message, "timestamp": get_timestamp()}
+            )
+        else:
+            api_logger.warning(f"⚠️ Failed to reopen error {error_id}: {message}")
+            return JSONResponse(
+                status_code=400, content={"success": False, "message": message, "timestamp": get_timestamp()}
+            )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to reopen error: {e}", exc_info=True)
@@ -259,21 +235,24 @@ async def reopen_error(error_id: int) -> JSONResponse:
 @router.get("/stats", summary="Статистика ошибок", description="Получение статистики по ошибкам")
 @log_exceptions(api_logger)
 async def get_error_stats(
-    start_date: datetime | None = None, end_date: datetime | None = None, category: ErrorCategory | None = None
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    category: ErrorCategory | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Получение статистики ошибок"""
 
     api_logger.info("📊 Getting error stats")
 
     try:
-        async with db_manager.get_session() as session:
-            stats = await error_service.get_error_stats(
-                start_date=start_date, end_date=end_date, category=category, session=session
-            )
+        stats = await error_service.get_error_stats(
+            start_date=start_date,
+            end_date=end_date,
+            category=category,
+            session=session,
+        )
 
-            return JSONResponse(
-                status_code=200, content={"success": True, "stats": stats, "timestamp": get_timestamp()}
-            )
+        return JSONResponse(status_code=200, content={"success": True, "stats": stats, "timestamp": get_timestamp()})
 
     except Exception as e:
         api_logger.error(f"❌ Failed to get error stats: {e}", exc_info=True)
@@ -284,18 +263,21 @@ async def get_error_stats(
     "/user/{user_id}/stats", summary="Статистика пользователя", description="Статистика пользователя по решению ошибок"
 )
 @log_exceptions(api_logger)
-async def get_user_stats(user_id: int) -> JSONResponse:
+async def get_user_stats(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Получение статистики пользователя"""
 
     api_logger.info(f"📊 Getting user stats for user {user_id}")
 
     try:
-        async with db_manager.get_session() as session:
-            stats = await error_service.get_user_stats(user_id=user_id, session=session)
+        stats = await error_service.get_user_stats(
+            user_id=user_id,
+            session=session,
+        )
 
-            return JSONResponse(
-                status_code=200, content={"success": True, "stats": stats, "timestamp": get_timestamp()}
-            )
+        return JSONResponse(status_code=200, content={"success": True, "stats": stats, "timestamp": get_timestamp()})
 
     except Exception as e:
         api_logger.error(f"❌ Failed to get user stats: {e}", exc_info=True)
@@ -304,121 +286,117 @@ async def get_user_stats(user_id: int) -> JSONResponse:
 
 @router.put("/settings", summary="Настройки уведомлений", description="Обновление настроек уведомлений для чата")
 @log_exceptions(api_logger)
-async def update_notification_settings(request: ChatNotificationSettingsRequest) -> JSONResponse:
+async def update_notification_settings(
+    request: ChatNotificationSettingsRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Обновление настроек уведомлений"""
 
     api_logger.info(f"⚙️ Updating notification settings for chat {request.chat_id}")
 
     try:
-        from sqlalchemy import select
+        # Получение существующих настроек через репозиторий
+        settings_obj = await NotificationSettingsRepository.get_by_chat_id(session=session, chat_id=request.chat_id)
 
-        from ...models import ChatNotificationSettingsModel
-
-        async with db_manager.get_session() as session:
-            stmt = select(ChatNotificationSettingsModel).where(ChatNotificationSettingsModel.FK_Chat == request.chat_id)
-            result = await session.execute(stmt)
-            settings = result.scalar_one_or_none()
-
-            if settings:
-                settings.FSilenceStart = request.silence_start
-                settings.FSilenceEnd = request.silence_end
-                settings.FSilenceEnabled = request.silence_enabled
-                settings.FNotifyErrors = request.notify_errors
-                settings.FNotifyPeriodicTasks = request.notify_periodic_tasks
-                settings.FNotifyTaskExecution = request.notify_task_execution
-                settings.FNotifySystem = request.notify_system
-                settings.FNotificationLevel = request.notification_level
-                settings.FGroupingEnabled = request.grouping_enabled
-                settings.FGroupingWindowMinutes = request.grouping_window_minutes
-                settings.FEnableAutoReports = request.auto_reports_enabled
-                settings.FAutoReportInterval = request.auto_report_interval
-                settings.FAutoReportHourStart = request.auto_report_hour_start
-                settings.FAutoReportHourEnd = request.auto_report_hour_end
-                api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
-            else:
-                settings = ChatNotificationSettingsModel(
-                    FK_Chat=request.chat_id,
-                    FSilenceStart=request.silence_start,
-                    FSilenceEnd=request.silence_end,
-                    FSilenceEnabled=request.silence_enabled,
-                    FNotifyErrors=request.notify_errors,
-                    FNotifyPeriodicTasks=request.notify_periodic_tasks,
-                    FNotifyTaskExecution=request.notify_task_execution,
-                    FNotifySystem=request.notify_system,
-                    FNotificationLevel=request.notification_level,
-                    FGroupingEnabled=request.grouping_enabled,
-                    FGroupingWindowMinutes=request.grouping_window_minutes,
-                    FEnableAutoReports=request.auto_reports_enabled,
-                    FAutoReportInterval=request.auto_report_interval,
-                    FAutoReportHourStart=request.auto_report_hour_start,
-                    FAutoReportHourEnd=request.auto_report_hour_end,
-                )
-                session.add(settings)
-                api_logger.debug(f"ℹ️ Created new settings for chat {request.chat_id}")
-
-            await session.commit()
-
-            api_logger.info(f"✅ Notification settings updated for chat {request.chat_id}")
-
-            return JSONResponse(
-                status_code=200,
-                content={"success": True, "message": "Settings updated successfully", "timestamp": get_timestamp()},
+        if settings_obj:
+            # Обновление существующих настроек
+            settings_obj.FSilenceStart = request.silence_start
+            settings_obj.FSilenceEnd = request.silence_end
+            settings_obj.FSilenceEnabled = request.silence_enabled
+            settings_obj.FNotifyErrors = request.notify_errors
+            settings_obj.FNotifyPeriodicTasks = request.notify_periodic_tasks
+            settings_obj.FNotifyTaskExecution = request.notify_task_execution
+            settings_obj.FNotifySystem = request.notify_system
+            settings_obj.FNotificationLevel = request.notification_level
+            settings_obj.FGroupingEnabled = request.grouping_enabled
+            settings_obj.FGroupingWindowMinutes = request.grouping_window_minutes
+            settings_obj.FEnableAutoReports = request.auto_reports_enabled
+            settings_obj.FAutoReportInterval = request.auto_report_interval
+            settings_obj.FAutoReportHourStart = request.auto_report_hour_start
+            settings_obj.FAutoReportHourEnd = request.auto_report_hour_end
+            api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
+        else:
+            # Создание новых настроек через репозиторий
+            settings_obj = await NotificationSettingsRepository.create(
+                session=session,
+                chat_id=request.chat_id,
+                silence_start=request.silence_start,
+                silence_end=request.silence_end,
+                silence_enabled=request.silence_enabled,
+                notify_errors=request.notify_errors,
+                notify_periodic_tasks=request.notify_periodic_tasks,
+                notify_task_execution=request.notify_task_execution,
+                notify_system=request.notify_system,
+                notification_level=request.notification_level,
+                grouping_enabled=request.grouping_enabled,
+                grouping_window_minutes=request.grouping_window_minutes,
+                auto_reports_enabled=request.auto_reports_enabled,
+                auto_report_interval=request.auto_report_interval,
+                auto_report_hour_start=request.auto_report_hour_start,
+                auto_report_hour_end=request.auto_report_hour_end,
             )
+            api_logger.debug(f"ℹ️ Created new settings for chat {request.chat_id}")
+
+        await session.commit()
+
+        api_logger.info(f"✅ Notification settings updated for chat {request.chat_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "Settings updated successfully", "timestamp": get_timestamp()},
+        )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to update notification settings: {e}", exc_info=True)
+        await session.rollback()
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/settings/{chat_id}", summary="Получить настройки", description="Получение настроек уведомлений для чата")
 @log_exceptions(api_logger)
-async def get_notification_settings(chat_id: int) -> JSONResponse:
+async def get_notification_settings(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Получение настроек уведомлений"""
 
     api_logger.info(f"⚙️ Getting notification settings for chat {chat_id}")
 
     try:
-        from sqlalchemy import select
+        settings_obj = await NotificationSettingsRepository.get_by_chat_id(session=session, chat_id=chat_id)
 
-        from ...models import ChatNotificationSettingsModel
-
-        async with db_manager.get_session() as session:
-            stmt = select(ChatNotificationSettingsModel).where(ChatNotificationSettingsModel.FK_Chat == chat_id)
-            result = await session.execute(stmt)
-            settings = result.scalar_one_or_none()
-
-            if not settings:
-                api_logger.warning(f"⚠️ Settings not found for chat {chat_id}")
-                return JSONResponse(
-                    status_code=404,
-                    content={"success": False, "message": "Settings not found", "timestamp": get_timestamp()},
-                )
-
-            api_logger.info(f"✅ Settings retrieved for chat {chat_id}")
-
+        if not settings_obj:
+            api_logger.warning(f"⚠️ Settings not found for chat {chat_id}")
             return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "settings": {
-                        "silence_start": settings.FSilenceStart,
-                        "silence_end": settings.FSilenceEnd,
-                        "silence_enabled": settings.FSilenceEnabled,
-                        "notify_errors": settings.FNotifyErrors,
-                        "notify_periodic_tasks": settings.FNotifyPeriodicTasks,
-                        "notify_task_execution": settings.FNotifyTaskExecution,
-                        "notify_system": settings.FNotifySystem,
-                        "notification_level": settings.FNotificationLevel.value,
-                        "grouping_enabled": settings.FGroupingEnabled,
-                        "grouping_window_minutes": settings.FGroupingWindowMinutes,
-                        "auto_reports_enabled": settings.FEnableAutoReports,
-                        "auto_report_interval": settings.FAutoReportInterval,
-                        "auto_report_hour_start": settings.FAutoReportHourStart,
-                        "auto_report_hour_end": settings.FAutoReportHourEnd,
-                    },
-                    "timestamp": get_timestamp(),
-                },
+                status_code=404,
+                content={"success": False, "message": "Settings not found", "timestamp": get_timestamp()},
             )
+
+        api_logger.info(f"✅ Settings retrieved for chat {chat_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "settings": {
+                    "silence_start": settings_obj.FSilenceStart,
+                    "silence_end": settings_obj.FSilenceEnd,
+                    "silence_enabled": settings_obj.FSilenceEnabled,
+                    "notify_errors": settings_obj.FNotifyErrors,
+                    "notify_periodic_tasks": settings_obj.FNotifyPeriodicTasks,
+                    "notify_task_execution": settings_obj.FNotifyTaskExecution,
+                    "notify_system": settings_obj.FNotifySystem,
+                    "notification_level": settings_obj.FNotificationLevel.value,
+                    "grouping_enabled": settings_obj.FGroupingEnabled,
+                    "grouping_window_minutes": settings_obj.FGroupingWindowMinutes,
+                    "auto_reports_enabled": settings_obj.FEnableAutoReports,
+                    "auto_report_interval": settings_obj.FAutoReportInterval,
+                    "auto_report_hour_start": settings_obj.FAutoReportHourStart,
+                    "auto_report_hour_end": settings_obj.FAutoReportHourEnd,
+                },
+                "timestamp": get_timestamp(),
+            },
+        )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to get notification settings: {e}", exc_info=True)
@@ -429,7 +407,10 @@ async def get_notification_settings(chat_id: int) -> JSONResponse:
     "/report/{chat_id}", summary="Сгенерировать отчет", description="Генерация автоматического отчета об ошибках"
 )
 @log_exceptions(api_logger)
-async def generate_report(chat_id: int) -> JSONResponse:
+async def generate_report(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """Генерация отчета об ошибках"""
 
     api_logger.info(f"📊 Generating report for chat {chat_id}")
@@ -437,14 +418,14 @@ async def generate_report(chat_id: int) -> JSONResponse:
     try:
         from ...services.notification_service import notification_service
 
-        async with db_manager.get_session() as session:
-            report = await notification_service.generate_auto_report(chat_id=chat_id, session=session)
+        report = await notification_service.generate_auto_report(
+            chat_id=chat_id,
+            session=session,
+        )
 
-            api_logger.info(f"✅ Report generated for chat {chat_id}")
+        api_logger.info(f"✅ Report generated for chat {chat_id}")
 
-            return JSONResponse(
-                status_code=200, content={"success": True, "report": report, "timestamp": get_timestamp()}
-            )
+        return JSONResponse(status_code=200, content={"success": True, "report": report, "timestamp": get_timestamp()})
 
     except Exception as e:
         api_logger.error(f"❌ Failed to generate report: {e}", exc_info=True)

@@ -1,5 +1,4 @@
 import contextlib
-from typing import TYPE_CHECKING
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -13,11 +12,9 @@ from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import ErrorCategory, MessageActionType, MessageType
 from ....services import error_service
+from ....tg.dependencies import get_tg_manager
 from ...keyboards import GroupKeyboard
 from .auth import is_user_authenticated
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
 
 router = Router(name="aiogram_groups")
 
@@ -26,13 +23,6 @@ class GroupStates(StatesGroup):
     """Состояния для работы с группами"""
 
     viewing_groups = State()
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
 
 
 @router.message(Command("groups"))
@@ -161,7 +151,12 @@ async def show_groups(
 
     except Exception as e:
         tg_logger.error(f"❌ Failed to show groups: {e}", exc_info=True)
-        await error_service.log_error(error=e, component="groups", category=ErrorCategory.SYSTEM)
+        await error_service.log_error(
+            error=e,
+            component="groups",
+            category=ErrorCategory.SYSTEM,
+            session=session,
+        )
 
         error_text = "❌ Произошла ошибка при загрузке групп. Попробуйте позже."
 

@@ -51,6 +51,7 @@ class ErrorHandlerMiddleware(BaseMiddleware):
                     "event_type": type(event).__name__,
                     "event_data": self._get_event_summary(event),
                 },
+                session=data.get("session"),
             )
 
             # Отправка ответа пользователю

@@ -14,7 +14,7 @@ from ..logger import db_logger
 from ..models import BaseModel
 
 
-class DatabaseType(StrEnum):
+class DBType(StrEnum):
     """Типы поддерживаемых БД"""
 
     SQLITE = "sqlite"
@@ -23,7 +23,7 @@ class DatabaseType(StrEnum):
 
 
 @dataclass
-class DatabaseConfig:
+class DBConfig:
     """Конфигурация для подключения к БД"""
 
     url: str
@@ -36,20 +36,20 @@ class DatabaseConfig:
     models: type[BaseModel] | None = None
 
     @property
-    def db_type(self) -> DatabaseType:
+    def db_type(self) -> DBType:
         if "sqlite" in self.url.lower():
-            return DatabaseType.SQLITE
+            return DBType.SQLITE
         elif "mssql" in self.url.lower() or "sqlserver" in self.url.lower():
-            return DatabaseType.MSSQL
+            return DBType.MSSQL
         elif "postgres" in self.url.lower() or "postgresql" in self.url.lower():
-            return DatabaseType.POSTGRES
-        return DatabaseType.SQLITE
+            return DBType.POSTGRES
+        return DBType.SQLITE
 
 
-class DatabaseEngine:
+class DBEngine:
     """Обертка для движка БД"""
 
-    def __init__(self, config: DatabaseConfig):
+    def __init__(self, config: DBConfig):
         self.config = config
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker | None = None
@@ -78,7 +78,7 @@ class DatabaseEngine:
 
         db_type = self.config.db_type
 
-        if db_type == DatabaseType.SQLITE:
+        if db_type == DBType.SQLITE:
             self._engine = create_async_engine(
                 self.config.url,
                 echo=self.config.echo,
@@ -123,12 +123,12 @@ class DatabaseEngine:
             db_logger.debug(f"⛔ {self.config.db_type.upper()} engine disposed")
 
 
-class DatabaseManager:
+class DBManager:
     """Универсальный менеджер для работы с несколькими БД"""
 
-    _instance: Optional["DatabaseManager"] = None
+    _instance: Optional["DBManager"] = None
 
-    def __new__(cls) -> "DatabaseManager":
+    def __new__(cls) -> "DBManager":
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -137,17 +137,17 @@ class DatabaseManager:
         if hasattr(self, "_initialized"):
             return
 
-        self._engines: dict[str, DatabaseEngine] = {}
+        self._engines: dict[str, DBEngine] = {}
         self._primary_name: str | None = None
         self._session_counter = 0
         self._initialized = False
 
-    def register_database(self, name: str, config: DatabaseConfig) -> "DatabaseManager":
+    def register_database(self, name: str, config: DBConfig) -> "DBManager":
         """Регистрация новой БД"""
         if name in self._engines:
             db_logger.warning(f"⚠️ Database '{name}' already registered, updating...")
 
-        self._engines[name] = DatabaseEngine(config)
+        self._engines[name] = DBEngine(config)
 
         if config.is_primary or not self._primary_name:
             self._primary_name = name
@@ -157,17 +157,17 @@ class DatabaseManager:
         return self
 
     @property
-    def primary(self) -> DatabaseEngine:
+    def primary(self) -> DBEngine:
         if not self._primary_name or self._primary_name not in self._engines:
             raise RuntimeError("No primary database registered")
         return self._engines[self._primary_name]
 
-    def get_engine(self, name: str) -> DatabaseEngine:
+    def get_engine(self, name: str) -> DBEngine:
         if name not in self._engines:
             raise KeyError(f"Database '{name}' not registered")
         return self._engines[name]
 
-    def get_engine_by_type(self, db_type: DatabaseType) -> DatabaseEngine | None:
+    def get_engine_by_type(self, db_type: DBType) -> DBEngine | None:
         for engine in self._engines.values():
             if engine.config.db_type == db_type:
                 return engine
@@ -232,7 +232,7 @@ class DatabaseManager:
         if not engine.is_initialized:
             await engine.initialize()
 
-        # Получаем модели, если они не заданы - используем BaseModel
+        # Получение моделей, если они не заданы - используем BaseModel
         models = engine.config.models or BaseModel
 
         # Проверка, что models - это класс с атрибутом metadata
@@ -298,13 +298,11 @@ class DatabaseManager:
         }
 
 
-# ============ Создание экземпляра с настройками ============
-
-db_manager = DatabaseManager()
+db_manager = DBManager()
 
 db_manager.register_database(
     "main",
-    DatabaseConfig(
+    DBConfig(
         url=settings.DB_MAIN_URL,
         echo=settings.DB_MAIN_ECHO,
         pool_size=getattr(settings, "DB_MAIN_POOL_SIZE", 10),
@@ -317,7 +315,7 @@ db_manager.register_database(
 if settings.DB_AVANPOST_URL:
     db_manager.register_database(
         "avanpost",
-        DatabaseConfig(
+        DBConfig(
             url=settings.DB_AVANPOST_URL,
             echo=settings.DB_AVANPOST_ECHO,
             pool_size=getattr(settings, "DB_AVANPOST_POOL_SIZE", 5),
@@ -327,9 +325,9 @@ if settings.DB_AVANPOST_URL:
     )
 
 __all__ = [
-    "DatabaseType",
-    "DatabaseConfig",
-    "DatabaseEngine",
-    "DatabaseManager",
+    "DBType",
+    "DBConfig",
+    "DBEngine",
+    "DBManager",
     "db_manager",
 ]

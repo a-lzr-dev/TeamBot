@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -6,15 +6,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Document, Message
 
+from ....db import db_manager
 from ....exceptions import log_exceptions
 from ....logger import tg_logger
 from ....models import MessageActionType, MessageType
 from ....services.automation_service import automation_service
+from ....tg.dependencies import get_tg_manager
 from ...keyboards import AutomationKeyboard
 from .auth import is_user_authenticated
-
-if TYPE_CHECKING:
-    from ....tg import TelegramManager
 
 router = Router(name="aiogram_automation")
 
@@ -35,13 +34,6 @@ class AutomationStates(StatesGroup):
 # ============ Хранилище временных данных ============
 
 _temp_data: dict[int, dict[str, Any]] = {}
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ....tg import tg_manager
-
-    return tg_manager
 
 
 def get_temp_data(user_id: int) -> dict[str, Any]:
@@ -229,9 +221,15 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             return
 
         # Создание заявки
-        result = await automation_service.create_automation_request(
-            user_id=user_id, title=title, description=description, priority=priority, chat_id=callback.message.chat.id
-        )
+        async with db_manager.get_session() as session:
+            result = await automation_service.create_automation_request(
+                user_id=user_id,
+                title=title,
+                description=description,
+                priority=priority,
+                chat_id=callback.message.chat.id,
+                session=session,
+            )
 
         if not result["success"]:
             await tg_manager.edit_callback_message(

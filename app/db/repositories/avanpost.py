@@ -7,6 +7,8 @@ from ...logger import tg_logger
 class AvanpostRepository:
     """Репозиторий для работы с Avanpost (MSSQL)"""
 
+    # ==================== ПОЛЬЗОВАТЕЛИ ====================
+
     @staticmethod
     async def check_user_by_phone(
         session: AsyncSession,
@@ -41,6 +43,52 @@ class AvanpostRepository:
         except Exception as e:
             tg_logger.error(f"❌ Failed to check user in Avanpost: {e}", exc_info=True)
             return None, None
+
+    # ==================== ГРУППЫ ====================
+
+    @staticmethod
+    async def get_groups(
+        session: AsyncSession,
+    ) -> list[dict]:
+        """
+        Получение списка групп действий из Avanpost.
+
+        Args:
+            session: Сессия БД (avanpost)
+
+        Returns:
+            List[Dict]: Список групп
+        """
+        try:
+            sql = """
+                EXEC ext.PA_avp_RSAppScenariosGroups_Load
+            """
+
+            result = await session.execute(text(sql))
+            rows = result.fetchall()
+
+            if not rows:
+                return []
+
+            columns = result.keys()
+            groups = []
+
+            for row in rows:
+                item = dict(zip(columns, row, strict=False))
+                groups.append(
+                    {
+                        "id": item.get("ID"),
+                        "name": item.get("Name"),
+                    }
+                )
+
+            return groups
+
+        except Exception as e:
+            tg_logger.error(f"❌ Failed to get groups: {e}", exc_info=True)
+            return []
+
+    # ==================== ПУНКТЫ МЕНЮ ====================
 
     @staticmethod
     async def get_menu_items(
@@ -93,46 +141,69 @@ class AvanpostRepository:
             return []
 
     @staticmethod
-    async def get_groups(
+    async def has_subitems(
         session: AsyncSession,
-    ) -> list[dict]:
+        group_id: int,
+        item_id: int,
+    ) -> bool:
         """
-        Получение списка групп действий из Avanpost.
+        Проверка, есть ли у пункта меню дочерние элементы.
+        Использует get_menu_items для получения данных.
 
         Args:
             session: Сессия БД (avanpost)
+            group_id: ID группы
+            item_id: ID пункта меню
 
         Returns:
-            List[Dict]: Список групп
+            bool: True, если есть дочерние элементы
         """
         try:
-            sql = """
-                EXEC ext.PA_avp_RSAppScenariosGroups_Load
-            """
+            # Используем существующий метод get_menu_items
+            items = await AvanpostRepository.get_menu_items(
+                session=session,
+                group_id=group_id,
+                parent_item_id=item_id,
+            )
 
-            result = await session.execute(text(sql))
-            rows = result.fetchall()
-
-            if not rows:
-                return []
-
-            columns = result.keys()
-            groups = []
-
-            for row in rows:
-                item = dict(zip(columns, row, strict=False))
-                groups.append(
-                    {
-                        "id": item.get("ID"),
-                        "name": item.get("Name"),
-                    }
-                )
-
-            return groups
+            # Если есть элементы, значит есть дочерние
+            return len(items) > 0
 
         except Exception as e:
-            tg_logger.error(f"❌ Failed to get groups: {e}", exc_info=True)
-            return []
+            tg_logger.error(f"❌ Failed to check subitems for item {item_id} in group {group_id}: {e}", exc_info=True)
+            return False
+
+    # ==================== ОШИБКИ ====================
+
+    @staticmethod
+    async def check_error_exists_by_procedure(
+        session: AsyncSession,
+        error_code: str,
+        check_procedure: str,
+    ) -> bool:
+        """
+        Проверка существования ошибки через хранимую процедуру.
+
+        Args:
+            session: Сессия БД (avanpost)
+            error_code: Код ошибки
+            check_procedure: Имя хранимой процедуры для проверки
+
+        Returns:
+            bool: True, если ошибка все еще существует в системе
+        """
+        try:
+            sql = f"EXEC {check_procedure} @ErrorCode = :error_code"
+            result = await session.execute(text(sql), {"error_code": error_code})
+            rows = result.fetchall()
+
+            # Если есть строки - ошибка все еще существует
+            return len(rows) > 0
+
+        except Exception as e:
+            tg_logger.error(f"❌ Failed to check error via procedure {check_procedure}: {e}", exc_info=True)
+            # При ошибке считаем, что ошибка все еще существует (безопасное поведение)
+            return True
 
 
 __all__ = ["AvanpostRepository"]

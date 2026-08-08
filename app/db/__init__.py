@@ -1,25 +1,34 @@
-from .engine import AsyncSessionLocal, engine
-from .managers import (
-    DatabaseConfig,
-    DatabaseEngine,
-    DatabaseManager,
-    DatabaseType,
+from .dependencies import get_db_manager
+from .manager import (
+    DBConfig,
+    DBEngine,
+    DBManager,
+    DBType,
     db_manager,
 )
-from .repositories import AvanpostRepository, ChatRepository, MessageRepository, UserRepository
+from .repositories import (
+    AvanpostRepository,
+    ChatRepository,
+    ErrorRepository,
+    MessageRepository,
+    ReminderRepository,
+    UserRepository,
+)
 
 __all__ = [
     # Менеджеры
-    "DatabaseManager",
+    "DBManager",
     "db_manager",
-    "DatabaseType",
-    "DatabaseConfig",
-    "DatabaseEngine",
-    "engine",
-    "AsyncSessionLocal",
+    "DBType",
+    "DBConfig",
+    "DBEngine",
     # Репозитории
     "AvanpostRepository",
     "ChatRepository",
+    "ErrorRepository",
     "MessageRepository",
+    "ReminderRepository",
     "UserRepository",
+    # Зависимости
+    "get_db_manager",
 ]

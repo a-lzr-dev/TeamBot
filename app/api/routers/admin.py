@@ -95,13 +95,12 @@ async def readiness() -> JSONResponse:
 
     errors = []
 
-    # Проверка БД
+    # Проверка БД - используем db_manager напрямую, так как это проверка подключения
     try:
-        async with db_manager.get_session():
-            is_connected = await db_manager.check_connection()
-            if not is_connected:
-                errors.append("database unavailable")
-                api_logger.warning("⚠️ Database unavailable")
+        is_connected = await db_manager.check_connection()
+        if not is_connected:
+            errors.append("database unavailable")
+            api_logger.warning("⚠️ Database unavailable")
     except Exception as e:
         api_logger.error(f"❌ Database check failed: {e}")
         errors.append(f"database error: {str(e)}")

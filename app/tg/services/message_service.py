@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError
@@ -10,18 +10,9 @@ from ...db import ChatRepository, MessageRepository, UserRepository, db_manager
 from ...exceptions import log_exceptions
 from ...logger import tg_logger
 from ...models import ChatMessageModel, MessageSource, MessageType, datetime_now
+from ...tg.dependencies import get_tg_manager
 from ..clients import AiogramClient, TelethonClient
 from .base import BaseService
-
-if TYPE_CHECKING:
-    from ...tg import TelegramManager
-
-
-def get_tg_manager() -> "TelegramManager":
-    """Получение глобального tg_manager"""
-    from ...tg import tg_manager
-
-    return tg_manager
 
 
 class UnifiedMessageService(BaseService):
@@ -403,7 +394,7 @@ class UnifiedMessageService(BaseService):
                     MessageType.USER_REQUEST,
                     MessageType.BOT_RESPONSE,
                 ):
-                    from ... import settings
+                    from ...config import settings
 
                     lifetime_seconds = getattr(settings, "BOT_MESSAGE_LIFETIME_SECONDS", 300)
 

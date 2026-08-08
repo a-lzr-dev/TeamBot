@@ -1,3 +1,5 @@
+# app/core/application.py
+
 import asyncio
 from datetime import timedelta
 from enum import StrEnum
@@ -6,9 +8,10 @@ from typing import Any, Optional
 from ..api import api_manager
 from ..config import settings
 from ..db import db_manager
+from ..db.repositories import ReminderRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import MessageType, datetime_now
+from ..models import MessageType, ReminderModel, datetime_now
 from ..services.log_handler_service import log_handler_service
 from ..tg import tg_manager
 
@@ -178,7 +181,7 @@ class ApplicationManager:
         await asyncio.sleep(2)
         await self._start_reminder_checker()
 
-        # ⭐ Запуск сервиса времени жизни сообщений
+        # Запуск сервиса времени жизни сообщений
         try:
             from ..services.message_lifetime_service import message_lifetime_service
 
@@ -230,30 +233,16 @@ class ApplicationManager:
     async def _check_and_send_reminders(self) -> None:
         """Проверка и отправка наступивших напоминаний"""
         try:
-            from sqlalchemy import and_, select
-
-            from ..models import ReminderModel
-
             now = datetime_now()
             app_logger.debug(f"⏰ Checking reminders at {now}")
 
-            async with db_manager.get_session() as session:
-                # Поиск активных напоминаний, время которых наступило
-                stmt = (
-                    select(ReminderModel)
-                    .where(
-                        and_(
-                            ReminderModel.FRemindAt <= now,
-                            ReminderModel.FIsCompleted.is_(False),
-                            ReminderModel.FIsActive,
-                            ReminderModel.FIsDeleted.is_(False),
-                        )
-                    )
-                    .limit(self.REMINDER_BATCH_SIZE)
+            # ✅ Исправлено: объединяем два with в один (SIM117)
+            async with self.db.get_session() as session, session.begin():
+                reminders = await ReminderRepository.get_active_reminders(
+                    session=session,
+                    before_time=now,
+                    limit=self.REMINDER_BATCH_SIZE,
                 )
-
-                result = await session.execute(stmt)
-                reminders = result.scalars().all()
 
                 if not reminders:
                     return
@@ -265,52 +254,53 @@ class ApplicationManager:
                         # Отправка уведомления
                         await self._send_reminder_notification(reminder)
 
-                        # Обновление статуса напоминания
-                        reminder.FRemindCount += 1
-                        reminder.FLastReminded = now
+                        # Обновление статуса через репозиторий
+                        remind_count = reminder.FRemindCount + 1
+                        last_reminded = now
+                        is_active = True
+                        new_remind_at = None
 
                         # Определяем, нужно ли деактивировать напоминание
                         should_deactivate = False
 
-                        # Проверка лимита повторений
-                        if reminder.FMaxRemindCount and reminder.FRemindCount >= reminder.FMaxRemindCount:
+                        if reminder.FMaxRemindCount and remind_count >= reminder.FMaxRemindCount:
                             should_deactivate = True
                             app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (max count reached)")
-
-                        # Проверка даты окончания
                         elif reminder.FRemindUntil and now > reminder.FRemindUntil:
                             should_deactivate = True
                             app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (until date passed)")
 
-                        # Обновление времени следующего напоминания
                         if not should_deactivate and reminder.FRemindInterval and reminder.FRemindInterval > 0:
-                            # Повторяющееся напоминание
-                            reminder.FRemindAt = now + timedelta(minutes=reminder.FRemindInterval)
-                            app_logger.debug(f"⏰ Reminder {reminder.FID} rescheduled to {reminder.FRemindAt}")
+                            new_remind_at = now + timedelta(minutes=reminder.FRemindInterval)
+                            app_logger.debug(f"⏰ Reminder {reminder.FID} rescheduled to {new_remind_at}")
                         elif not should_deactivate:
-                            # Одноразовое - деактивируем после отправки
                             should_deactivate = True
                             app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (one-time)")
 
                         if should_deactivate:
-                            reminder.FIsActive = False
+                            is_active = False
 
-                        await session.commit()
+                        await ReminderRepository.update_reminder_status(
+                            session=session,
+                            reminder_id=reminder.FID,
+                            remind_count=remind_count,
+                            last_reminded=last_reminded,
+                            is_active=is_active,
+                            remind_at=new_remind_at,
+                        )
 
                     except Exception as e:
                         app_logger.error(f"❌ Failed to process reminder {reminder.FID}: {e}", exc_info=True)
-                        await session.rollback()
+                        # session.begin() автоматически откатит транзакцию при ошибке
                         continue
 
         except Exception as e:
             app_logger.error(f"❌ Failed to check reminders: {e}", exc_info=True)
             raise
 
-    async def _send_reminder_notification(self, reminder: Any) -> None:
+    async def _send_reminder_notification(self, reminder: ReminderModel) -> None:
         """Отправка уведомления о напоминании"""
         try:
-            from ..tg import tg_manager
-
             # Формирование текста уведомления
             message = self._format_reminder_message(reminder)
 
@@ -342,10 +332,10 @@ class ApplicationManager:
             raise
 
     @staticmethod
-    def _format_reminder_message(reminder: Any) -> str:
+    def _format_reminder_message(reminder: ReminderModel) -> str:
         """Форматирование сообщения для напоминания"""
         message = "🔔 **Напоминание!**\n\n"
-        message += f"📌 **{reminder.FTitle}**\n"
+        message += f"📌 **{reminder.FTitle or 'Без названия'}**\n"
 
         if reminder.FDescription:
             message += f"📝 {reminder.FDescription}\n"

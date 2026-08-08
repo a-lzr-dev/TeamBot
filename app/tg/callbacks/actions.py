@@ -3,15 +3,10 @@ from typing import Any
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
+from ...db import AvanpostRepository, db_manager
 from ...logger import tg_logger
+from ...tg.dependencies import get_tg_manager
 from .base import BaseCallbackHandler, CallbackHandler
-
-
-def get_tg_manager() -> Any:
-    """Получение глобального tg_manager"""
-    from ...tg import tg_manager
-
-    return tg_manager
 
 
 class ActionCallbackHandler(BaseCallbackHandler):
@@ -170,7 +165,8 @@ class ActionCallbackHandler(BaseCallbackHandler):
 
         await CallbackHandler.answer(callback)
 
-        from ..handlers.aiogram.actions import check_has_subitems, execute_action, show_menu
+        # Убираем импорт check_has_subitems, используем репозиторий напрямую
+        from ..handlers.aiogram.actions import execute_action, show_menu  # <-- УБРАЛИ check_has_subitems
         from ..handlers.aiogram.auth import get_user_group_id
 
         # Извлечение ID действия
@@ -195,7 +191,15 @@ class ActionCallbackHandler(BaseCallbackHandler):
             )
             return
 
-        has_children = await check_has_subitems(group_id, action_id)
+        # ============================================================
+        # ИСПОЛЬЗУЕМ РЕПОЗИТОРИЙ НАПРЯМУЮ ВМЕСТО check_has_subitems
+        # ============================================================
+        async with db_manager.get_session("avanpost") as session:
+            has_children = await AvanpostRepository.has_subitems(
+                session=session,
+                group_id=group_id,
+                item_id=action_id,
+            )
 
         if has_children:
             # ============================================================
