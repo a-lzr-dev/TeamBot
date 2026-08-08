@@ -15,9 +15,6 @@ from ..dependencies import get_session
 router = APIRouter(prefix="/reminders", tags=["Reminders"])
 
 
-# ============ Pydantic модели ============
-
-
 class CreateReminderRequest(BaseModel):
     user_id: int = Field(..., description="ID пользователя")
     title: str = Field(..., description="Название", min_length=1, max_length=500)

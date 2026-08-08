@@ -61,7 +61,7 @@ class APIManager:
 
     @staticmethod
     @asynccontextmanager
-    async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    async def _lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         """Управление жизненным циклом API"""
         # Startup
         api_logger.info("🚀 API starting up...")
@@ -160,7 +160,10 @@ class APIManager:
         self._app.add_middleware(ExceptionHandlerMiddleware)
 
         # Logging Middleware
-        self._app.add_middleware(APILoggingMiddleware)
+        self._app.add_middleware(
+            APILoggingMiddleware,
+            component="api",
+        )
 
         # Metrics Middleware
         self._app.add_middleware(MetricsMiddleware)
@@ -265,7 +268,7 @@ class APIManager:
 
         @self._app.get("/")
         @log_exceptions(api_logger)
-        async def root() -> dict:
+        async def root() -> dict[str, Any]:
             return {
                 "name": "TeamBot API",
                 "version": "1.0.0",
@@ -278,12 +281,12 @@ class APIManager:
 
         @self._app.get("/health")
         @log_exceptions(api_logger)
-        async def health_simple() -> dict:
+        async def health_simple() -> dict[str, Any]:
             return {"status": "ok", "timestamp": datetime_now().isoformat() + "Z"}
 
         @self._app.get("/version")
         @log_exceptions(api_logger)
-        async def version() -> dict:
+        async def version() -> dict[str, Any]:
             return {
                 "version": "1.0.0",
                 "environment": getattr(settings, "APP_ENV", "production"),
@@ -293,7 +296,7 @@ class APIManager:
 
         @self._app.get("/debug/middleware")
         @log_exceptions(api_logger)
-        async def debug_middleware(request: Request) -> dict:
+        async def debug_middleware(request: Request) -> dict[str, Any]:
             return {
                 "middleware_loaded": True,
                 "metrics_middleware_available": hasattr(request.app.state, "metrics_middleware"),
@@ -304,7 +307,7 @@ class APIManager:
 
         @self._app.get("/debug/headers")
         @log_exceptions(api_logger)
-        async def debug_headers(request: Request) -> dict:
+        async def debug_headers(request: Request) -> dict[str, Any]:
             headers = dict(request.headers)
             if "authorization" in headers:
                 headers["authorization"] = "***"
@@ -319,7 +322,7 @@ class APIManager:
 
         @self._app.get("/debug/telegram-status")
         @log_exceptions(api_logger)
-        async def debug_telegram_status() -> dict:
+        async def debug_telegram_status() -> dict[str, Any]:
             try:
                 from ..tg import tg_manager
 
@@ -335,7 +338,7 @@ class APIManager:
 
         @self._app.get("/debug/routes")
         @log_exceptions(api_logger)
-        async def debug_routes() -> dict:
+        async def debug_routes() -> dict[str, Any]:
             routes = []
 
             if self._app is None:

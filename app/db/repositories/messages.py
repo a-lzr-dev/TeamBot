@@ -1,5 +1,3 @@
-# app/db/repositories/messages.py
-
 from datetime import datetime, timedelta
 from typing import Any, cast
 

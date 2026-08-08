@@ -2,7 +2,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from functools import partial, wraps
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError, TelegramNetworkError
@@ -30,21 +30,19 @@ from .services import (
     UnifiedMessageService,
 )
 
-# Типы для декоратора
-P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def ensure_initialized(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+def ensure_initialized(func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
     """Декоратор для автоматической инициализации менеджера"""
 
     @wraps(func)
-    async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
+    async def wrapper(self: Any, *args: Any, **kwargs: Any) -> R:
         if not self._initialized:
             await self.initialize()
         return await func(self, *args, **kwargs)
 
-    return cast("Callable[P, Awaitable[R]]", wrapper)
+    return cast("Callable[..., Awaitable[R]]", wrapper)
 
 
 class TelegramManager:
@@ -160,7 +158,7 @@ class TelegramManager:
         user_group_id: int | None = None,
         lifetime_seconds: int | None = None,
         allow_sender: bool = True,
-        **kwargs: Any,
+        **_kwargs: Any,
     ) -> dict[str, Any]:
         """Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни"""
         return await self._message_service.send_message(

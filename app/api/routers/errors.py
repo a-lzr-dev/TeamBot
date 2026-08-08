@@ -17,9 +17,6 @@ from ..dependencies import get_session
 router = APIRouter(prefix="/errors", tags=["Errors"])
 
 
-# ============ Pydantic модели ============
-
-
 class ErrorRequest(BaseModel):
     """Модель запроса для внешней ошибки"""
 
@@ -317,7 +314,7 @@ async def update_notification_settings(
             api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
         else:
             # Создание новых настроек через репозиторий
-            settings_obj = await NotificationSettingsRepository.create(
+            await NotificationSettingsRepository.create(
                 session=session,
                 chat_id=request.chat_id,
                 silence_start=request.silence_start,
@@ -430,3 +427,6 @@ async def generate_report(
     except Exception as e:
         api_logger.error(f"❌ Failed to generate report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+__all__ = ["router"]

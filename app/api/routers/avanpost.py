@@ -13,9 +13,6 @@ from ...utils.datetime import get_timestamp
 router = APIRouter(prefix="/avanpost", tags=["Avanpost"])
 
 
-# ============ Pydantic модели ============
-
-
 class CheckUserRequest(BaseModel):
     """Модель запроса для проверки пользователя"""
 
@@ -24,11 +21,18 @@ class CheckUserRequest(BaseModel):
     @field_validator("phone_number")
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        """Валидация номера телефона"""
-        # Удаляем все не-цифры и плюс
+        """Валидация и нормализация номера телефона."""
         cleaned = "".join(c for c in v if c.isdigit() or c == "+")
-        if not cleaned or len(cleaned) < 5:
-            raise ValueError("Invalid phone number format")
+
+        if not cleaned:
+            raise ValueError("Phone number cannot be empty")
+
+        if len(cleaned) < 5:
+            raise ValueError("Phone number must be at least 5 characters")
+
+        if len(cleaned) > 20:
+            raise ValueError("Phone number must not exceed 20 characters")
+
         return cleaned
 
 
@@ -112,15 +116,6 @@ def _validate_item_id(item_id: int) -> None:
         raise HTTPException(status_code=400, detail="Item ID must be positive")
 
 
-def _validate_phone_number(phone: str) -> str:
-    """Нормализация номера телефона"""
-    # Удаляем все не-цифры, кроме +
-    cleaned = "".join(c for c in phone if c.isdigit() or c == "+")
-    if not cleaned:
-        raise HTTPException(status_code=400, detail="Phone number cannot be empty")
-    return cleaned
-
-
 # ============ Эндпоинты ============
 
 
@@ -138,7 +133,7 @@ async def check_user_by_phone(
     Проверка пользователя по номеру телефона.
 
     Args:
-        request: Запрос с номером телефона
+        request: Запрос с номером телефона (уже провалидирован и нормализован)
 
     Returns:
         CheckUserResponse: Результат проверки
@@ -146,10 +141,8 @@ async def check_user_by_phone(
     api_logger.info(f"📱 Checking user by phone: {request.phone_number}")
 
     try:
-        # Нормализация номера
-        phone = _validate_phone_number(request.phone_number)
+        phone = request.phone_number
 
-        # Вызов хранимой процедуры через репозиторий
         async with db_manager.get_session("avanpost") as session:
             user_id, group_id = await AvanpostRepository.check_user_by_phone(
                 session=session,
@@ -181,6 +174,7 @@ async def check_user_by_phone(
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
+                success=False,
                 error=f"Failed to check user: {str(e)}",
                 timestamp=get_timestamp(),
             ).model_dump(),
@@ -232,6 +226,7 @@ async def get_groups() -> JSONResponse:
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
+                success=False,
                 error=f"Failed to get groups: {str(e)}",
                 timestamp=get_timestamp(),
             ).model_dump(),
@@ -264,7 +259,6 @@ async def get_menu_items(
     """
     api_logger.info(f"📋 Getting menu items for group {group_id}, parent={parent_item_id}")
 
-    # Валидация
     _validate_group_id(group_id)
 
     try:
@@ -306,6 +300,7 @@ async def get_menu_items(
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
+                success=False,
                 error=f"Failed to get menu items: {str(e)}",
                 timestamp=get_timestamp(),
             ).model_dump(),
@@ -335,7 +330,6 @@ async def check_has_subitems(
     """
     api_logger.info(f"🔍 Checking subitems for group {group_id}, item {item_id}")
 
-    # Валидация
     _validate_group_id(group_id)
     _validate_item_id(item_id)
 
@@ -367,6 +361,7 @@ async def check_has_subitems(
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
+                success=False,
                 error=f"Failed to check subitems: {str(e)}",
                 timestamp=get_timestamp(),
             ).model_dump(),
@@ -399,14 +394,12 @@ async def get_menu_tree(
 
     try:
         async with db_manager.get_session("avanpost") as session:
-            # Получение корневых элементов
             root_items = await AvanpostRepository.get_menu_items(
                 session=session,
                 group_id=group_id,
                 parent_item_id=None,
             )
 
-            # Рекурсивное построение дерева
             tree = await _build_menu_tree(
                 session=session,
                 group_id=group_id,
@@ -467,17 +460,14 @@ async def get_item_ancestors(
 
     try:
         async with db_manager.get_session("avanpost") as session:
-            # Сбор всех элементов группы
             all_items = await AvanpostRepository.get_menu_items(
                 session=session,
                 group_id=group_id,
                 parent_item_id=None,
             )
 
-            # Построение карты элементов по ID
             items_map = {item.get("id"): item for item in all_items}
 
-            # Поиск пути
             ancestors = []
             current_id: int | None = item_id
 
@@ -493,7 +483,6 @@ async def get_item_ancestors(
                 parent_id = item.get("parent_id")
                 current_id = int(parent_id) if parent_id is not None else None
 
-            # Разворачивание пути (от корня к элементу)
             ancestors.reverse()
 
         return JSONResponse(
@@ -539,7 +528,6 @@ async def health_check_avanpost() -> JSONResponse:
 
     try:
         async with db_manager.get_session("avanpost") as session:
-            # Простая проверка - пытаемся выполнить запрос
             from sqlalchemy import text
 
             result = await session.execute(text("SELECT 1"))
@@ -604,7 +592,6 @@ async def _build_menu_tree(
             "parent_id": item.get("parent_id"),
         }
 
-        # Если есть дочерние элементы и не достигнута максимальная глубина
         if item.get("has_subitems", False) and current_depth < max_depth - 1:
             children = await AvanpostRepository.get_menu_items(
                 session=session,
@@ -629,17 +616,4 @@ async def _build_menu_tree(
     return tree
 
 
-# ============ Экспорт ============
-
-__all__ = [
-    "router",
-    # Модели
-    "CheckUserRequest",
-    "CheckUserResponse",
-    "MenuItemResponse",
-    "MenuItemsResponse",
-    "GroupResponse",
-    "GroupsResponse",
-    "CheckSubitemsResponse",
-    "ErrorResponse",
-]
+__all__ = ["router"]

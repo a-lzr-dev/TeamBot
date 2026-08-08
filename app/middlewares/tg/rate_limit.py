@@ -45,11 +45,10 @@ class RateLimitMiddleware(BaseMiddleware):
         self.send_warning = send_warning
         self.warning_message = warning_message
 
-        # Получаем значения с правильными типами
         tg_rate_limit: int = getattr(settings, "TG_RATE_LIMIT", 10)
         tg_command_limit: int = getattr(settings, "TG_COMMAND_LIMIT", 5)
 
-        # Регистрируем Telegram scope
+        # Регистрация Telegram scope
         config = RateLimitConfig(
             limit=limit if limit is not None else tg_rate_limit,
             period=period if period is not None else 60,
@@ -57,7 +56,7 @@ class RateLimitMiddleware(BaseMiddleware):
         )
         rate_limit_manager.register_scope(RateLimitScope.TELEGRAM, config)
 
-        # Регистрируем Command scope (отдельный лимитер для команд)
+        # Регистрация Command scope (отдельный лимитер для команд)
         command_config = RateLimitConfig(
             limit=command_limit if command_limit is not None else tg_command_limit,
             period=command_period,
@@ -119,7 +118,7 @@ class RateLimitMiddleware(BaseMiddleware):
         remaining = rate_limit_manager.get_remaining(scope, key)
         reset_time = rate_limit_manager.get_reset_time(scope, key)
 
-        # Получаем информацию о блокировке
+        # Получение информации о блокировке
         entry_info = None
         limiter = rate_limit_manager.get_limiter(scope)
         if limiter:

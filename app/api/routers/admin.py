@@ -12,7 +12,6 @@ from ...utils.datetime import get_timestamp
 router = APIRouter(tags=["Admin"])
 
 
-# ============ Pydantic модели ============
 class HealthResponse(BaseModel):
     """Модель ответа для health check"""
 
@@ -95,7 +94,7 @@ async def readiness() -> JSONResponse:
 
     errors = []
 
-    # Проверка БД - используем db_manager напрямую, так как это проверка подключения
+    # Проверка БД
     try:
         is_connected = await db_manager.check_connection()
         if not is_connected:
@@ -322,14 +321,4 @@ async def reset_metrics(request: Request) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Metrics middleware not configured")
 
 
-__all__ = [
-    "router",
-    # Pydantic модели (если они нужны в других модулях)
-    "HealthResponse",
-    "DatabaseHealthResponse",
-    "ServiceStatusResponse",
-    "FullHealthResponse",
-    "StatsResponse",
-    # Вспомогательные функции
-    "create_service_status",
-]
+__all__ = ["router"]

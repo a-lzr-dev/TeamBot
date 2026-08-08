@@ -1,8 +1,9 @@
 import time
 from collections.abc import Awaitable, Callable
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from ...logger import api_logger
 
@@ -10,7 +11,7 @@ from ...logger import api_logger
 class APILoggingMiddleware(BaseHTTPMiddleware):
     """Middleware для логирования HTTP запросов и ответов"""
 
-    def __init__(self, app: FastAPI, component: str = "api") -> None:
+    def __init__(self, app: ASGIApp, component: str = "api") -> None:
         super().__init__(app)
         self.component = component
 

@@ -262,7 +262,6 @@ class TelethonClient(BaseTelegramClient):
 
         try:
             self._client.remove_event_handler(handler_func)
-            # Удаляем из списка
             self._event_handlers = [(h, e) for (h, e) in self._event_handlers if h != handler_func]
             tg_logger.debug("✅ Event handler removed")
             return True

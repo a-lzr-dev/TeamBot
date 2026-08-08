@@ -1,11 +1,10 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import ParamSpec, TypeVar
+from typing import Any, TypeVar
 
 from .logger import LoggerProtocol, app_logger
 
-P = ParamSpec("P")
 R = TypeVar("R")
 
 
@@ -65,7 +64,7 @@ class PyWin32Error(ConversionError):
 
 def log_exceptions(
     logger: LoggerProtocol = app_logger,
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
+) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
     """
     Декоратор для логирования исключений в асинхронных функциях.
 
@@ -76,9 +75,9 @@ def log_exceptions(
         Декорированная функция
     """
 
-    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+    def decorator(func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
         @wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        async def wrapper(*args: Any, **kwargs: Any) -> R:
             try:
                 return await func(*args, **kwargs)
             except asyncio.CancelledError:
@@ -95,7 +94,7 @@ def log_exceptions(
 
 def log_exceptions_sync(
     logger: LoggerProtocol = app_logger,
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
+) -> Callable[[Callable[..., R]], Callable[..., R]]:
     """
     Декоратор для логирования исключений в синхронных функциях.
 
@@ -106,9 +105,9 @@ def log_exceptions_sync(
         Декорированная функция
     """
 
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
+    def decorator(func: Callable[..., R]) -> Callable[..., R]:
         @wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        def wrapper(*args: Any, **kwargs: Any) -> R:
             try:
                 return func(*args, **kwargs)
             except Exception as e:

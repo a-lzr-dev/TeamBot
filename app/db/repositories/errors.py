@@ -1,5 +1,3 @@
-# app/db/repositories/errors.py
-
 import hashlib
 from datetime import datetime, timedelta
 from typing import Any, cast
@@ -584,11 +582,11 @@ class ErrorRepository:
             return False
 
         if delete_linked:
-            # Удаляем связи
+            # Удаление связей
             stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error == error_id)
             await session.execute(stmt)
 
-        # Удаляем ошибку
+        # Удаление ошибки
         stmt = delete(ErrorModel).where(ErrorModel.FID == error_id)
         result = await session.execute(stmt)
         await session.commit()
@@ -617,11 +615,11 @@ class ErrorRepository:
             return 0
 
         if delete_linked:
-            # Удаляем связи
+            # Удаление связей
             stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error.in_(error_ids))
             await session.execute(stmt)
 
-        # Удаляем ошибки
+        # Удаление ошибки
         stmt = delete(ErrorModel).where(ErrorModel.FID.in_(error_ids))
         result = await session.execute(stmt)
         await session.commit()

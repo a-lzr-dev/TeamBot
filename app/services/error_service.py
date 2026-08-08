@@ -37,8 +37,6 @@ class ErrorService:
 
         self._cache_ttl = getattr(settings, "ERROR_GROUP_CACHE_TTL_SECONDS", 300)
 
-    # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
-
     @log_exceptions(app_logger)
     async def log_error(
         self,
@@ -683,8 +681,6 @@ class ErrorService:
                 session=session,
                 user_id=user_id,
             )
-
-    # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     def _validate_category(category: Any | None) -> ErrorCategory:

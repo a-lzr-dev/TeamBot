@@ -1,19 +1,17 @@
-# app/core/application.py
-
 import asyncio
 from datetime import timedelta
 from enum import StrEnum
 from typing import Any, Optional
 
-from ..api import api_manager
+from ..api.manager import api_manager
 from ..config import settings
-from ..db import db_manager
+from ..db.manager import db_manager
 from ..db.repositories import ReminderRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import MessageType, ReminderModel, datetime_now
 from ..services.log_handler_service import log_handler_service
-from ..tg import tg_manager
+from ..tg.manager import tg_manager
 
 
 class AppState(StrEnum):
@@ -151,13 +149,12 @@ class ApplicationManager:
     async def _start_api(self) -> None:
         app_logger.debug("🌐 Starting API...")
 
-        # Проверяем наличие метода initialize у api_manager
         if hasattr(self.api, "initialize") and callable(self.api.initialize):
             await self.api.initialize()
         else:
             app_logger.debug("ℹ️ API initialize not needed or not available")
 
-        # Создаем задачу для запуска API
+        # Создание задачи для запуска API
         if hasattr(self.api, "start") and callable(self.api.start):
             api_start_coro = self.api.start()
             if asyncio.iscoroutine(api_start_coro):
@@ -225,7 +222,6 @@ class ApplicationManager:
 
             except Exception as e:
                 app_logger.error(f"❌ Reminder checker error: {e}", exc_info=True)
-                # При ошибке ждем и продолжаем
                 await asyncio.sleep(self.REMINDER_CHECK_INTERVAL)
 
         app_logger.debug("⏰ Reminder check loop finished")
@@ -259,7 +255,7 @@ class ApplicationManager:
                         is_active = True
                         new_remind_at = None
 
-                        # Определяем, нужно ли деактивировать напоминание
+                        # Определение, нужно ли деактивировать напоминание
                         should_deactivate = False
 
                         if reminder.FMaxRemindCount and remind_count >= reminder.FMaxRemindCount:
@@ -355,7 +351,7 @@ class ApplicationManager:
             next_time = reminder.FRemindAt + timedelta(minutes=reminder.FRemindInterval)
             message += f"⏰ Следующее: {next_time.strftime('%d.%m.%Y %H:%M')}\n"
 
-        # Добавляем инструкции
+        # Добавление инструкции
         message += "\n✅ Для завершения дела используйте /complete"
 
         return message
@@ -384,7 +380,7 @@ class ApplicationManager:
                 if component in to_stop:
                     await self._stop_component(component, graceful)
 
-            # Всегда останавливаем LogHandlerService в последнюю очередь
+            # Останавливаение LogHandlerService в последнюю очередь
             await self._stop_log_handler(graceful)
 
             if graceful:
@@ -416,7 +412,7 @@ class ApplicationManager:
         """Остановка LogHandlerService"""
         app_logger.debug("🚀 Stopping LogHandlerService...")
         try:
-            # Проверяем наличие атрибутов перед использованием
+            # Проверка наличия атрибутов перед использованием
             if hasattr(log_handler_service, "_shutting_down"):
                 log_handler_service._shutting_down = True
 
@@ -468,7 +464,7 @@ class ApplicationManager:
     async def _stop_database(self, graceful: bool = True) -> None:
         app_logger.debug("🚀 Stopping database starting...")
         try:
-            # Останавливаем LogHandlerService перед закрытием БД
+            # Останавка LogHandlerService перед закрытием БД
             await self._stop_log_handler(graceful)
             if hasattr(self.db, "close_all") and callable(self.db.close_all):
                 await self.db.close_all()

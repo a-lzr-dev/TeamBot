@@ -2,20 +2,24 @@ import asyncio
 import contextlib
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..db import UserRepository
+from ..db import AutomationRequestRepository, UserRepository, db_manager
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import MessageType, datetime_now
+from ..models import (
+    AutomationRequestPriority,
+    AutomationRequestStatus,
+    MessageType,
+    datetime_now,
+)
 
-# ============ ИМПОРТЫ ДЛЯ PYWIN32 ============
-
-# Проверка, что мы на Windows
+# Проверка, что на Windows
 IS_WINDOWS = sys.platform == "win32"
 
 # Импорт pywin32 (только для Windows)
@@ -26,11 +30,11 @@ if IS_WINDOWS:
 
         HAS_PYWIN32 = True
         app_logger.info("✅ pywin32 loaded successfully (Windows)")
-    except ImportError as e:
+    except ImportError as import_error:
         pythoncom = None
         win32com = None
         HAS_PYWIN32 = False
-        app_logger.warning(f"⚠️ pywin32 not installed: {e}. Install: pip install pywin32")
+        app_logger.warning(f"⚠️ pywin32 not installed: {import_error}. Install: pip install pywin32")
 else:
     pythoncom = None
     win32com = None
@@ -44,10 +48,10 @@ if IS_WINDOWS:
 
         HAS_COMTYPES = True
         app_logger.info("✅ comtypes loaded successfully (Windows)")
-    except ImportError as e:
+    except ImportError as import_error:
         comtypes = None
         HAS_COMTYPES = False
-        app_logger.warning(f"⚠️ comtypes not installed: {e}. Install: pip install comtypes")
+        app_logger.warning(f"⚠️ comtypes not installed: {import_error}. Install: pip install comtypes")
 else:
     comtypes = None
     HAS_COMTYPES = False
@@ -57,10 +61,10 @@ try:
     import subprocess
 
     HAS_SUBPROCESS = True
-except ImportError:
+except ImportError as import_error:
     subprocess = None  # type: ignore[assignment]
     HAS_SUBPROCESS = False
-    app_logger.warning("⚠️ subprocess module not available")
+    app_logger.warning(f"⚠️ subprocess module not available: {import_error}")
 
 # Проверка наличия LibreOffice
 HAS_LIBREOFFICE = False
@@ -72,19 +76,8 @@ if HAS_SUBPROCESS and subprocess is not None:
             app_logger.info("✅ LibreOffice found")
         else:
             app_logger.warning("⚠️ LibreOffice not found. Install: sudo apt-get install libreoffice")
-    except Exception as e:
-        app_logger.warning(f"⚠️ LibreOffice check failed: {e}")
-
-
-class ConversionStats(TypedDict, total=False):
-    """Тип для статистики конвертаций"""
-
-    total: int
-    success: int
-    failed: int
-    by_method: dict[str, int]
-    enabled: bool
-    max_entries: int
+    except Exception as check_error:
+        app_logger.warning(f"⚠️ LibreOffice check failed: {check_error}")
 
 
 class AutomationService:
@@ -95,11 +88,8 @@ class AutomationService:
         self._temp_dir = Path(tempfile.gettempdir()) / "teambot_automation"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
 
-        # Хранилище заявок (в реальном проекте - БД)
-        self._requests: list[dict[str, Any]] = []
-
-        # Статистика конвертаций с явными типами
-        self._conversion_stats: ConversionStats = {
+        # Статистика конвертаций
+        self._conversion_stats: dict[str, Any] = {
             "total": 0,
             "success": 0,
             "failed": 0,
@@ -136,10 +126,14 @@ class AutomationService:
 
     @log_exceptions(app_logger)
     async def convert_doc_to_pdf(
-        self, doc_content: bytes, filename: str = "document.docx", user_id: int | None = None, method: str | None = None
+        self,
+        doc_content: bytes,
+        filename: str = "document.docx",
+        user_id: int | None = None,
+        method: str | None = None,
     ) -> dict[str, Any]:
         """
-        Конвертация DOC/DOCX в PDF с использованием pywin32
+        Конвертация DOC/DOCX в PDF.
 
         Args:
             doc_content: Содержимое документа в байтах
@@ -153,7 +147,6 @@ class AutomationService:
         if method is None:
             method = settings.AUTOMATION_CONVERSION_METHOD
 
-        # Безопасное обновление статистики
         self._conversion_stats["total"] = self._conversion_stats.get("total", 0) + 1
 
         app_logger.info(f"🔄 Converting DOC to PDF: {filename} (user={user_id}, method={method})")
@@ -190,7 +183,6 @@ class AutomationService:
 
         temp_doc_path = None
         temp_pdf_path = None
-        error_message: str | None = None
 
         try:
             # Сохранение временного DOC-файла
@@ -237,14 +229,14 @@ class AutomationService:
                 }
 
             # Чтение PDF-файла
-            with open(temp_pdf_path, "rb") as f:
-                pdf_content = f.read()
+            with open(temp_pdf_path, "rb") as pdf_file:
+                pdf_content = pdf_file.read()
 
             file_size = len(pdf_content)
 
             self._conversion_stats["success"] = self._conversion_stats.get("success", 0) + 1
 
-            # Безопасное обновление словаря by_method
+            # Обновление статистики по методам
             by_method = self._conversion_stats.get("by_method", {})
             by_method[method] = by_method.get(method, 0) + 1
             self._conversion_stats["by_method"] = by_method
@@ -260,12 +252,12 @@ class AutomationService:
                 "error": None,
             }
 
-        except Exception as err:
+        except Exception as conversion_error:
             self._conversion_stats["failed"] = self._conversion_stats.get("failed", 0) + 1
-            app_logger.error(f"❌ DOC to PDF conversion failed: {err}", exc_info=True)
+            app_logger.error(f"❌ DOC to PDF conversion failed: {conversion_error}", exc_info=True)
             return {
                 "success": False,
-                "error": f"Ошибка конвертации: {str(err)}",
+                "error": f"Ошибка конвертации: {str(conversion_error)}",
                 "pdf_content": None,
                 "pdf_filename": None,
                 "file_size": None,
@@ -308,8 +300,8 @@ class AutomationService:
 
                     return True, None
 
-                except Exception as er:
-                    return False, str(er)
+                except Exception as pywin32_error:
+                    return False, str(pywin32_error)
 
                 finally:
                     # Закрытие Word
@@ -329,8 +321,8 @@ class AutomationService:
             else:
                 return False, error or "pywin32 conversion failed"
 
-        except Exception as err:
-            return False, f"pywin32 error: {str(err)}"
+        except Exception as pywin32_error:
+            return False, f"pywin32 error: {str(pywin32_error)}"
 
     @staticmethod
     async def _convert_with_comtypes(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
@@ -358,8 +350,8 @@ class AutomationService:
 
                     return True, None
 
-                except Exception as er:
-                    return False, str(er)
+                except Exception as comtypes_error:
+                    return False, str(comtypes_error)
 
             success, error = await asyncio.to_thread(convert_in_thread)
 
@@ -368,8 +360,8 @@ class AutomationService:
             else:
                 return False, error or "comtypes conversion failed"
 
-        except Exception as err:
-            return False, f"comtypes error: {str(err)}"
+        except Exception as comtypes_error:
+            return False, f"comtypes error: {str(comtypes_error)}"
 
     @staticmethod
     async def _convert_with_libreoffice(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
@@ -400,8 +392,8 @@ class AutomationService:
             else:
                 return False, "PDF file not created"
 
-        except Exception as err:
-            return False, f"LibreOffice error: {str(err)}"
+        except Exception as libreoffice_error:
+            return False, f"LibreOffice error: {str(libreoffice_error)}"
 
     @staticmethod
     async def _cleanup_temp_files(doc_path: Path | None, pdf_path: Path | None) -> None:
@@ -411,10 +403,10 @@ class AutomationService:
                 try:
                     path.unlink()
                     app_logger.debug(f"🗑️ Deleted temp file: {path}")
-                except Exception as err:
-                    app_logger.warning(f"⚠️ Could not delete temp file {path}: {err}")
+                except Exception as cleanup_error:
+                    app_logger.warning(f"⚠️ Could not delete temp file {path}: {cleanup_error}")
 
-    # ============ ЗАЯВКИ НА АВТОМАТИЗАЦИЮ ============
+    # ============ ЗАЯВКИ НА АВТОМАТИЗАЦИЮ (БД) ============
 
     @log_exceptions(app_logger)
     async def create_automation_request(
@@ -427,108 +419,412 @@ class AutomationService:
         chat_id: int | None = None,
         session: AsyncSession,
     ) -> dict[str, Any]:
-        """Создание заявки на автоматизацию"""
+        """
+        Создание заявки на автоматизацию в БД.
+
+        Args:
+            user_id: ID пользователя
+            title: Название заявки
+            description: Описание заявки
+            priority: Приоритет (low, medium, high, critical)
+            chat_id: ID чата для уведомлений
+            session: Сессия БД
+
+        Returns:
+            dict: Результат операции
+        """
         app_logger.info(f"📝 Creating automation request from user {user_id}: {title}")
 
-        # Используем репозиторий вместо прямого запроса
+        # Проверка пользователя через репозиторий
         user = await UserRepository.get_user_by_id(session, user_id)
 
         if not user:
             app_logger.warning(f"⚠️ User {user_id} not found")
             return {"success": False, "error": "Пользователь не найден", "request_id": None}
 
-        # Формирование заявки
-        request = {
-            "id": len(self._requests) + 1,
-            "user_id": user_id,
-            "user_name": user.fullname or user.FUserName,
-            "title": title,
-            "description": description,
-            "priority": priority,
-            "chat_id": chat_id,
-            "status": "new",
-            "created_at": datetime_now().isoformat(),
-            "updated_at": datetime_now().isoformat(),
+        # Преобразование приоритета
+        priority_map = {
+            "low": AutomationRequestPriority.LOW,
+            "medium": AutomationRequestPriority.MEDIUM,
+            "high": AutomationRequestPriority.HIGH,
+            "critical": AutomationRequestPriority.CRITICAL,
         }
+        priority_enum = priority_map.get(priority.lower(), AutomationRequestPriority.MEDIUM)
 
-        # Сохранение в памяти (в реальном проекте - в БД)
-        self._requests.append(request)
-
-        # Отправка уведомления в чат поддержки
-        if chat_id:
-            await self._send_request_notification(request, chat_id)
-
-        app_logger.info(f"✅ Automation request created: #{request['id']}")
-
-        return {"success": True, "request_id": request["id"], "request": request, "error": None}
-
-    @staticmethod
-    async def _send_request_notification(request: dict[str, Any], chat_id: int) -> None:
-        """Отправка уведомления о новой заявке в Telegram"""
         try:
-            from ..tg import tg_manager
-
-            priority_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(
-                request["priority"], "🟡"
-            )
-
-            message = (
-                f"📋 **Новая заявка на автоматизацию**\n\n"
-                f"#{request['id']} {priority_emoji} **{request['title']}**\n\n"
-                f"👤 **Пользователь:** {request['user_name']}\n"
-                f"🆔 **User ID:** {request['user_id']}\n"
-                f"📅 **Создана:** {request['created_at']}\n"
-                f"📊 **Приоритет:** {request['priority'].upper()}\n\n"
-                f"📝 **Описание:**\n{request['description']}\n\n"
-                f"Статус: 🆕 Новая"
-            )
-
-            send_result = await tg_manager.send_message(
+            # Сохранение в БД через репозиторий
+            request = await AutomationRequestRepository.create(
+                session=session,
+                user_id=user_id,
+                title=title,
+                description=description,
+                priority=priority_enum,
                 chat_id=chat_id,
-                message_type=MessageType.BOT_RESPONSE,
-                text=message,
-                parse_mode="Markdown",
             )
 
-            if send_result.get("success"):
-                app_logger.info(f"✅ Request notification sent to chat {chat_id}")
-            else:
-                app_logger.warning(f"⚠️ Failed to send notification: {send_result.get('error')}")
+            await session.commit()
 
-        except Exception as err:
-            app_logger.error(f"❌ Failed to send notification: {err}")
+            app_logger.info(f"✅ Automation request created: #{request.FID}")
+
+            # Отправка уведомления в чат поддержки
+            if chat_id:
+                await self._send_request_notification(request, chat_id)
+
+            return {
+                "success": True,
+                "request_id": request.FID,
+                "request": self._format_request(request),
+                "error": None,
+            }
+
+        except Exception as create_error:
+            app_logger.error(f"❌ Failed to create automation request: {create_error}", exc_info=True)
+            await session.rollback()
+            return {"success": False, "error": str(create_error), "request_id": None}
 
     @log_exceptions(app_logger)
-    async def get_requests(self, user_id: int | None = None, status: str | None = None) -> list[dict[str, Any]]:
-        """Получение списка заявок"""
-        requests = self._requests
+    async def get_requests(
+        self,
+        user_id: int | None = None,
+        status: str | None = None,
+        priority: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Получение списка заявок из БД.
 
-        if user_id:
-            requests = [r for r in requests if r["user_id"] == user_id]
+        Args:
+            user_id: ID пользователя (опционально)
+            status: Статус заявки (опционально)
+            priority: Приоритет (опционально)
+            limit: Лимит записей
+            offset: Смещение
+            session: Сессия БД (опционально)
 
+        Returns:
+            list[dict]: Список заявок
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.get_requests(
+                    user_id=user_id,
+                    status=status,
+                    priority=priority,
+                    limit=limit,
+                    offset=offset,
+                    session=new_session,
+                )
+
+        # Преобразование статуса
+        status_enum = None
         if status:
-            requests = [r for r in requests if r["status"] == status]
+            try:
+                status_enum = AutomationRequestStatus(status)
+            except ValueError as status_error:
+                app_logger.warning(f"⚠️ Invalid status: {status}, error: {status_error}")
 
-        return requests
+        # Преобразование приоритета
+        priority_enum = None
+        if priority:
+            try:
+                priority_enum = AutomationRequestPriority(priority)
+            except ValueError as priority_error:
+                app_logger.warning(f"⚠️ Invalid priority: {priority}, error: {priority_error}")
+
+        # Получение заявок через репозиторий
+        if user_id:
+            requests = await AutomationRequestRepository.get_by_user(
+                session=session,
+                user_id=user_id,
+                status=status_enum,
+                limit=limit,
+                offset=offset,
+            )
+        else:
+            requests = await AutomationRequestRepository.get_all(
+                session=session,
+                status=status_enum,
+                priority=priority_enum,
+                limit=limit,
+                offset=offset,
+            )
+
+        return [self._format_request(req) for req in requests]
 
     @log_exceptions(app_logger)
-    async def update_request_status(self, request_id: int, status: str, note: str | None = None) -> dict[str, Any]:
-        """Обновление статуса заявки"""
-        for request in self._requests:
-            if request["id"] == request_id:
-                request["status"] = status
-                request["updated_at"] = datetime_now().isoformat()
-                if note:
-                    request["note"] = note
+    async def get_request_by_id(
+        self,
+        request_id: int,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Получение заявки по ID.
 
-                app_logger.info(f"✅ Request #{request_id} status updated to {status}")
-                return {"success": True, "request": request, "error": None}
+        Args:
+            request_id: ID заявки
+            session: Сессия БД (опционально)
 
-        return {"success": False, "error": f"Заявка #{request_id} не найдена", "request": None}
+        Returns:
+            dict | None: Заявка или None
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.get_request_by_id(request_id, new_session)
+
+        request = await AutomationRequestRepository.get_by_id(session, request_id)
+
+        if not request:
+            return None
+
+        return self._format_request(request)
+
+    @log_exceptions(app_logger)
+    async def update_request_status(
+        self,
+        request_id: int,
+        status: str,
+        note: str | None = None,
+        completed_by: int | None = None,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """
+        Обновление статуса заявки.
+
+        Args:
+            request_id: ID заявки
+            status: Новый статус
+            note: Примечание
+            completed_by: ID пользователя, завершившего заявку
+            session: Сессия БД (опционально)
+
+        Returns:
+            dict: Результат операции
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.update_request_status(
+                    request_id=request_id,
+                    status=status,
+                    note=note,
+                    completed_by=completed_by,
+                    session=new_session,
+                )
+
+        # Преобразование статуса
+        try:
+            status_enum = AutomationRequestStatus(status)
+        except ValueError as status_error:
+            return {"success": False, "error": f"Неверный статус: {status}, error: {status_error}"}
+
+        try:
+            success, request = await AutomationRequestRepository.update_status(
+                session=session,
+                request_id=request_id,
+                status=status_enum,
+                note=note,
+                completed_by=completed_by,
+            )
+
+            if not success:
+                return {"success": False, "error": f"Заявка #{request_id} не найдена"}
+
+            await session.commit()
+
+            app_logger.info(f"✅ Request #{request_id} status updated to {status}")
+
+            return {
+                "success": True,
+                "request": self._format_request(request) if request else None,
+                "error": None,
+            }
+
+        except Exception as update_error:
+            app_logger.error(f"❌ Failed to update request status: {update_error}", exc_info=True)
+            await session.rollback()
+            return {"success": False, "error": str(update_error)}
+
+    @log_exceptions(app_logger)
+    async def update_request_priority(
+        self,
+        request_id: int,
+        priority: str,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """
+        Обновление приоритета заявки.
+
+        Args:
+            request_id: ID заявки
+            priority: Новый приоритет
+            session: Сессия БД (опционально)
+
+        Returns:
+            dict: Результат операции
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.update_request_priority(
+                    request_id=request_id,
+                    priority=priority,
+                    session=new_session,
+                )
+
+        # Преобразование приоритета
+        try:
+            priority_enum = AutomationRequestPriority(priority)
+        except ValueError as priority_error:
+            return {"success": False, "error": f"Неверный приоритет: {priority}, error: {priority_error}"}
+
+        try:
+            success, request = await AutomationRequestRepository.update_priority(
+                session=session,
+                request_id=request_id,
+                priority=priority_enum,
+            )
+
+            if not success:
+                return {"success": False, "error": f"Заявка #{request_id} не найдена"}
+
+            await session.commit()
+
+            app_logger.info(f"✅ Request #{request_id} priority updated to {priority}")
+
+            return {
+                "success": True,
+                "request": self._format_request(request) if request else None,
+                "error": None,
+            }
+
+        except Exception as update_error:
+            app_logger.error(f"❌ Failed to update request priority: {update_error}", exc_info=True)
+            await session.rollback()
+            return {"success": False, "error": str(update_error)}
+
+    @log_exceptions(app_logger)
+    async def get_stats(
+        self,
+        user_id: int | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """
+        Получение статистики по заявкам.
+
+        Args:
+            user_id: ID пользователя (опционально)
+            start_date: Начальная дата (ISO формат)
+            end_date: Конечная дата (ISO формат)
+            session: Сессия БД (опционально)
+
+        Returns:
+            dict: Статистика
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.get_stats(
+                    user_id=user_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    session=new_session,
+                )
+
+        # Парсинг дат
+        start_dt = None
+        end_dt = None
+
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+            except ValueError as start_error:
+                app_logger.warning(f"⚠️ Invalid start_date: {start_date}, error: {start_error}")
+
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+            except ValueError as end_error:
+                app_logger.warning(f"⚠️ Invalid end_date: {end_date}, error: {end_error}")
+
+        return await AutomationRequestRepository.get_stats(
+            session=session,
+            user_id=user_id,
+            start_date=start_dt,
+            end_date=end_dt,
+        )
+
+    @log_exceptions(app_logger)
+    async def delete_request(
+        self,
+        request_id: int,
+        soft: bool = True,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """
+        Удаление заявки.
+
+        Args:
+            request_id: ID заявки
+            soft: Мягкое удаление (изменение статуса на CANCELLED)
+            session: Сессия БД (опционально)
+
+        Returns:
+            dict: Результат операции
+        """
+        if session is None:
+            async with db_manager.get_session() as new_session:
+                return await self.delete_request(
+                    request_id=request_id,
+                    soft=soft,
+                    session=new_session,
+                )
+
+        try:
+            if soft:
+                # Мягкое удаление - меняем статус
+                success, _ = await AutomationRequestRepository.update_status(
+                    session=session,
+                    request_id=request_id,
+                    status=AutomationRequestStatus.CANCELLED,
+                    note="Удалено пользователем",
+                )
+            else:
+                # Жесткое удаление
+                success = await AutomationRequestRepository.delete(
+                    session=session,
+                    request_id=request_id,
+                    soft=False,
+                )
+
+            if not success:
+                return {"success": False, "error": f"Заявка #{request_id} не найдена"}
+
+            await session.commit()
+
+            app_logger.info(f"✅ Request #{request_id} deleted (soft={soft})")
+
+            return {
+                "success": True,
+                "message": f"Заявка #{request_id} {'отменена' if soft else 'удалена'}",
+                "error": None,
+            }
+
+        except Exception as delete_error:
+            app_logger.error(f"❌ Failed to delete request: {delete_error}", exc_info=True)
+            await session.rollback()
+            return {"success": False, "error": str(delete_error)}
+
+    # ============ СТАТИСТИКА КОНВЕРТАЦИЙ ============
 
     @log_exceptions(app_logger)
     async def get_conversion_stats(self) -> dict[str, Any]:
-        """Получение статистики конвертаций"""
+        """
+        Получение статистики конвертаций.
+
+        Returns:
+            dict: Статистика конвертаций
+        """
         total = self._conversion_stats.get("total", 0)
         success = self._conversion_stats.get("success", 0)
         failed = self._conversion_stats.get("failed", 0)
@@ -545,7 +841,113 @@ class AutomationService:
             "pywin32_available": HAS_PYWIN32,
             "comtypes_available": HAS_COMTYPES,
             "libreoffice_available": HAS_LIBREOFFICE,
+            "enabled": self._conversion_stats.get("enabled", True),
         }
+
+    # ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ============
+
+    @staticmethod
+    async def _send_request_notification(request: Any, chat_id: int) -> None:
+        """
+        Отправка уведомления о новой заявке в Telegram.
+
+        Args:
+            request: Модель заявки
+            chat_id: ID чата
+        """
+        try:
+            from ..tg import tg_manager
+
+            priority_emoji = {
+                AutomationRequestPriority.LOW: "🟢",
+                AutomationRequestPriority.MEDIUM: "🟡",
+                AutomationRequestPriority.HIGH: "🟠",
+                AutomationRequestPriority.CRITICAL: "🔴",
+            }.get(request.FPriority, "🟡")
+
+            status_emoji = {
+                AutomationRequestStatus.NEW: "🆕",
+                AutomationRequestStatus.IN_PROGRESS: "🔄",
+                AutomationRequestStatus.COMPLETED: "✅",
+                AutomationRequestStatus.CANCELLED: "❌",
+                AutomationRequestStatus.REJECTED: "⛔",
+            }.get(request.FStatus, "📌")
+
+            message = (
+                f"📋 **Новая заявка на автоматизацию**\n\n"
+                f"#{request.FID} {priority_emoji} **{request.FTitle}**\n\n"
+                f"👤 **Пользователь:** {request.user.fullname if request.user else request.FK_User}\n"
+                f"🆔 **User ID:** {request.FK_User}\n"
+                f"📅 **Создана:** {request.FCreatedAt.strftime('%d.%m.%Y %H:%M')}\n"
+                f"📊 **Приоритет:** {request.FPriority.value.upper()}\n\n"
+                f"📝 **Описание:**\n{request.FDescription[:300]}{'...' if len(request.FDescription) > 300 else ''}\n\n"
+                f"Статус: {status_emoji} {request.FStatus.value.upper()}"
+            )
+
+            send_result = await tg_manager.send_message(
+                chat_id=chat_id,
+                message_type=MessageType.SYSTEM_ALERT,
+                text=message,
+                parse_mode="Markdown",
+            )
+
+            if send_result.get("success"):
+                app_logger.info(f"✅ Request notification sent to chat {chat_id}")
+            else:
+                app_logger.warning(f"⚠️ Failed to send notification: {send_result.get('error')}")
+
+        except Exception as notify_error:
+            app_logger.error(f"❌ Failed to send notification: {notify_error}")
+
+    @staticmethod
+    def _format_request(request: Any) -> dict[str, Any]:
+        """
+        Форматирование заявки для вывода.
+
+        Args:
+            request: Модель заявки
+
+        Returns:
+            dict: Отформатированная заявка
+        """
+        return {
+            "id": request.FID,
+            "user_id": request.FK_User,
+            "user_name": request.user.fullname if request.user else None,
+            "title": request.FTitle,
+            "description": request.FDescription,
+            "priority": request.FPriority.value,
+            "status": request.FStatus.value,
+            "chat_id": request.FK_Chat,
+            "note": request.FNote,
+            "completed_at": request.FCompletedAt.isoformat() + "Z" if request.FCompletedAt else None,
+            "completed_by": request.FCompletedBy,
+            "created_at": request.FCreatedAt.isoformat() + "Z",
+            "updated_at": request.FUpdatedAt.isoformat() + "Z",
+        }
+
+    # ============ СТАТУС И ЗДОРОВЬЕ ============
+
+    async def get_status(self) -> dict[str, Any]:
+        """Получение статуса сервиса"""
+        return {
+            "initialized": self._initialized,
+            "temp_dir": str(self._temp_dir),
+            "conversion_stats": self._conversion_stats,
+            "platform": sys.platform,
+            "pywin32_available": HAS_PYWIN32,
+            "comtypes_available": HAS_COMTYPES,
+            "libreoffice_available": HAS_LIBREOFFICE,
+        }
+
+    async def health_check(self) -> bool:
+        """Проверка здоровья сервиса"""
+        return self._initialized
 
 
 automation_service = AutomationService()
+
+__all__ = [
+    "AutomationService",
+    "automation_service",
+]

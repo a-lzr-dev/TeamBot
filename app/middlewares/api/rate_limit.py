@@ -1,9 +1,10 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 from ...config import settings
 from ...core import RateLimitConfig, RateLimitScope, rate_limit_manager
@@ -15,7 +16,7 @@ class APIRateLimitMiddleware(BaseHTTPMiddleware):
 
     def __init__(
         self,
-        app: FastAPI,
+        app: ASGIApp,
         limit: int | None = None,
         period: int | None = None,
         exclude_paths: list[str] | None = None,

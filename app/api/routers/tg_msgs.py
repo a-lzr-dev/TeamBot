@@ -16,9 +16,6 @@ from ..dependencies import get_session
 router = APIRouter(prefix="/tg/msgs", tags=["Telegram Messages"])
 
 
-# ============ Pydantic модели ============
-
-
 class SendMessageRequest(BaseModel):
     """Модель запроса для отправки сообщения"""
 
@@ -122,9 +119,6 @@ class BatchSetLifetimeRequest(BaseModel):
     lifetime_seconds: int | None = Field(None, description="Время жизни в секундах", ge=10, le=2592000)
 
 
-# ============ УНИВЕРСАЛЬНАЯ МОДЕЛЬ ЗАПРОСА ============
-
-
 class UnifiedSendRequest(BaseModel):
     """
     Универсальная модель для отправки сообщений.
@@ -178,7 +172,7 @@ class UnifiedSendRequest(BaseModel):
     lifetime_seconds: int | None = Field(None, description="Время жизни сообщения в секундах")
 
     def get_messages(self) -> list[SendMessageRequest]:
-        """Преобразует входные данные в список сообщений"""
+        """Преобразование входных данных в список сообщений"""
         # Если есть messages в обертке
         if self.messages is not None:
             if isinstance(self.messages, SendMessageRequest):
@@ -188,10 +182,8 @@ class UnifiedSendRequest(BaseModel):
 
         # Если есть прямые поля (без обертки)
         if self.text is not None:
-            # Определяем send_to_all
             send_to_all = self.send_to_all if self.send_to_all is not None else (self.chat_id is None)
 
-            # Создаем словарь с данными
             data: dict[str, Any] = {
                 "chat_id": self.chat_id,
                 "text": self.text,
@@ -207,7 +199,6 @@ class UnifiedSendRequest(BaseModel):
                 "lifetime_seconds": self.lifetime_seconds,
             }
 
-            # Если send_to_all=True, удаляем chat_id из данных
             if send_to_all:
                 data.pop("chat_id", None)
 
@@ -263,7 +254,7 @@ async def send_single_message(tg_manager: Any, msg: SendMessageRequest, _: int |
         if result.get("success"):
             api_logger.info(f"Message sent to chat {msg.chat_id}")
 
-            # Вычисляем время истечения
+            # Вычисление времени истечения
             expires_at = None
             if msg.lifetime_seconds:
                 expires_at = (datetime_now() + timedelta(seconds=msg.lifetime_seconds)).isoformat() + "Z"
@@ -387,7 +378,7 @@ async def send_message_to_all_chats(tg_manager: Any, msg: SendMessageRequest, se
         raise HTTPException(status_code=500, detail=f"Failed to send message to all chats: {str(e)}") from e
 
 
-# ============ УНИВЕРСАЛЬНЫЙ ЭНДПОИНТ ============
+# ============ Эндпоинты ============
 
 
 @router.post(
@@ -532,9 +523,6 @@ async def send_message_unified(
     return JSONResponse(status_code=status_code, content=response.model_dump())
 
 
-# ============ ЭНДПОИНТЫ ДЛЯ УПРАВЛЕНИЯ ВРЕМЕНЕМ ЖИЗНИ ============
-
-
 @router.post(
     "/messages/lifetime",
     summary="Установить время жизни сообщения",
@@ -591,7 +579,6 @@ async def set_messages_lifetime_batch(
     session: Any = Depends(get_session),
 ) -> JSONResponse:
     """Установка времени жизни для нескольких сообщений"""
-    # Проверяем, что lifetime_seconds указан
     if request.lifetime_seconds is None:
         raise HTTPException(status_code=400, detail="lifetime_seconds is required for batch operation")
 
@@ -695,7 +682,6 @@ async def get_message_lifetime_info(
     api_logger.info(f"📊 Getting lifetime info for message {message_id}")
 
     try:
-        # Используем репозиторий для получения сообщения
         message = await MessageRepository.get_message_by_id(session, message_id)
 
         if not message:
@@ -741,9 +727,6 @@ async def get_message_lifetime_info(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-# ============ ЭНДПОИНТЫ ДЛЯ РАБОТЫ С УДАЛЕННЫМИ СООБЩЕНИЯМИ ============
-
-
 @router.get(
     "/messages/deleted",
     summary="Получить статистику удаленных сообщений",
@@ -784,9 +767,12 @@ async def get_deleted_messages(
     api_logger.info(f"Getting deleted messages for chat {chat_id or 'all'}")
 
     try:
-        # Используем репозиторий для получения сообщений
         messages = await ChatRepository.get_messages(
-            session=session, chat_id=chat_id, include_deleted=True, limit=limit, offset=offset
+            session=session,
+            chat_id=chat_id,
+            include_deleted=True,
+            limit=limit,
+            offset=offset,
         )
 
         deleted_messages = [m for m in messages if m.FFlagDeleted]
@@ -888,7 +874,6 @@ async def get_message_deletion_info(
     api_logger.info(f"Getting deletion info for message {message_id}")
 
     try:
-        # Используем репозиторий для получения сообщения
         message = await MessageRepository.get_message_by_id(session, message_id)
 
         if not message:
@@ -1154,7 +1139,6 @@ async def get_stats(
     api_logger.info("Getting stats...")
 
     try:
-        # Статистика отдается через репозитории
         from ...db.repositories.stats import StatsRepository
 
         stats = await StatsRepository.get_full_stats(session)
@@ -1173,14 +1157,4 @@ async def get_stats(
         raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}") from e
 
 
-__all__ = [
-    "router",
-    "SendMessageRequest",
-    "SendMessageResponse",
-    "BatchSendMessageResponse",
-    "SendMessageToAllResponse",
-    "UnifiedSendRequest",
-    "ErrorResponse",
-    "SetLifetimeRequest",
-    "BatchSetLifetimeRequest",
-]
+__all__ = ["router"]

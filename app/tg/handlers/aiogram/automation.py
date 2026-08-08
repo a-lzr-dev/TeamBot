@@ -53,7 +53,7 @@ def clear_temp_data(user_id: int) -> None:
 
 @router.message(Command("automation"))
 @log_exceptions(tg_logger)
-async def cmd_automation(message: Message, state: FSMContext) -> None:
+async def cmd_automation(message: Message, _state: FSMContext) -> None:
     """Команда для вызова меню автоматизации"""
     tg_manager = get_tg_manager()
     user_id = message.from_user.id
@@ -188,8 +188,6 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             await tg_manager.edit_callback_message(
                 text=f"❌ **Ошибка конвертации**\n\n{str(e)}",
                 callback=callback,
-                message_type=MessageType.COMMAND_AUTOMATION,
-                delete_by_type=MessageActionType.COMMAND_AUTOMATION_CLEANUP,
                 parse_mode="Markdown",
                 reply_markup=AutomationKeyboard.get_back_keyboard(),
             )
@@ -304,7 +302,8 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 
     # --- Мои заявки ---
     elif data == "automation_my_requests":
-        requests = await automation_service.get_requests(user_id=user_id)
+        async with db_manager.get_session() as session:
+            requests = await automation_service.get_requests(user_id=user_id, session=session)
 
         if not requests:
             await tg_manager.edit_callback_message(
@@ -335,7 +334,10 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             text += f"\n... и еще {len(requests) - 5} заявок"
 
         await tg_manager.edit_callback_message(
-            callback, text, parse_mode="Markdown", reply_markup=AutomationKeyboard.get_back_keyboard()
+            callback,
+            text,
+            parse_mode="Markdown",
+            reply_markup=AutomationKeyboard.get_back_keyboard(),
         )
 
     # --- Отмена ---
@@ -355,7 +357,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 
 @router.message(AutomationStates.waiting_for_file, F.document)
 @log_exceptions(tg_logger)
-async def handle_document_for_convert(message: Message, state: FSMContext) -> None:
+async def handle_document_for_convert(message: Message, _state: FSMContext) -> None:
     """Обработка документа для конвертации"""
     tg_manager = get_tg_manager()
     user_id = message.from_user.id
@@ -565,8 +567,6 @@ async def show_automation_menu(callback: CallbackQuery, state: FSMContext) -> No
         reply_markup=keyboard,
     )
 
-
-# ============ Экспорт ============
 
 __all__ = [
     "router",

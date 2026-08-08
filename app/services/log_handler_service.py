@@ -344,7 +344,6 @@ class LogHandlerService:
                 try:
                     app_logger.debug(f"📤 Sending to chat {chat_id}")
 
-                    # Получаем менеджер через зависимость
                     tg_manager = get_tg_manager()
 
                     # Отправка сообщения

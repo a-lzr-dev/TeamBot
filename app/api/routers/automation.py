@@ -16,9 +16,6 @@ from ..dependencies import get_session
 router = APIRouter(prefix="/automation", tags=["Automation"])
 
 
-# ============ Pydantic модели ============
-
-
 class ConvertDocRequest(BaseModel):
     """Модель запроса для конвертации DOC в PDF"""
 
@@ -245,9 +242,7 @@ async def create_automation_request(
     request: AutomationRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Создание заявки на автоматизацию
-    """
+    """Создание заявки на автоматизацию"""
     api_logger.info(f"📝 Creating automation request from user {request.user_id}")
 
     # Проверка приоритета
@@ -314,9 +309,7 @@ async def get_automation_requests(
     user_id: int | None = None,
     status: str | None = None,
 ) -> JSONResponse:
-    """
-    Получение списка заявок
-    """
+    """Получение списка заявок"""
     api_logger.info(f"📋 Getting automation requests (user={user_id}, status={status})")
 
     try:
@@ -350,9 +343,7 @@ async def update_request_status(
     status: str,
     note: str | None = None,
 ) -> JSONResponse:
-    """
-    Обновление статуса заявки
-    """
+    """Обновление статуса заявки"""
     api_logger.info(f"🔄 Updating request #{request_id} status to {status}")
 
     valid_statuses = ["new", "in_progress", "completed", "cancelled", "rejected"]
@@ -379,11 +370,4 @@ async def update_request_status(
         )
 
 
-__all__ = [
-    "router",
-    "ConvertDocRequest",
-    "ConvertDocResponse",
-    "AutomationRequest",
-    "AutomationRequestResponse",
-    "RequestStatusResponse",
-]
+__all__ = ["router"]

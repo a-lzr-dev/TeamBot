@@ -7,6 +7,7 @@ from .manager import (
     db_manager,
 )
 from .repositories import (
+    AutomationRequestRepository,
     AvanpostRepository,
     ChatRepository,
     ErrorRepository,
@@ -24,6 +25,7 @@ __all__ = [
     "DBEngine",
     # Репозитории
     "AvanpostRepository",
+    "AutomationRequestRepository",
     "ChatRepository",
     "ErrorRepository",
     "MessageRepository",

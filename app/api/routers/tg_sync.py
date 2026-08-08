@@ -14,9 +14,6 @@ from ...utils import get_timestamp
 router = APIRouter(prefix="/tg/sync", tags=["Telegram Sync"])
 
 
-# ============ Pydantic модели ============
-
-
 class SyncChatRequest(BaseModel):
     """Модель запроса для синхронизации чата"""
 
@@ -149,7 +146,7 @@ async def check_account_type(tg_manager: Any) -> str:
     return account_type_str
 
 
-# ============ ЭНДПОИНТЫ СИНХРОНИЗАЦИИ ============
+# ============ Эндпоинты ============
 
 
 @router.post(
@@ -402,12 +399,4 @@ async def clear_sync_cache(chat_id: int | None = None) -> JSONResponse:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e), "timestamp": get_timestamp()})
 
 
-__all__ = [
-    "router",
-    "SyncChatRequest",
-    "SyncChatResponse",
-    "SyncAllChatsRequest",
-    "SyncAllChatsResponse",
-    "SyncStatusResponse",
-    "ClearCacheResponse",
-]
+__all__ = ["router"]

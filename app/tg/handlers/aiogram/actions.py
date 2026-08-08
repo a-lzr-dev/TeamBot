@@ -272,16 +272,14 @@ async def show_menu(
             items=menu_items, parent_id=parent_id, is_admin=is_admin, is_root_menu=(parent_item_id is None)
         )
 
-        # Для callback ВСЕГДА удаляем и отправляем новое
         if is_callback and isinstance(event, CallbackQuery):
-            # Удаляем старое сообщение
             try:
                 await tg_manager.delete_message_by_link(event.message)
                 tg_logger.debug(f"🗑️ Deleted old message {event.message.message_id}")
             except Exception as e:
                 tg_logger.warning(f"⚠️ Failed to delete old message: {e}")
 
-            # Отправляем новое сообщение
+            # Отправка нового сообщения
             result = await tg_manager.send_message(
                 chat_id=event.message.chat.id,
                 text=header_text,
@@ -296,7 +294,6 @@ async def show_menu(
                 tg_logger.debug(f"✅ Sent new message {result.get('message_id')}")
 
         else:
-            # Для обычных сообщений (не callback) - отправляем как обычно
             await tg_manager.send_message(
                 chat_id=event.chat.id,
                 text=header_text,
@@ -356,19 +353,17 @@ async def execute_action(callback: CallbackQuery, action_id: int, state: FSMCont
     """
     tg_manager = get_tg_manager()
     try:
-        # Получаем group_id из состояния или из данных пользователя
         state_data = await state.get_data()
         group_id = state_data.get("group_id")
 
         if not group_id:
-            # Если group_id нет в состоянии, пробуем получить из БД
             group_id = await get_user_group_id(callback.from_user.id)
 
         if not group_id:
             await tg_manager.send_toast(text="❌ Не удалось определить группу действий", event=callback)
             return
 
-        # Получаем информацию о действии
+        # Получение информации о действии
         action_info = None
         async with db_manager.get_session("avanpost") as session:
             items = await AvanpostRepository.get_menu_items(
@@ -377,13 +372,11 @@ async def execute_action(callback: CallbackQuery, action_id: int, state: FSMCont
                 parent_item_id=None,
             )
 
-            # Ищем нужное действие
             for item in items:
                 if item.get("id") == action_id:
                     action_info = item
                     break
 
-        # Формируем текст Toast
         if action_info:
             action_name = action_info.get("name", "Без названия")
             toast_text = f"🚧️ {action_name}. Функционал в разработке..."
@@ -467,8 +460,6 @@ async def start_cleanup_scheduler() -> None:
             tg_logger.error(f"❌ Cleanup scheduler error: {e}", exc_info=True)
             await asyncio.sleep(60)
 
-
-# ============ ЭКСПОРТ ФУНКЦИЙ ============
 
 __all__ = [
     "router",

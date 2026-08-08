@@ -256,7 +256,6 @@ def get_content_type(message: Any | None) -> str:
     if message is None:
         return "text"
 
-    # Получаем content_type
     content_type = getattr(message, "content_type", None)
     if content_type is None:
         return "text"
@@ -282,7 +281,6 @@ def get_media_info(message: Any | None) -> dict[str, Any]:
     # Photo
     photo = getattr(message, "photo", None)
     if photo:
-        # Берем последний (самый большой) фото
         if isinstance(photo, list) and photo:
             photo = photo[-1]
         media_info.update(

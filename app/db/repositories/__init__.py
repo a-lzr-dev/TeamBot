@@ -1,3 +1,4 @@
+from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .chats import ChatRepository
 from .errors import ErrorRepository
@@ -10,6 +11,7 @@ from .users import UserRepository
 
 __all__ = [
     "AvanpostRepository",
+    "AutomationRequestRepository",
     "ChatRepository",
     "ErrorRepository",
     "ErrorFilterRepository",
