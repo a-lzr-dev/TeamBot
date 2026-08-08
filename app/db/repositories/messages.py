@@ -31,7 +31,6 @@ class MessageRepository:
         """
         stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         return cast("ChatMessageModel | None", result.scalar_one_or_none())
 
     @staticmethod
@@ -364,8 +363,8 @@ class MessageRepository:
     async def get_messages_by_date_range(
         session: AsyncSession,
         chat_id: int | None = None,
-        start_date: datetime | None = None,  # ✅ Исправлено: datetime вместо datetime_now
-        end_date: datetime | None = None,  # ✅ Исправлено: datetime вместо datetime_now
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         include_deleted: bool = False,
         limit: int = 100,
         offset: int = 0,

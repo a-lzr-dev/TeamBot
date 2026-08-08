@@ -21,10 +21,8 @@ class AiogramBotService(BaseService):
     """Сервис для управления ботом"""
 
     _instance: Optional["AiogramBotService"] = None
-
-    # Явное объявление типов атрибутов класса
     _client: AiogramClient | None
-    _bot: Any | None  # Bot из aiogram
+    _bot: Any | None
     _initialized: bool
 
     def __new__(cls, aiogram_client: AiogramClient | None = None) -> "AiogramBotService":
@@ -91,7 +89,7 @@ class AiogramBotService(BaseService):
             bot_commands = [BotCommand(command=cmd["command"], description=cmd["description"]) for cmd in commands]
 
             if scope:
-                # Можно добавить поддержку разных скоупов
+                # Для поддержки скоупов
                 pass
 
             await self._bot.set_my_commands(bot_commands)

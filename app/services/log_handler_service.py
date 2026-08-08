@@ -167,7 +167,7 @@ class LogHandlerService:
             # Логирование ошибки через error_service
             error_model, chat_message = await error_service.log_error(
                 error=error_obj,
-                session=None,  # error_service требует session, но мы передаем None
+                session=None,
                 component=record.name,
                 user_id=context.get("user_id"),
                 chat_id=context.get("chat_id"),

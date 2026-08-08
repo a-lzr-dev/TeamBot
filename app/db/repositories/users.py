@@ -106,7 +106,6 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
-        # Явно указываем тип для результата
         user: UserModel | None = await session.get(UserModel, user_id)
         return user
 
@@ -119,7 +118,6 @@ class UserRepository:
 
         stmt = select(UserModel).where(UserModel.FPhone == phone)
         result: Result = await session.execute(stmt)
-        # Явное приведение типа
         user: UserModel | None = result.scalar_one_or_none()
         return user
 
@@ -192,12 +190,10 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        # Исправляем условие WHERE - используем and_() для правильной работы
         from sqlalchemy import and_
 
         stmt = select(UserModel).where(and_(UserModel.FID == user_id, UserModel.FK_Avanpost.is_not(None)))
         result: Result = await session.execute(stmt)
-        # Проверяем, есть ли результат
         return result.first() is not None
 
     # ==================== МЕТОДЫ ОБНОВЛЕНИЯ ====================

@@ -107,7 +107,6 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         return cast("ErrorModel | None", result.scalar_one_or_none())
 
     @staticmethod
@@ -136,7 +135,6 @@ class ErrorRepository:
             ErrorModel.FStatus.in_(statuses),
         )
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         return cast("ErrorModel | None", result.scalar_one_or_none())
 
     @staticmethod
@@ -315,7 +313,6 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         error = cast("ErrorModel | None", result.scalar_one_or_none())
 
         if not error:
@@ -457,7 +454,6 @@ class ErrorRepository:
             ErrorMessageLinkModel.FK_Message == message_id,
         )
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         existing = cast("ErrorMessageLinkModel | None", result.scalar_one_or_none())
 
         if existing:
@@ -990,7 +986,6 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FGroupHash == group_hash)
         result = await session.execute(stmt)
-        # ✅ Исправлено: явное приведение типа
         return cast("ErrorModel | None", result.scalar_one_or_none())
 
     @staticmethod

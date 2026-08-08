@@ -159,10 +159,10 @@ class APIManager:
         # Exception Handler Middleware
         self._app.add_middleware(ExceptionHandlerMiddleware)
 
-        # Logging Middleware - передаем КЛАСС, а не экземпляр
+        # Logging Middleware
         self._app.add_middleware(APILoggingMiddleware)
 
-        # Metrics Middleware - передаем КЛАСС, а не экземпляр
+        # Metrics Middleware
         self._app.add_middleware(MetricsMiddleware)
 
     def _setup_routers(self) -> None:

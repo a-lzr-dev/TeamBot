@@ -292,7 +292,6 @@ class ChatRepository:
         result: Result = await session.execute(query)
         rows = result.all()
 
-        # Исправляем: явно извлекаем значения
         total = 0
         by_day = {}
         for row in rows:
@@ -363,7 +362,6 @@ class ChatRepository:
         result: Result = await session.execute(query)
         rows = result.all()
 
-        # Исправляем: явно извлекаем значения
         by_type: dict[str, int] = {}
         total = 0
         for row in rows:

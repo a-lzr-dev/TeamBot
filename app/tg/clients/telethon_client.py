@@ -160,7 +160,7 @@ class TelethonClient(BaseTelegramClient):
             silent = disable_notification
 
             # Формирование параметров для Telethon
-            send_kwargs: dict[str, Any] = {}  # ✅ Явная аннотация
+            send_kwargs: dict[str, Any] = {}
             if parse_mode is not None:
                 if parse_mode == "HTML":
                     send_kwargs["parse_mode"] = "html"
@@ -172,7 +172,7 @@ class TelethonClient(BaseTelegramClient):
                     send_kwargs["parse_mode"] = parse_mode.lower()
 
             if silent:
-                send_kwargs["silent"] = True  # ✅ Теперь тип правильный (dict[str, Any])
+                send_kwargs["silent"] = True
 
             if reply_to is not None:
                 send_kwargs["reply_to"] = reply_to

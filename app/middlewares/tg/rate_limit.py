@@ -166,11 +166,9 @@ class RateLimitMiddleware(BaseMiddleware):
     def _get_chat_id(event: TelegramObject) -> int | None:
         """Получение ID чата из события"""
         if isinstance(event, Message):
-            # Явно приводим к int
             chat_id = event.chat.id
             return int(chat_id) if chat_id is not None else None
         elif isinstance(event, CallbackQuery) and event.message:
-            # Явно приводим к int
             chat_id = event.message.chat.id
             return int(chat_id) if chat_id is not None else None
         return None

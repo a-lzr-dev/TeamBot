@@ -207,7 +207,6 @@ class SyncService(ISyncService):
             return False
 
         try:
-            # Явно приводим результат к bool
             return bool(await self._client.is_connected())
         except Exception:
             return False

@@ -64,7 +64,7 @@ class PyWin32Error(ConversionError):
 
 
 def log_exceptions(
-    logger: LoggerProtocol = app_logger,  # <-- Используем протокол вместо logging.Logger
+    logger: LoggerProtocol = app_logger,
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
     """
     Декоратор для логирования исключений в асинхронных функциях.
@@ -94,7 +94,7 @@ def log_exceptions(
 
 
 def log_exceptions_sync(
-    logger: LoggerProtocol = app_logger,  # <-- Используем протокол вместо logging.Logger
+    logger: LoggerProtocol = app_logger,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Декоратор для логирования исключений в синхронных функциях.
@@ -122,7 +122,7 @@ def log_exceptions_sync(
 
 async def handle_exception(
     exception: Exception,
-    logger: LoggerProtocol = app_logger,  # <-- Используем протокол вместо logging.Logger
+    logger: LoggerProtocol = app_logger,
 ) -> None:
     """
     Глобальный обработчик исключений.

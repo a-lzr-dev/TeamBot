@@ -236,7 +236,6 @@ class ApplicationManager:
             now = datetime_now()
             app_logger.debug(f"⏰ Checking reminders at {now}")
 
-            # ✅ Исправлено: объединяем два with в один (SIM117)
             async with self.db.get_session() as session, session.begin():
                 reminders = await ReminderRepository.get_active_reminders(
                     session=session,

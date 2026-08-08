@@ -65,7 +65,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         tg_manager.clear_user_cache(user_id)
         tg_logger.debug(f"🧹 Cleared stale cache for user {user_id} during /start")
 
-    # Проверка, авторизован ли пользователь уже
     if await is_user_authenticated(user_id):
         # Обновление команды для авторизованного пользователя
         is_admin = user_id in settings.ADMIN_IDS

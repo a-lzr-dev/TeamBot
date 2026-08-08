@@ -107,7 +107,7 @@ class ActionCallbackHandler(BaseCallbackHandler):
         tg_logger.debug(f"📜 Current history: {history}, current parent_id: {parent_id}")
 
         if parent_id is not None and history:
-            # Убираем текущий элемент из истории (последний элемент)
+            # Удаление текущего элемента из истории (последний элемент)
             if history and history[-1] == parent_id:
                 history.pop()
                 tg_logger.debug(f"🗑️ Removed {parent_id} from history")
@@ -165,8 +165,7 @@ class ActionCallbackHandler(BaseCallbackHandler):
 
         await CallbackHandler.answer(callback)
 
-        # Убираем импорт check_has_subitems, используем репозиторий напрямую
-        from ..handlers.aiogram.actions import execute_action, show_menu  # <-- УБРАЛИ check_has_subitems
+        from ..handlers.aiogram.actions import execute_action, show_menu
         from ..handlers.aiogram.auth import get_user_group_id
 
         # Извлечение ID действия

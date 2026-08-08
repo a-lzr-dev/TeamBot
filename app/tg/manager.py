@@ -47,13 +47,6 @@ def ensure_initialized(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable
     return cast("Callable[P, Awaitable[R]]", wrapper)
 
 
-def get_dynamic_commands_middleware() -> type:
-    """Ленивый импорт DynamicCommandsMiddleware для избежания циклических зависимостей"""
-    from ..middlewares.tg.commands import DynamicCommandsMiddleware
-
-    return DynamicCommandsMiddleware
-
-
 class TelegramManager:
     """Главный менеджер для управления Telegram клиентами и сервисами"""
 
@@ -720,7 +713,10 @@ class TelegramManager:
         dp.update.middleware(ChatActivityMiddleware(db_manager))
         dp.update.middleware(DatabaseMiddleware())
         dp.update.middleware(ErrorHandlerMiddleware())
-        dp.update.middleware(get_dynamic_commands_middleware())
+
+        from ..middlewares.tg.commands import DynamicCommandsMiddleware
+
+        dp.update.middleware(DynamicCommandsMiddleware())
 
         from .handlers.aiogram.auth import auth_middleware
 

@@ -83,7 +83,6 @@ class UnifiedMessageService(BaseService):
             await self.delete_message_by_id(chat_id=chat_id, message_id=delete_message_id)
 
         if delete_by_type or exclude_message_types:
-            # Передаем delete_by_type только если он не None
             delete_type = delete_by_type if delete_by_type is not None else "cleanup"
             await self.delete_messages(
                 chat_id=chat_id,
@@ -259,7 +258,7 @@ class UnifiedMessageService(BaseService):
             is_bot=user.is_bot,
         )
 
-        # Определяем ID сообщения для удаления
+        # Определение ID сообщения для удаления
         delete_message_id = None
         if delete_original and original_message_id:
             delete_message_id = original_message_id
@@ -371,25 +370,100 @@ class UnifiedMessageService(BaseService):
             return {"success": False, "error": str(e), "chat_id": kwargs["chat_id"]}
 
     async def _save_message(self, **kwargs: Any) -> ChatMessageModel | None:
-        """Сохранение сообщения в БД"""
+        """Сохранение сообщения в БД с автоматическим созданием чата, если его нет"""
         try:
             async with self._db.get_session() as session:
+                chat_id = kwargs.get("chat_id")
                 user_id = kwargs.get("user_id")
-                if user_id:
-                    await self._ensure_user_exists(
-                        session=session,
-                        user_id=user_id,
-                        first_name=kwargs.get("user_first_name"),
-                        last_name=kwargs.get("user_last_name"),
-                        username=kwargs.get("user_username"),
-                        is_bot=kwargs.get("user_is_bot", False),
-                        phone=kwargs.get("user_phone"),
-                        chat_id=kwargs.get("chat_id"),
-                        group_id=kwargs.get("user_group_id"),
-                    )
 
-                lifetime_seconds = kwargs.get("lifetime_seconds")
+                if chat_id is None:
+                    tg_logger.error("❌ Cannot save message: chat_id is None")
+                    return None
+
+                # Приведение chat_id к int для mypy
+                chat_id_int = int(chat_id)
+
+                # Проверка и создание чата при его отсутствии
+                chat = await ChatRepository.get_chat_by_id(session, chat_id_int)
+                if not chat:
+                    tg_logger.warning(f"⚠️ Chat {chat_id_int} not found in DB, creating...")
+
+                    # Получение информации о чате из Telegram
+                    chat_type_str = "private"
+                    title = f"Chat {chat_id_int}"
+                    is_active = True
+
+                    try:
+                        if self._bot:
+                            chat_info = await self._bot.get_chat(chat_id_int)
+                            from ...core.converters import chat_type_from_aiogram, chat_type_to_str
+
+                            chat_type = chat_type_from_aiogram(chat_info)
+                            chat_type_str = chat_type_to_str(chat_type)
+                            title = chat_info.title or f"Chat {chat_id_int}"
+
+                            # Проверка, активен ли чат
+                            try:
+                                me = await self._bot.get_me()
+                                member = await self._bot.get_chat_member(chat_id_int, me.id)
+                                status = member.status.value if hasattr(member.status, "value") else str(member.status)
+                                is_active = status not in ["left", "kicked"]
+                            except Exception:
+                                is_active = True
+
+                    except Exception as e:
+                        tg_logger.warning(f"⚠️ Could not fetch chat info for {chat_id_int}: {e}")
+                        # Для отрицательных ID (группы/супергруппы)
+                        if chat_id_int < 0:
+                            chat_type_str = "supergroup"
+
+                    await ChatRepository.save_chat(
+                        session=session,
+                        chat_id=chat_id_int,
+                        chat_type=chat_type_str,
+                        title=title,
+                        is_active=is_active,
+                    )
+                    await session.flush()
+                    tg_logger.info(f"✅ Chat {chat_id_int} created automatically (type={chat_type_str}, title={title})")
+
+                # Проверка и создание/обновление пользователя
+                if user_id:
+                    user = await UserRepository.get_user_by_id(session, user_id)
+                    if not user:
+                        await UserRepository.save_user(
+                            session=session,
+                            user_id=user_id,
+                            first_name=kwargs.get("user_first_name"),
+                            last_name=kwargs.get("user_last_name"),
+                            username=kwargs.get("user_username"),
+                            is_bot=kwargs.get("user_is_bot", False),
+                            phone=kwargs.get("user_phone"),
+                            chat_id=chat_id_int,
+                            avanpost_group_id=kwargs.get("user_group_id"),
+                        )
+                        await session.flush()
+                        tg_logger.debug(f"✅ User {user_id} created automatically")
+                    else:
+                        updated = False
+                        if kwargs.get("user_first_name") and user.FFirstName != kwargs.get("user_first_name"):
+                            user.FFirstName = kwargs.get("user_first_name")
+                            updated = True
+                        if kwargs.get("user_last_name") and user.FLastName != kwargs.get("user_last_name"):
+                            user.FLastName = kwargs.get("user_last_name")
+                            updated = True
+                        if kwargs.get("user_username") and user.FUserName != kwargs.get("user_username"):
+                            user.FUserName = kwargs.get("user_username")
+                            updated = True
+                        if updated:
+                            user.FDateUpdated = datetime_now()
+                            await session.flush()
+                            tg_logger.debug(f"✅ User {user_id} updated")
+
                 message_type = kwargs.get("message_type")
+                lifetime_seconds = kwargs.get("lifetime_seconds")
+
+                # Проверка времени жизни и настройка по умолчанию
                 if lifetime_seconds is None and message_type not in (
                     MessageType.USER_REQUEST,
                     MessageType.BOT_RESPONSE,
@@ -402,26 +476,42 @@ class UnifiedMessageService(BaseService):
                 if lifetime_seconds:
                     expires_at = datetime_now() + timedelta(seconds=lifetime_seconds)
 
+                # Создание и сохранение сообщения
                 message = ChatMessageModel(
                     FID=kwargs["message_id"],
-                    FK_Chat=kwargs["chat_id"],
-                    FK_User=kwargs.get("user_id"),
-                    FK_MessageType=message_type,
-                    FText=kwargs["text"][:4096],
+                    FK_Chat=chat_id_int,
+                    FK_User=user_id,
+                    FK_MessageType=message_type or MessageType.BOT_RESPONSE,
+                    FText=kwargs["text"][:4096] if kwargs.get("text") else None,
                     FSource=MessageSource.BOT,
                     FDateSent=datetime_now(),
                     FFlagReply=bool(kwargs.get("reply_to_message_id")),
                     FFlagDeleted=False,
                     FLifetimeSeconds=lifetime_seconds,
                     FExpiresAt=expires_at,
+                    # Дополнительные поля
+                    FCommand=kwargs.get("command"),
+                    FCommandArgs=kwargs.get("command_args"),
+                    FCategory=kwargs.get("category"),
                 )
+
+                if kwargs.get("caption"):
+                    message.FCaption = kwargs["caption"][:4096]
+
+                reply_to = kwargs.get("reply_to_message_id")
+                if reply_to:
+                    message.FK_ReplyToMessage = reply_to
+                    message.FFlagReply = True
 
                 session.add(message)
                 await session.commit()
+                await session.refresh(message)
+
+                tg_logger.debug(f"✅ Message {message.FID} saved to database (chat={chat_id_int}, type={message_type})")
                 return message
 
         except Exception as e:
-            tg_logger.error(f"❌ Failed to save message: {e}")
+            tg_logger.error(f"❌ Failed to save message: {e}", exc_info=True)
             return None
 
     async def _mark_message_deleted(self, chat_id: int, message_id: int, deleted_by_type: str) -> None:
@@ -619,7 +709,7 @@ class UnifiedMessageService(BaseService):
                 total_kept = 0
                 total_telegram_deleted = 0
 
-                for chat_id, messages in messages_by_chat.items():
+                for chat_id_loop, messages in messages_by_chat.items():
                     messages_sorted = sorted(messages, key=lambda m: m.FDateSent, reverse=True)
                     msg_ids = [m.FID for m in messages_sorted]
 
@@ -633,7 +723,7 @@ class UnifiedMessageService(BaseService):
                     if ids_to_delete:
                         for msg_id in ids_to_delete:
                             try:
-                                delete_result = await self.delete_message_by_id(chat_id=chat_id, message_id=msg_id)
+                                delete_result = await self.delete_message_by_id(chat_id=chat_id_loop, message_id=msg_id)
                                 if delete_result.get("success"):
                                     total_telegram_deleted += 1
                             except Exception as e:

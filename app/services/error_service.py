@@ -300,10 +300,8 @@ class ErrorService:
                 details=details,
             )
 
-            # Проверяем, что ошибка была обновлена
             if updated_error is None:
                 app_logger.error(f"Failed to update error {existing.FID}, creating new one")
-                # Создаем новую ошибку
                 error = await ErrorRepository.create_error(
                     session=session,
                     error_code=error_code,
@@ -321,7 +319,6 @@ class ErrorService:
                 await session.refresh(error)
                 return error
 
-            # Теперь updated_error гарантированно не None
             existing = updated_error
 
             if chat_ids and send_to_telegram:

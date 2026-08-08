@@ -12,14 +12,6 @@ from ...tg.dependencies import get_tg_manager
 class DynamicCommandsMiddleware(BaseMiddleware):
     """Middleware для динамического обновления команд при авторизации"""
 
-    # Убираем tg_manager из __init__, так как мы будем получать его через get_tg_manager()
-    # def __init__(self, tg_manager: TelegramManager) -> None:
-    #     self.tg_manager = tg_manager
-    #     super().__init__()
-
-    # Если вы хотите оставить возможность передавать менеджер через конструктор,
-    # можно сделать его опциональным, но проще будет всегда получать его глобально.
-    # Для единообразия с остальным кодом, лучше использовать глобальный экземпляр.
     def __init__(self) -> None:
         super().__init__()
 
@@ -32,7 +24,7 @@ class DynamicCommandsMiddleware(BaseMiddleware):
         # Обновление команды для пользователя при любом сообщении
         if isinstance(event, Message) and event.from_user:
             user_id = event.from_user.id
-            tg_manager = get_tg_manager()  # Лениво получаем менеджер здесь
+            tg_manager = get_tg_manager()
 
             # Проверка, является ли пользователь администратором
             is_admin = user_id in getattr(settings, "ADMIN_IDS", [])
