@@ -29,9 +29,9 @@ from .base import (
     ErrorStatus,
     MessageSource,
     MessageType,
-    UserAutomationRequestPriority,
-    UserAutomationRequestStatus,
     UserMixin,
+    UserRequestAutomationPriority,
+    UserRequestAutomationStatus,
     datetime_now,
 )
 
@@ -73,12 +73,12 @@ class UserModel(BaseModel, UserMixin):
     )
 
     # Связи с автоматизацией
-    AutomationRequests: Mapped[list["UserAutomationRequestModel"]] = relationship(
-        "UserAutomationRequestModel", foreign_keys="UserAutomationRequestModel.FK_User", back_populates="user"
+    RequestsAutomations: Mapped[list["UserRequestAutomationModel"]] = relationship(
+        "UserRequestAutomationModel", foreign_keys="UserRequestAutomationModel.FK_User", back_populates="user"
     )
-    AutomationRequestsCompleted: Mapped[list["UserAutomationRequestModel"]] = relationship(
-        "UserAutomationRequestModel",
-        foreign_keys="UserAutomationRequestModel.FCompletedBy",
+    RequestsAutomationsCompleted: Mapped[list["UserRequestAutomationModel"]] = relationship(
+        "UserRequestAutomationModel",
+        foreign_keys="UserRequestAutomationModel.FCompletedBy",
         back_populates="completed_by_user",
     )
 
@@ -151,8 +151,8 @@ class ChatModel(BaseModel):
     )
 
     # Связи с автоматизацией
-    AutomationRequests: Mapped[list["UserAutomationRequestModel"]] = relationship(
-        "UserAutomationRequestModel", foreign_keys="UserAutomationRequestModel.FK_Chat", back_populates="chat"
+    RequestsAutomations: Mapped[list["UserRequestAutomationModel"]] = relationship(
+        "UserRequestAutomationModel", foreign_keys="UserRequestAutomationModel.FK_Chat", back_populates="chat"
     )
 
     def __repr__(self) -> str:
@@ -264,7 +264,7 @@ class ChatMessageModel(BaseModel):
     FK_File: Mapped[str | None] = mapped_column(String(256), nullable=True)
     FK_FileUnique: Mapped[str | None] = mapped_column(String(256), nullable=True)
     FFileSize: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    FMimeType: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    FMimeType: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Связи
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatMessages")
@@ -611,20 +611,20 @@ class ChatNotificationSettingsModel(BaseModel):
 # ============ МОДЕЛИ АВТОМАТИЗАЦИИ ============
 
 
-class UserAutomationRequestModel(BaseModel):
+class UserRequestAutomationModel(BaseModel):
     """Модель заявки на автоматизацию"""
 
-    __tablename__ = "TUsersAutomationRequests"
+    __tablename__ = "TUsersRequestsAutomations"
     __table_args__ = (
-        PrimaryKeyConstraint("FID", name="PK_UsersAutomationRequests"),
-        Index("IX_UsersAutomationRequests_UserID", "FK_User"),
-        Index("IX_UsersAutomationRequests_Status", "FStatus"),
-        Index("IX_UsersAutomationRequests_CreatedAt", "FCreatedAt"),
-        Index("IX_UsersAutomationRequests_Priority", "FPriority"),
-        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_UsersAutomationRequests_User"),
-        ForeignKeyConstraint(["FK_Chat"], ["TChats.FID"], ondelete="SET NULL", name="FK_UsersAutomationRequests_Chat"),
+        PrimaryKeyConstraint("FID", name="PK_UsersRequestsAutomations"),
+        Index("IX_UsersRequestsAutomations_UserID", "FK_User"),
+        Index("IX_UsersRequestsAutomations_Status", "FStatus"),
+        Index("IX_UsersRequestsAutomations_CreatedAt", "FCreatedAt"),
+        Index("IX_UsersRequestsAutomations_Priority", "FPriority"),
+        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_UsersRequestsAutomations_User"),
+        ForeignKeyConstraint(["FK_Chat"], ["TChats.FID"], ondelete="SET NULL", name="FK_UsersRequestsAutomations_Chat"),
         ForeignKeyConstraint(
-            ["FCompletedBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_UsersAutomationRequests_CompletedBy"
+            ["FCompletedBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_UsersRequestsAutomations_CompletedBy"
         ),
     )
 
@@ -634,12 +634,12 @@ class UserAutomationRequestModel(BaseModel):
     FTitle: Mapped[str] = mapped_column(String(200), nullable=False)
     FDescription: Mapped[str] = mapped_column(Text, nullable=False)
 
-    FPriority: Mapped[UserAutomationRequestPriority] = mapped_column(
-        SQLEnum(UserAutomationRequestPriority, name="automationrequestpriority"),
-        default=UserAutomationRequestPriority.MEDIUM,
+    FPriority: Mapped[UserRequestAutomationPriority] = mapped_column(
+        SQLEnum(UserRequestAutomationPriority, name="requestautomationpriority"),
+        default=UserRequestAutomationPriority.MEDIUM,
     )
-    FStatus: Mapped[UserAutomationRequestStatus] = mapped_column(
-        SQLEnum(UserAutomationRequestStatus, name="automationrequeststatus"), default=UserAutomationRequestStatus.NEW
+    FStatus: Mapped[UserRequestAutomationStatus] = mapped_column(
+        SQLEnum(UserRequestAutomationStatus, name="requestautomationstatus"), default=UserRequestAutomationStatus.NEW
     )
 
     FK_Chat: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -652,16 +652,16 @@ class UserAutomationRequestModel(BaseModel):
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
     # Связи
-    user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="AutomationRequests")
+    user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="RequestsAutomations")
     chat: Mapped[Optional["ChatModel"]] = relationship(
-        "ChatModel", foreign_keys=[FK_Chat], back_populates="AutomationRequests"
+        "ChatModel", foreign_keys=[FK_Chat], back_populates="RequestsAutomations"
     )
     completed_by_user: Mapped[Optional["UserModel"]] = relationship(
-        "UserModel", foreign_keys=[FCompletedBy], back_populates="AutomationRequestsCompleted"
+        "UserModel", foreign_keys=[FCompletedBy], back_populates="RequestsAutomationsCompleted"
     )
 
     def __repr__(self) -> str:
-        return f"<UserAutomationRequest(id={self.FID}, user={self.FK_User}, status={self.FStatus}, priority={self.FPriority})>"
+        return f"<UserRequestAutomation (id={self.FID}, user={self.FK_User}, status={self.FStatus}, priority={self.FPriority})>"
 
 
 # ============ ЭКСПОРТ ============
@@ -685,5 +685,5 @@ __all__ = [
     # Модели настроек
     "ChatNotificationSettingsModel",
     # Модели автоматизации
-    "UserAutomationRequestModel",
+    "UserRequestAutomationModel",
 ]

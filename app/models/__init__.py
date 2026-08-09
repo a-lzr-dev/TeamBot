@@ -15,9 +15,9 @@ from .base import (
     MessageType,
     SoftDeleteMixin,
     TimestampMixin,
-    UserAutomationRequestPriority,
-    UserAutomationRequestStatus,
     UserMixin,
+    UserRequestAutomationPriority,
+    UserRequestAutomationStatus,
     datetime_now,
 )
 from .tg import (
@@ -29,11 +29,11 @@ from .tg import (
     ErrorMessageLinkModel,
     ErrorModel,
     PeriodicTaskModel,
-    UserAutomationRequestModel,
     UserChatMemberModel,
     UserModel,
     UserReminderModel,
     UserReminderShareModel,
+    UserRequestAutomationModel,
 )
 
 __all__ = [
@@ -56,8 +56,8 @@ __all__ = [
     "ErrorSeverity",
     "ErrorStatus",
     # Enum-ы - автоматизация
-    "UserAutomationRequestStatus",
-    "UserAutomationRequestPriority",
+    "UserRequestAutomationStatus",
+    "UserRequestAutomationPriority",
     # Avanpost
     "UserMenuActionItemModel",
     # Telegram
@@ -73,5 +73,5 @@ __all__ = [
     "UserReminderModel",
     "UserReminderShareModel",
     "ChatNotificationSettingsModel",
-    "UserAutomationRequestModel",
+    "UserRequestAutomationModel",
 ]

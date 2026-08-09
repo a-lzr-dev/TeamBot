@@ -198,7 +198,7 @@ class ErrorStatus(StrEnum):
 # ============ ENUM КЛАССЫ (АВТОМАТИЗАЦИЯ) ============
 
 
-class UserAutomationRequestStatus(StrEnum):
+class UserRequestAutomationStatus(StrEnum):
     """Статусы заявок на автоматизацию"""
 
     NEW = "new"
@@ -208,7 +208,7 @@ class UserAutomationRequestStatus(StrEnum):
     REJECTED = "rejected"
 
 
-class UserAutomationRequestPriority(StrEnum):
+class UserRequestAutomationPriority(StrEnum):
     """Приоритеты заявок на автоматизацию"""
 
     LOW = "low"
@@ -283,6 +283,6 @@ __all__ = [
     "ErrorSeverity",
     "ErrorStatus",
     # Enum-ы - автоматизация
-    "UserAutomationRequestStatus",
-    "UserAutomationRequestPriority",
+    "UserRequestAutomationStatus",
+    "UserRequestAutomationPriority",
 ]

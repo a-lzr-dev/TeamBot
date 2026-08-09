@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import (
-    UserAutomationRequestModel,
-    UserAutomationRequestPriority,
-    UserAutomationRequestStatus,
+    UserRequestAutomationModel,
+    UserRequestAutomationPriority,
+    UserRequestAutomationStatus,
     datetime_now,
 )
 
@@ -26,10 +26,10 @@ class AutomationRequestRepository:
         user_id: int,
         title: str,
         description: str,
-        priority: UserAutomationRequestPriority = UserAutomationRequestPriority.MEDIUM,
+        priority: UserRequestAutomationPriority = UserRequestAutomationPriority.MEDIUM,
         chat_id: int | None = None,
         note: str | None = None,
-    ) -> UserAutomationRequestModel:
+    ) -> UserRequestAutomationModel:
         """
         Создание новой заявки на автоматизацию.
 
@@ -43,14 +43,14 @@ class AutomationRequestRepository:
             note: Примечание
 
         Returns:
-            UserAutomationRequestModel: Созданная заявка
+            UserRequestAutomationModel: Созданная заявка
         """
-        request = UserAutomationRequestModel(
+        request = UserRequestAutomationModel(
             FK_User=user_id,
             FTitle=title,
             FDescription=description,
             FPriority=priority,
-            FStatus=UserAutomationRequestStatus.NEW,
+            FStatus=UserRequestAutomationStatus.NEW,
             FK_Chat=chat_id,
             FNote=note,
         )
@@ -68,7 +68,7 @@ class AutomationRequestRepository:
     async def get_by_id(
         session: AsyncSession,
         request_id: int,
-    ) -> UserAutomationRequestModel | None:
+    ) -> UserRequestAutomationModel | None:
         """
         Получение заявки по ID.
 
@@ -77,9 +77,9 @@ class AutomationRequestRepository:
             request_id: ID заявки
 
         Returns:
-            UserAutomationRequestModel | None: Найденная заявка или None
+            UserRequestAutomationModel | None: Найденная заявка или None
         """
-        stmt = select(UserAutomationRequestModel).where(UserAutomationRequestModel.FID == request_id)
+        stmt = select(UserRequestAutomationModel).where(UserRequestAutomationModel.FID == request_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()  # type: ignore[no-any-return]
 
@@ -88,10 +88,10 @@ class AutomationRequestRepository:
     async def get_by_user(
         session: AsyncSession,
         user_id: int,
-        status: UserAutomationRequestStatus | None = None,
+        status: UserRequestAutomationStatus | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UserAutomationRequestModel]:
+    ) -> list[UserRequestAutomationModel]:
         """
         Получение заявок пользователя.
 
@@ -103,14 +103,14 @@ class AutomationRequestRepository:
             offset: Смещение
 
         Returns:
-            list[UserAutomationRequestModel]: Список заявок
+            list[UserRequestAutomationModel]: Список заявок
         """
-        stmt = select(UserAutomationRequestModel).where(UserAutomationRequestModel.FK_User == user_id)
+        stmt = select(UserRequestAutomationModel).where(UserRequestAutomationModel.FK_User == user_id)
 
         if status is not None:
-            stmt = stmt.where(UserAutomationRequestModel.FStatus == status)
+            stmt = stmt.where(UserRequestAutomationModel.FStatus == status)
 
-        stmt = stmt.order_by(UserAutomationRequestModel.FCreatedAt.desc())
+        stmt = stmt.order_by(UserRequestAutomationModel.FCreatedAt.desc())
         stmt = stmt.limit(limit).offset(offset)
 
         result = await session.execute(stmt)
@@ -120,12 +120,12 @@ class AutomationRequestRepository:
     @log_exceptions(db_logger)
     async def get_all(
         session: AsyncSession,
-        status: UserAutomationRequestStatus | None = None,
-        priority: UserAutomationRequestPriority | None = None,
+        status: UserRequestAutomationStatus | None = None,
+        priority: UserRequestAutomationPriority | None = None,
         user_id: int | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UserAutomationRequestModel]:
+    ) -> list[UserRequestAutomationModel]:
         """
         Получение всех заявок с фильтрацией.
 
@@ -138,20 +138,20 @@ class AutomationRequestRepository:
             offset: Смещение
 
         Returns:
-            list[UserAutomationRequestModel]: Список заявок
+            list[UserRequestAutomationModel]: Список заявок
         """
-        stmt = select(UserAutomationRequestModel)
+        stmt = select(UserRequestAutomationModel)
 
         if status is not None:
-            stmt = stmt.where(UserAutomationRequestModel.FStatus == status)
+            stmt = stmt.where(UserRequestAutomationModel.FStatus == status)
 
         if priority is not None:
-            stmt = stmt.where(UserAutomationRequestModel.FPriority == priority)
+            stmt = stmt.where(UserRequestAutomationModel.FPriority == priority)
 
         if user_id is not None:
-            stmt = stmt.where(UserAutomationRequestModel.FK_User == user_id)
+            stmt = stmt.where(UserRequestAutomationModel.FK_User == user_id)
 
-        stmt = stmt.order_by(UserAutomationRequestModel.FPriority.desc(), UserAutomationRequestModel.FCreatedAt.desc())
+        stmt = stmt.order_by(UserRequestAutomationModel.FPriority.desc(), UserRequestAutomationModel.FCreatedAt.desc())
         stmt = stmt.limit(limit).offset(offset)
 
         result = await session.execute(stmt)
@@ -161,10 +161,10 @@ class AutomationRequestRepository:
     @log_exceptions(db_logger)
     async def get_by_status(
         session: AsyncSession,
-        status: UserAutomationRequestStatus,
+        status: UserRequestAutomationStatus,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UserAutomationRequestModel]:
+    ) -> list[UserRequestAutomationModel]:
         """
         Получение заявок по статусу.
 
@@ -175,12 +175,12 @@ class AutomationRequestRepository:
             offset: Смещение
 
         Returns:
-            list[UserAutomationRequestModel]: Список заявок
+            list[UserRequestAutomationModel]: Список заявок
         """
         stmt = (
-            select(UserAutomationRequestModel)
-            .where(UserAutomationRequestModel.FStatus == status)
-            .order_by(UserAutomationRequestModel.FPriority.desc(), UserAutomationRequestModel.FCreatedAt.asc())
+            select(UserRequestAutomationModel)
+            .where(UserRequestAutomationModel.FStatus == status)
+            .order_by(UserRequestAutomationModel.FPriority.desc(), UserRequestAutomationModel.FCreatedAt.asc())
             .limit(limit)
             .offset(offset)
         )
@@ -193,7 +193,7 @@ class AutomationRequestRepository:
         session: AsyncSession,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[UserAutomationRequestModel]:
+    ) -> list[UserRequestAutomationModel]:
         """
         Получение заявок, ожидающих обработки (NEW и IN_PROGRESS).
 
@@ -203,19 +203,19 @@ class AutomationRequestRepository:
             offset: Смещение
 
         Returns:
-            list[UserAutomationRequestModel]: Список заявок
+            list[UserRequestAutomationModel]: Список заявок
         """
         stmt = (
-            select(UserAutomationRequestModel)
+            select(UserRequestAutomationModel)
             .where(
-                UserAutomationRequestModel.FStatus.in_(
+                UserRequestAutomationModel.FStatus.in_(
                     [
-                        UserAutomationRequestStatus.NEW,
-                        UserAutomationRequestStatus.IN_PROGRESS,
+                        UserRequestAutomationStatus.NEW,
+                        UserRequestAutomationStatus.IN_PROGRESS,
                     ]
                 )
             )
-            .order_by(UserAutomationRequestModel.FPriority.desc(), UserAutomationRequestModel.FCreatedAt.asc())
+            .order_by(UserRequestAutomationModel.FPriority.desc(), UserRequestAutomationModel.FCreatedAt.asc())
             .limit(limit)
             .offset(offset)
         )
@@ -229,10 +229,10 @@ class AutomationRequestRepository:
     async def update_status(
         session: AsyncSession,
         request_id: int,
-        status: UserAutomationRequestStatus,
+        status: UserRequestAutomationStatus,
         note: str | None = None,
         completed_by: int | None = None,
-    ) -> tuple[bool, UserAutomationRequestModel | None]:
+    ) -> tuple[bool, UserRequestAutomationModel | None]:
         """
         Обновление статуса заявки.
 
@@ -244,7 +244,7 @@ class AutomationRequestRepository:
             completed_by: ID пользователя, завершившего заявку
 
         Returns:
-            tuple[bool, UserAutomationRequestModel | None]: (успех, обновленная заявка)
+            tuple[bool, UserRequestAutomationModel | None]: (успех, обновленная заявка)
         """
         request = await AutomationRequestRepository.get_by_id(session, request_id)
 
@@ -258,7 +258,7 @@ class AutomationRequestRepository:
             request.FNote = note
 
         # Если заявка завершена или отклонена
-        if status in [UserAutomationRequestStatus.COMPLETED, UserAutomationRequestStatus.REJECTED]:
+        if status in [UserRequestAutomationStatus.COMPLETED, UserRequestAutomationStatus.REJECTED]:
             request.FCompletedAt = datetime_now()
             if completed_by:
                 request.FCompletedBy = completed_by
@@ -276,8 +276,8 @@ class AutomationRequestRepository:
     async def update_priority(
         session: AsyncSession,
         request_id: int,
-        priority: UserAutomationRequestPriority,
-    ) -> tuple[bool, UserAutomationRequestModel | None]:
+        priority: UserRequestAutomationPriority,
+    ) -> tuple[bool, UserRequestAutomationModel | None]:
         """
         Обновление приоритета заявки.
 
@@ -287,7 +287,7 @@ class AutomationRequestRepository:
             priority: Новый приоритет
 
         Returns:
-            tuple[bool, UserAutomationRequestModel | None]: (успех, обновленная заявка)
+            tuple[bool, UserRequestAutomationModel | None]: (успех, обновленная заявка)
         """
         request = await AutomationRequestRepository.get_by_id(session, request_id)
 
@@ -328,30 +328,30 @@ class AutomationRequestRepository:
         conditions = []
 
         if user_id is not None:
-            conditions.append(UserAutomationRequestModel.FK_User == user_id)
+            conditions.append(UserRequestAutomationModel.FK_User == user_id)
 
         if start_date is not None:
-            conditions.append(UserAutomationRequestModel.FCreatedAt >= start_date)
+            conditions.append(UserRequestAutomationModel.FCreatedAt >= start_date)
 
         if end_date is not None:
-            conditions.append(UserAutomationRequestModel.FCreatedAt <= end_date)
+            conditions.append(UserRequestAutomationModel.FCreatedAt <= end_date)
 
         stmt = select(
-            func.count(UserAutomationRequestModel.FID).label("total"),
-            func.count(UserAutomationRequestModel.FID)
-            .filter(UserAutomationRequestModel.FStatus == UserAutomationRequestStatus.NEW)
+            func.count(UserRequestAutomationModel.FID).label("total"),
+            func.count(UserRequestAutomationModel.FID)
+            .filter(UserRequestAutomationModel.FStatus == UserRequestAutomationStatus.NEW)
             .label("new"),
-            func.count(UserAutomationRequestModel.FID)
-            .filter(UserAutomationRequestModel.FStatus == UserAutomationRequestStatus.IN_PROGRESS)
+            func.count(UserRequestAutomationModel.FID)
+            .filter(UserRequestAutomationModel.FStatus == UserRequestAutomationStatus.IN_PROGRESS)
             .label("in_progress"),
-            func.count(UserAutomationRequestModel.FID)
-            .filter(UserAutomationRequestModel.FStatus == UserAutomationRequestStatus.COMPLETED)
+            func.count(UserRequestAutomationModel.FID)
+            .filter(UserRequestAutomationModel.FStatus == UserRequestAutomationStatus.COMPLETED)
             .label("completed"),
-            func.count(UserAutomationRequestModel.FID)
-            .filter(UserAutomationRequestModel.FStatus == UserAutomationRequestStatus.CANCELLED)
+            func.count(UserRequestAutomationModel.FID)
+            .filter(UserRequestAutomationModel.FStatus == UserRequestAutomationStatus.CANCELLED)
             .label("cancelled"),
-            func.count(UserAutomationRequestModel.FID)
-            .filter(UserAutomationRequestModel.FStatus == UserAutomationRequestStatus.REJECTED)
+            func.count(UserRequestAutomationModel.FID)
+            .filter(UserRequestAutomationModel.FStatus == UserRequestAutomationStatus.REJECTED)
             .label("rejected"),
         )
 
@@ -363,14 +363,14 @@ class AutomationRequestRepository:
 
         # Статистика по приоритетам
         priority_stmt = select(
-            UserAutomationRequestModel.FPriority,
-            func.count(UserAutomationRequestModel.FID).label("count"),
+            UserRequestAutomationModel.FPriority,
+            func.count(UserRequestAutomationModel.FID).label("count"),
         )
 
         if conditions:
             priority_stmt = priority_stmt.where(and_(*conditions))
 
-        priority_stmt = priority_stmt.group_by(UserAutomationRequestModel.FPriority)
+        priority_stmt = priority_stmt.group_by(UserRequestAutomationModel.FPriority)
         priority_result = await session.execute(priority_stmt)
         by_priority = {row.FPriority.value: row.count for row in priority_result.all()}
 
@@ -409,13 +409,13 @@ class AutomationRequestRepository:
             if not request:
                 return False
 
-            request.FStatus = UserAutomationRequestStatus.CANCELLED
+            request.FStatus = UserRequestAutomationStatus.CANCELLED
             request.FUpdatedAt = datetime_now()
             await session.flush()
             return True
         else:
             # Удаление
-            stmt = delete(UserAutomationRequestModel).where(UserAutomationRequestModel.FID == request_id)
+            stmt = delete(UserRequestAutomationModel).where(UserRequestAutomationModel.FID == request_id)
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount > 0 if hasattr(result, "rowcount") else True

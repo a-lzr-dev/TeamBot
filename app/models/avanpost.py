@@ -16,7 +16,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import BaseModel, datetime_now
 
-# ============ МОДЕЛИ ДЛЯ ДЕЙСТВИЙ (AVANPOST) ============
+# ============ МОДЕЛИ ДЛЯ МЕНЮ ДЕЙСТВИЙ (AVANPOST) ============
 
 
 class UserMenuActionItemModel(BaseModel):
@@ -26,21 +26,19 @@ class UserMenuActionItemModel(BaseModel):
     __table_args__ = (
         PrimaryKeyConstraint("FID", name="PK_UsersMenusActionsItems"),
         ForeignKeyConstraint(
-            ["FK_ParentItemID"],
+            ["FK_ParentItem"],
             ["TUsersMenusActionsItems.FID"],
             ondelete="SET NULL",
             name="FK_UsersMenusActionsItems_Parent",
         ),
-        Index("IX_UsersMenusActionsItems_ParentID", "FK_ParentItemID"),
+        Index("IX_UsersMenusActionsItems_ParentID", "FK_ParentItem"),
         Index("IX_UsersMenusActionsItems_Order", "FSortOrder"),
         Index("IX_UsersMenusActionsItems_IsActive", "FIsActive"),
-        Index("IX_UsersMenusActionsItems_GroupID", "FK_GroupID"),
-        UniqueConstraint("FK_GroupID", "FName", name="UK_UsersMenusActionsItems_Group_Name"),
+        UniqueConstraint("FName", name="UK_UsersMenusActionsItems_Name"),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    FK_GroupID: Mapped[int] = mapped_column(Integer, nullable=False)
-    FK_ParentItemID: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    FK_ParentItem: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     FName: Mapped[str] = mapped_column(String(200), nullable=False)
     FDescription: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -71,17 +69,17 @@ class UserMenuActionItemModel(BaseModel):
     parent_item: Mapped[Optional["UserMenuActionItemModel"]] = relationship(
         "UserMenuActionItemModel",
         remote_side=[FID],
-        foreign_keys=[FK_ParentItemID],
-        primaryjoin="UserMenuActionItemModel.FID == UserMenuActionItemModel.FK_ParentItemID",
+        foreign_keys=[FK_ParentItem],
+        primaryjoin="UserMenuActionItemModel.FID == UserMenuActionItemModel.FK_ParentItem",
         uselist=False,
         overlaps="child_items",
     )
 
     child_items: Mapped[list["UserMenuActionItemModel"]] = relationship(
         "UserMenuActionItemModel",
-        remote_side=[FK_ParentItemID],
-        foreign_keys=[FK_ParentItemID],
-        primaryjoin="UserMenuActionItemModel.FK_ParentItemID == UserMenuActionItemModel.FID",
+        remote_side=[FK_ParentItem],
+        foreign_keys=[FK_ParentItem],
+        primaryjoin="UserMenuActionItemModel.FK_ParentItem == UserMenuActionItemModel.FID",
         uselist=True,
         overlaps="parent_item",
     )
