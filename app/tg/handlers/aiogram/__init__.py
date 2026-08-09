@@ -12,7 +12,7 @@ from .groups import router as groups_router
 def setup_aiogram_handlers() -> Router:
     """Настройка всех aiogram обработчиков"""
     router = Router()
-    router.include_router(auth_router)  # Должен быть первым
+    router.include_router(auth_router)
     router.include_router(chat_router)
     router.include_router(commands_router)
     router.include_router(admin_router)

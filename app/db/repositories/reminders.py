@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...exceptions import log_exceptions
 from ...logger import db_logger
-from ...models import ReminderModel, ReminderShareModel, datetime_now
+from ...models import UserReminderModel, UserReminderShareModel, datetime_now
 from ...utils.crypto import decrypt_data, encrypt_data
 
 
@@ -33,7 +33,7 @@ class ReminderRepository:
         chat_id: int | None = None,
         shared_with: list[int] | None = None,
         encrypt: bool = False,
-    ) -> ReminderModel:
+    ) -> UserReminderModel:
         """
         Создание напоминания с поддержкой шифрования.
 
@@ -54,7 +54,7 @@ class ReminderRepository:
             encrypt: Шифровать данные
 
         Returns:
-            ReminderModel: Созданное напоминание
+            UserReminderModel: Созданное напоминание
         """
         # Подготовка данных
         encrypted_data = None
@@ -76,7 +76,7 @@ class ReminderRepository:
 
         # Создание дела
         if is_encrypted:
-            reminder = ReminderModel(
+            reminder = UserReminderModel(
                 FK_User=user_id,
                 FTitle="🔒 Зашифровано",
                 FDescription=None,
@@ -93,7 +93,7 @@ class ReminderRepository:
                 FIsGroupReminder=bool(shared_with and len(shared_with) > 0),
             )
         else:
-            reminder = ReminderModel(
+            reminder = UserReminderModel(
                 FK_User=user_id,
                 FTitle=title,
                 FDescription=description,
@@ -116,7 +116,7 @@ class ReminderRepository:
         # Создание связей с пользователями (для общих дел)
         if shared_with:
             for shared_user_id in shared_with:
-                share = ReminderShareModel(FK_Reminder=reminder.FID, FK_User=shared_user_id)
+                share = UserReminderShareModel(FK_Reminder=reminder.FID, FK_User=shared_user_id)
                 session.add(share)
 
         await session.commit()
@@ -144,12 +144,12 @@ class ReminderRepository:
             Tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
         # Проверка владельца
-        stmt = select(ReminderModel).where(
-            ReminderModel.FID == reminder_id,
+        stmt = select(UserReminderModel).where(
+            UserReminderModel.FID == reminder_id,
             or_(
-                ReminderModel.FK_User == user_id,
-                ReminderModel.FID.in_(
-                    select(ReminderShareModel.FK_Reminder).where(ReminderShareModel.FK_User == user_id)
+                UserReminderModel.FK_User == user_id,
+                UserReminderModel.FID.in_(
+                    select(UserReminderShareModel.FK_Reminder).where(UserReminderShareModel.FK_User == user_id)
                 ),
             ),
         )
@@ -167,8 +167,8 @@ class ReminderRepository:
         # Обновление общих дел
         if reminder.FIsGroupReminder:
             stmt = (
-                update(ReminderShareModel)
-                .where(ReminderShareModel.FK_Reminder == reminder_id, ReminderShareModel.FK_User == user_id)
+                update(UserReminderShareModel)
+                .where(UserReminderShareModel.FK_Reminder == reminder_id, UserReminderShareModel.FK_User == user_id)
                 .values(FIsCompleted=True, FIsSuccessful=successful, FCompletedAt=datetime_now())
             )
             await session.execute(stmt)
@@ -189,7 +189,7 @@ class ReminderRepository:
         include_completed: bool = False,
         limit: int | None = None,
         offset: int = 0,
-    ) -> list[ReminderModel]:
+    ) -> list[UserReminderModel]:
         """
         Получение списка дел пользователя.
 
@@ -206,29 +206,31 @@ class ReminderRepository:
             List[ReminderModel]: Список напоминаний
         """
         # Базовый запрос
-        stmt = select(ReminderModel).where(
+        stmt = select(UserReminderModel).where(
             or_(
-                ReminderModel.FK_User == user_id,
-                ReminderModel.FID.in_(
-                    select(ReminderShareModel.FK_Reminder).where(ReminderShareModel.FK_User == user_id)
+                UserReminderModel.FK_User == user_id,
+                UserReminderModel.FID.in_(
+                    select(UserReminderShareModel.FK_Reminder).where(UserReminderShareModel.FK_User == user_id)
                 ),
             ),
-            ReminderModel.FIsDeleted.is_(False),
+            UserReminderModel.FIsDeleted.is_(False),
         )
 
         # Фильтр по дате
         if date:
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999)
-            stmt = stmt.where(or_(ReminderModel.FRemindAt >= start_of_day, ReminderModel.FRemindAt <= end_of_day))
+            stmt = stmt.where(
+                or_(UserReminderModel.FRemindAt >= start_of_day, UserReminderModel.FRemindAt <= end_of_day)
+            )
 
         if category:
-            stmt = stmt.where(ReminderModel.FCategory == category)
+            stmt = stmt.where(UserReminderModel.FCategory == category)
 
         if not include_completed:
-            stmt = stmt.where(ReminderModel.FIsCompleted.is_(False))
+            stmt = stmt.where(UserReminderModel.FIsCompleted.is_(False))
 
-        stmt = stmt.order_by(ReminderModel.FRemindAt)
+        stmt = stmt.order_by(UserReminderModel.FRemindAt)
 
         if limit:
             stmt = stmt.limit(limit)
@@ -243,7 +245,7 @@ class ReminderRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_reminder_by_id(session: AsyncSession, reminder_id: int) -> ReminderModel | None:
+    async def get_reminder_by_id(session: AsyncSession, reminder_id: int) -> UserReminderModel | None:
         """
         Получение напоминания по ID.
 
@@ -252,9 +254,9 @@ class ReminderRepository:
             reminder_id: ID напоминания
 
         Returns:
-            ReminderModel | None: Напоминание или None
+            UserReminderModel | None: Напоминание или None
         """
-        stmt = select(ReminderModel).where(ReminderModel.FID == reminder_id)
+        stmt = select(UserReminderModel).where(UserReminderModel.FID == reminder_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()  # type: ignore[no-any-return]
 
@@ -268,7 +270,7 @@ class ReminderRepository:
         code_word: str,
         chat_id: int | None = None,
         include_completed: bool = False,
-    ) -> list[ReminderModel]:
+    ) -> list[UserReminderModel]:
         """
         Поиск дел по кодовому слову.
 
@@ -282,23 +284,25 @@ class ReminderRepository:
         Returns:
             List[ReminderModel]: Список найденных напоминаний
         """
-        stmt = select(ReminderModel).where(
+        stmt = select(UserReminderModel).where(
             or_(
-                ReminderModel.FK_User == user_id,
-                ReminderModel.FID.in_(
-                    select(ReminderShareModel.FK_Reminder).where(ReminderShareModel.FK_User == user_id)
+                UserReminderModel.FK_User == user_id,
+                UserReminderModel.FID.in_(
+                    select(UserReminderShareModel.FK_Reminder).where(UserReminderShareModel.FK_User == user_id)
                 ),
             ),
-            ReminderModel.FCodeWord == code_word,
-            ReminderModel.FIsActive,
-            ReminderModel.FIsDeleted.is_(False),
+            UserReminderModel.FCodeWord == code_word,
+            UserReminderModel.FIsActive,
+            UserReminderModel.FIsDeleted.is_(False),
         )
 
         if not include_completed:
-            stmt = stmt.where(ReminderModel.FIsCompleted.is_(False))
+            stmt = stmt.where(UserReminderModel.FIsCompleted.is_(False))
 
         if chat_id:
-            stmt = stmt.where(or_(ReminderModel.FK_Chat == chat_id, ReminderModel.FNotificationType == "private"))
+            stmt = stmt.where(
+                or_(UserReminderModel.FK_Chat == chat_id, UserReminderModel.FNotificationType == "private")
+            )
 
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -312,7 +316,7 @@ class ReminderRepository:
         before_time: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[ReminderModel]:
+    ) -> list[UserReminderModel]:
         """
         Получение активных напоминаний, время которых наступило.
 
@@ -329,16 +333,16 @@ class ReminderRepository:
             before_time = datetime_now()
 
         stmt = (
-            select(ReminderModel)
+            select(UserReminderModel)
             .where(
                 and_(
-                    ReminderModel.FRemindAt <= before_time,
-                    ReminderModel.FIsCompleted.is_(False),
-                    ReminderModel.FIsActive,
-                    ReminderModel.FIsDeleted.is_(False),
+                    UserReminderModel.FRemindAt <= before_time,
+                    UserReminderModel.FIsCompleted.is_(False),
+                    UserReminderModel.FIsActive,
+                    UserReminderModel.FIsDeleted.is_(False),
                 )
             )
-            .order_by(ReminderModel.FRemindAt)
+            .order_by(UserReminderModel.FRemindAt)
             .limit(limit)
             .offset(offset)
         )
@@ -389,7 +393,7 @@ class ReminderRepository:
         if not values:
             return False
 
-        stmt = update(ReminderModel).where(ReminderModel.FID == reminder_id).values(**values)
+        stmt = update(UserReminderModel).where(UserReminderModel.FID == reminder_id).values(**values)
         result = await session.execute(stmt)
         await session.commit()
 
@@ -410,7 +414,7 @@ class ReminderRepository:
         Returns:
             bool: Успешно ли деактивировано
         """
-        stmt = update(ReminderModel).where(ReminderModel.FID == reminder_id).values(FIsActive=False)
+        stmt = update(UserReminderModel).where(UserReminderModel.FID == reminder_id).values(FIsActive=False)
         result = await session.execute(stmt)
         await session.commit()
 
@@ -434,16 +438,18 @@ class ReminderRepository:
         """
         if soft:
             stmt = (
-                update(ReminderModel).where(ReminderModel.FID == reminder_id).values(FIsDeleted=True, FIsActive=False)
+                update(UserReminderModel)
+                .where(UserReminderModel.FID == reminder_id)
+                .values(FIsDeleted=True, FIsActive=False)
             )
             result = await session.execute(stmt)
         else:
             # Удаление связей
-            stmt = delete(ReminderShareModel).where(ReminderShareModel.FK_Reminder == reminder_id)
+            stmt = delete(UserReminderShareModel).where(UserReminderShareModel.FK_Reminder == reminder_id)
             await session.execute(stmt)
 
             # Удаление напоминания
-            stmt = delete(ReminderModel).where(ReminderModel.FID == reminder_id)
+            stmt = delete(UserReminderModel).where(UserReminderModel.FID == reminder_id)
             result = await session.execute(stmt)
 
         await session.commit()
@@ -485,22 +491,22 @@ class ReminderRepository:
 
         # Статистика по делам
         stmt = select(
-            func.count(ReminderModel.FID).label("total"),
-            func.count(ReminderModel.FID).filter(ReminderModel.FIsCompleted).label("completed"),
-            func.count(ReminderModel.FID)
-            .filter(and_(ReminderModel.FIsCompleted, ReminderModel.FIsSuccessful))
+            func.count(UserReminderModel.FID).label("total"),
+            func.count(UserReminderModel.FID).filter(UserReminderModel.FIsCompleted).label("completed"),
+            func.count(UserReminderModel.FID)
+            .filter(and_(UserReminderModel.FIsCompleted, UserReminderModel.FIsSuccessful))
             .label("successful"),
-            func.count(ReminderModel.FID)
-            .filter(and_(ReminderModel.FIsCompleted, ReminderModel.FIsSuccessful.is_(False)))
+            func.count(UserReminderModel.FID)
+            .filter(and_(UserReminderModel.FIsCompleted, UserReminderModel.FIsSuccessful.is_(False)))
             .label("unsuccessful"),
         ).where(
             or_(
-                ReminderModel.FK_User == user_id,
-                ReminderModel.FID.in_(
-                    select(ReminderShareModel.FK_Reminder).where(ReminderShareModel.FK_User == user_id)
+                UserReminderModel.FK_User == user_id,
+                UserReminderModel.FID.in_(
+                    select(UserReminderShareModel.FK_Reminder).where(UserReminderShareModel.FK_User == user_id)
                 ),
             ),
-            ReminderModel.FCreatedAt >= start_date,
+            UserReminderModel.FCreatedAt >= start_date,
         )
 
         result = await session.execute(stmt)
@@ -509,22 +515,22 @@ class ReminderRepository:
         # Детальная статистика по дням
         daily_stmt = (
             select(
-                func.date(ReminderModel.FCompletedAt).label("date"),
-                func.count(ReminderModel.FID).label("total"),
-                func.count(ReminderModel.FID).filter(ReminderModel.FIsSuccessful).label("successful"),
+                func.date(UserReminderModel.FCompletedAt).label("date"),
+                func.count(UserReminderModel.FID).label("total"),
+                func.count(UserReminderModel.FID).filter(UserReminderModel.FIsSuccessful).label("successful"),
             )
             .where(
                 or_(
-                    ReminderModel.FK_User == user_id,
-                    ReminderModel.FID.in_(
-                        select(ReminderShareModel.FK_Reminder).where(ReminderShareModel.FK_User == user_id)
+                    UserReminderModel.FK_User == user_id,
+                    UserReminderModel.FID.in_(
+                        select(UserReminderShareModel.FK_Reminder).where(UserReminderShareModel.FK_User == user_id)
                     ),
                 ),
-                ReminderModel.FIsCompleted,
-                ReminderModel.FCompletedAt >= start_date,
+                UserReminderModel.FIsCompleted,
+                UserReminderModel.FCompletedAt >= start_date,
             )
-            .group_by(func.date(ReminderModel.FCompletedAt))
-            .order_by(func.date(ReminderModel.FCompletedAt))
+            .group_by(func.date(UserReminderModel.FCompletedAt))
+            .order_by(func.date(UserReminderModel.FCompletedAt))
         )
 
         daily_result = await session.execute(daily_stmt)
@@ -555,7 +561,7 @@ class ReminderRepository:
     # ==================== ФОРМАТИРОВАНИЕ ====================
 
     @staticmethod
-    def format_reminder(reminder: ReminderModel) -> dict[str, Any]:
+    def format_reminder(reminder: UserReminderModel) -> dict[str, Any]:
         """
         Форматирование дела для вывода с поддержкой расшифровки.
 
@@ -620,7 +626,7 @@ class ReminderRepository:
         if not reminder_ids:
             return 0
 
-        stmt = update(ReminderModel).where(ReminderModel.FID.in_(reminder_ids)).values(FIsActive=False)
+        stmt = update(UserReminderModel).where(UserReminderModel.FID.in_(reminder_ids)).values(FIsActive=False)
         result = await session.execute(stmt)
         await session.commit()
 
@@ -649,18 +655,18 @@ class ReminderRepository:
 
         if soft:
             stmt = (
-                update(ReminderModel)
-                .where(ReminderModel.FID.in_(reminder_ids))
+                update(UserReminderModel)
+                .where(UserReminderModel.FID.in_(reminder_ids))
                 .values(FIsDeleted=True, FIsActive=False)
             )
             result = await session.execute(stmt)
         else:
             # Удаление связей
-            stmt = delete(ReminderShareModel).where(ReminderShareModel.FK_Reminder.in_(reminder_ids))
+            stmt = delete(UserReminderShareModel).where(UserReminderShareModel.FK_Reminder.in_(reminder_ids))
             await session.execute(stmt)
 
             # Удаление напоминаний
-            stmt = delete(ReminderModel).where(ReminderModel.FID.in_(reminder_ids))
+            stmt = delete(UserReminderModel).where(UserReminderModel.FID.in_(reminder_ids))
             result = await session.execute(stmt)
 
         await session.commit()

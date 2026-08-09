@@ -921,15 +921,16 @@ class TelegramManager:
     # ==================== РАБОТА С КОМАНДАМИ ====================
 
     @staticmethod
-    def _get_public_commands() -> list[dict[str, str]]:
+    def get_public_commands() -> list[dict[str, str]]:
         """Базовые команды (доступны без авторизации)"""
         return [
             {"command": "/start", "description": "Начало работы / Авторизация"},
             {"command": "/help", "description": "Помощь"},
+            {"command": "/debug_commands", "description": "🔍 Отладка команд"},
         ]
 
     @staticmethod
-    def _get_auth_commands() -> list[dict[str, str]]:
+    def get_auth_commands() -> list[dict[str, str]]:
         """Команды, требующие авторизации (видны всем авторизованным пользователям)"""
         return [
             {"command": "/actions", "description": "Меню действий"},
@@ -940,7 +941,7 @@ class TelegramManager:
         ]
 
     @staticmethod
-    def _get_admin_commands() -> list[dict[str, str]]:
+    def get_admin_commands() -> list[dict[str, str]]:
         """Админ-команды (видны только администраторам)"""
         return [
             {"command": "/sync", "description": "Синхронизация (админ)"},
@@ -954,15 +955,15 @@ class TelegramManager:
 
     def _get_commands_for_user(self, user_id: int, is_admin: bool = False) -> list[dict[str, str]]:
         """Получение списка команд для пользователя"""
-        commands = self._get_public_commands().copy()
+        commands = self.get_public_commands().copy()
 
         is_authorized = self.is_user_in_cache(user_id)
 
         if is_authorized:
-            commands.extend(self._get_auth_commands())
+            commands.extend(self.get_auth_commands())
 
         if is_admin:
-            commands.extend(self._get_admin_commands())
+            commands.extend(self.get_admin_commands())
 
         return commands
 
@@ -991,7 +992,7 @@ class TelegramManager:
 
             self._user_commands_cache.pop(user_id, None)
 
-            commands = self._get_public_commands()
+            commands = self.get_public_commands()
             await self._bot_service.set_commands(commands)
 
             tg_logger.debug(f"✅ Commands reset for user {user_id}")
@@ -1005,7 +1006,7 @@ class TelegramManager:
             if not self._aiogram_client.bot:
                 return
 
-            public_commands = self._get_public_commands()
+            public_commands = self.get_public_commands()
             await self._bot_service.set_commands(public_commands)
 
             for admin_id in getattr(settings, "ADMIN_IDS", []):
@@ -1013,6 +1014,16 @@ class TelegramManager:
                     await self.update_user_commands(admin_id, is_admin=True)
                 except Exception as e:
                     tg_logger.warning(f"⚠️ Failed to set commands for admin {admin_id}: {e}")
+
+            # Обновление команд для всех авторизованных пользователей
+            async with db_manager.get_session() as session:
+                authorized_users = await UserRepository.get_authorized_users(session)
+                for user in authorized_users:
+                    try:
+                        is_admin = user.FID in getattr(settings, "ADMIN_IDS", [])
+                        await self.update_user_commands(user.FID, is_admin)
+                    except Exception as e:
+                        tg_logger.warning(f"⚠️ Failed to set commands for user {user.FID}: {e}")
 
             tg_logger.info("✅ Dynamic commands configured")
 
@@ -1232,4 +1243,29 @@ class TelegramManager:
 
 tg_manager = TelegramManager()
 
-__all__ = ["TelegramManager", "tg_manager"]
+# Функции-обертки для доступа к методам класса
+
+
+def get_public_commands() -> list[dict[str, str]]:
+    """Получение публичных команд (функция-обертка)"""
+    return TelegramManager.get_public_commands()
+
+
+def get_auth_commands() -> list[dict[str, str]]:
+    """Получение команд для авторизованных пользователей (функция-обертка)"""
+    return TelegramManager.get_auth_commands()
+
+
+def get_admin_commands() -> list[dict[str, str]]:
+    """Получение административных команд (функция-обертка)"""
+    return TelegramManager.get_admin_commands()
+
+
+__all__ = [
+    "TelegramManager",
+    "tg_manager",
+    # Публичные методы для работы с командами
+    "get_public_commands",
+    "get_auth_commands",
+    "get_admin_commands",
+]

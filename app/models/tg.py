@@ -1,5 +1,6 @@
-from datetime import UTC, datetime
-from enum import StrEnum
+# app/models/tg.py
+
+from datetime import datetime
 from typing import Any, Optional
 
 from aiogram import enums
@@ -17,255 +18,28 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy import Enum as SQLEnum
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+from .base import (
+    BaseModel,
+    ChatMemberMixin,
+    ChatType,
+    ErrorCategory,
+    ErrorSeverity,
+    ErrorStatus,
+    MessageSource,
+    MessageType,
+    UserAutomationRequestPriority,
+    UserAutomationRequestStatus,
+    UserMixin,
+    datetime_now,
+)
 
-
-def datetime_now() -> datetime:
-    """Возвращает текущее время без часового пояса"""
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
-# ============================================================
-# ENUM КЛАССЫ (БАЗОВЫЕ)
-# ============================================================
-
-
-class ChatType(StrEnum):
-    """Типы чатов Telegram"""
-
-    SENDER = "sender"
-    PRIVATE = "private"
-    GROUP = "group"
-    SUPERGROUP = "supergroup"
-    CHANNEL = "channel"
-
-    @classmethod
-    def from_aiogram(cls, aiogram_type: Any) -> Optional["ChatType"]:
-        if isinstance(aiogram_type, ChatType):
-            return aiogram_type
-        mapping = {
-            "private": cls.PRIVATE,
-            "group": cls.GROUP,
-            "supergroup": cls.SUPERGROUP,
-            "channel": cls.CHANNEL,
-            "sender": cls.SENDER,
-        }
-        if hasattr(aiogram_type, "value"):
-            aiogram_type = aiogram_type.value
-        return mapping.get(aiogram_type)
-
-    @classmethod
-    def from_string(cls, value: str) -> Optional["ChatType"]:
-        mapping = {
-            "private": cls.PRIVATE,
-            "group": cls.GROUP,
-            "supergroup": cls.SUPERGROUP,
-            "channel": cls.CHANNEL,
-            "sender": cls.SENDER,
-        }
-        return mapping.get(value.lower() if value else "")
-
-    @classmethod
-    def from_telethon(cls, telethon_entity: Any) -> Optional["ChatType"]:
-        try:
-            if hasattr(telethon_entity, "megagroup") and telethon_entity.megagroup:
-                return cls.SUPERGROUP
-            if hasattr(telethon_entity, "channel") and telethon_entity.channel:
-                return cls.CHANNEL
-            if hasattr(telethon_entity, "group") and telethon_entity.group:
-                return cls.GROUP
-            if hasattr(telethon_entity, "is_user") and telethon_entity.is_user:
-                return cls.PRIVATE
-        except Exception:
-            pass
-        return None
-
-
-class ChatMemberStatus(StrEnum):
-    """Статусы участников чата"""
-
-    CREATOR = "creator"
-    ADMINISTRATOR = "administrator"
-    MEMBER = "member"
-    RESTRICTED = "restricted"
-    LEFT = "left"
-    KICKED = "kicked"
-
-    @classmethod
-    def from_aiogram(cls, aiogram_status: Any) -> Optional["ChatMemberStatus"]:
-        mapping = {
-            "creator": cls.CREATOR,
-            "administrator": cls.ADMINISTRATOR,
-            "member": cls.MEMBER,
-            "restricted": cls.RESTRICTED,
-            "left": cls.LEFT,
-            "kicked": cls.KICKED,
-        }
-        if hasattr(aiogram_status, "value"):
-            aiogram_status = aiogram_status.value
-        return mapping.get(aiogram_status)
-
-    @classmethod
-    def from_string(cls, value: str) -> Optional["ChatMemberStatus"]:
-        mapping = {
-            "creator": cls.CREATOR,
-            "administrator": cls.ADMINISTRATOR,
-            "member": cls.MEMBER,
-            "restricted": cls.RESTRICTED,
-            "left": cls.LEFT,
-            "kicked": cls.KICKED,
-        }
-        return mapping.get(value.lower() if value else "")
-
-    @classmethod
-    def from_telethon(cls, participant: Any) -> Optional["ChatMemberStatus"]:
-        try:
-            if hasattr(participant, "is_creator") and participant.is_creator:
-                return cls.CREATOR
-            if hasattr(participant, "is_admin") and participant.is_admin:
-                return cls.ADMINISTRATOR
-            if hasattr(participant, "is_member") and not participant.is_member:
-                return cls.LEFT
-        except Exception:
-            pass
-        return cls.MEMBER
-
-
-class MessageType(StrEnum):
-    """Типы сообщений"""
-
-    USER_REQUEST = "user_request"
-    BOT_RESPONSE = "bot_response"
-    BROADCAST_MESSAGE = "broadcast_message"
-    COMMAND = "command"
-    COMMAND_ADMIN = "command_admin"
-    COMMAND_ACTION = "command_action"
-    COMMAND_ACTION_INFO = "command_action_info"
-    COMMAND_AUTH = "command_auth"
-    COMMAND_AUTOMATION = "command_automation"
-    REMINDER = "reminder"
-    SYSTEM_ALERT = "system_alert"
-    SYSTEM_STATUS = "system_status"
-
-
-class MessageActionType(StrEnum):
-    """Типы действий с сообщениями для очистки"""
-
-    COMMAND_CLEANUP = "command_cleanup"
-    COMMAND_ADMIN_CLEANUP = "admin_cleanup"
-    COMMAND_ACTION_CLEANUP = "action_cleanup"
-    COMMAND_AUTH_CLEANUP = "auth_cleanup"
-    COMMAND_AUTOMATION_CLEANUP = "automation_cleanup"
-
-
-class MessageSource(StrEnum):
-    """Источники сообщений"""
-
-    USER = "user"
-    BOT = "bot"
-    SYSTEM = "system"
-
-
-# ============================================================
-# ENUM КЛАССЫ (ОШИБКИ)
-# ============================================================
-
-
-class ErrorCategory(StrEnum):
-    """Категории ошибок"""
-
-    ARBITRARY = "arbitrary"
-    PERIODIC_TASK = "periodic_task"
-    TASK_EXECUTION = "task_execution"
-    SYSTEM = "system"
-    EXTERNAL = "external"
-
-
-class ErrorSeverity(StrEnum):
-    """Степень серьезности ошибки"""
-
-    CRITICAL = "critical"
-    ERROR = "error"
-    WARNING = "warning"
-    INFO = "info"
-
-
-class ErrorStatus(StrEnum):
-    """Статус ошибки"""
-
-    NEW = "new"
-    IN_PROGRESS = "in_progress"
-    RESOLVED = "resolved"
-    DISMISSED = "dismissed"
-    REOPENED = "reopened"
-
-
-# ============================================================
-# ENUM КЛАССЫ (АВТОМАТИЗАЦИЯ)
-# ============================================================
-
-
-class AutomationRequestStatus(StrEnum):
-    """Статусы заявок на автоматизацию"""
-
-    NEW = "new"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    CANCELLED = "cancelled"
-    REJECTED = "rejected"
-
-
-class AutomationRequestPriority(StrEnum):
-    """Приоритеты заявок на автоматизацию"""
-
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
-
-
-# ============================================================
-# MIXIN КЛАССЫ
-# ============================================================
-
-
-class UserMixin:
-    """Базовые поля пользователя"""
-
-    FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    FUserName: Mapped[str] = mapped_column(String(64))
-    FFirstName: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    FLastName: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    FFlagBot: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class ChatMemberMixin:
-    """Базовые поля участника чата"""
-
-    FStatus: Mapped[ChatMemberStatus] = mapped_column(
-        SQLEnum(ChatMemberStatus, name="chatmemberstatus"), default=ChatMemberStatus.MEMBER
-    )
-    FFlagActive: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
-# ============================================================
-# БАЗОВАЯ МОДЕЛЬ
-# ============================================================
-
-
-class BaseModel(DeclarativeBase):
-    pass
-
-
-# ============================================================
-# ОСНОВНЫЕ МОДЕЛИ (ПОЛЬЗОВАТЕЛИ, ЧАТЫ, СООБЩЕНИЯ)
-# ============================================================
+# ============ ОСНОВНЫЕ МОДЕЛИ TELEGRAM ============
 
 
 class UserModel(BaseModel, UserMixin):
-    """Пользователь Telegram"""
+    """Пользователь"""
 
     __tablename__ = "TUsers"
     __table_args__ = (
@@ -289,17 +63,23 @@ class UserModel(BaseModel, UserMixin):
     ChatsMembers: Mapped[list["ChatMemberModel"]] = relationship(
         "ChatMemberModel", back_populates="user", cascade="all, delete-orphan"
     )
+
     UserMessages: Mapped[list["ChatMessageModel"]] = relationship(
         "ChatMessageModel", back_populates="user", foreign_keys="ChatMessageModel.FK_User"
     )
+
     ResolvedErrors: Mapped[list["ErrorModel"]] = relationship(
         "ErrorModel", foreign_keys="ErrorModel.FK_ResolvedBy", back_populates="resolved_by_user"
     )
-    AutomationRequests: Mapped[list["AutomationRequestModel"]] = relationship(
-        "AutomationRequestModel", foreign_keys="AutomationRequestModel.FK_User", back_populates="user"
+
+    # Связи с автоматизацией
+    AutomationRequests: Mapped[list["UserAutomationRequestModel"]] = relationship(
+        "UserAutomationRequestModel", foreign_keys="UserAutomationRequestModel.FK_User", back_populates="user"
     )
-    AutomationRequestsCompleted: Mapped[list["AutomationRequestModel"]] = relationship(
-        "AutomationRequestModel", foreign_keys="AutomationRequestModel.FCompletedBy", back_populates="completed_by_user"
+    AutomationRequestsCompleted: Mapped[list["UserAutomationRequestModel"]] = relationship(
+        "UserAutomationRequestModel",
+        foreign_keys="UserAutomationRequestModel.FCompletedBy",
+        back_populates="completed_by_user",
     )
 
     def __str__(self) -> str:
@@ -320,12 +100,10 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def is_authenticated(self) -> bool:
-        """Проверка, авторизован ли пользователь"""
         return self.FK_Avanpost is not None
 
     @property
     def display_name(self) -> str:
-        """Отображаемое имя"""
         if self.fullname and self.fullname != self.FUserName:
             return f"{self.fullname} (@{self.FUserName})"
         return f"@{self.FUserName}"
@@ -355,20 +133,26 @@ class ChatModel(BaseModel):
     ChatsMembers: Mapped[list["ChatMemberModel"]] = relationship(
         "ChatMemberModel", back_populates="chat", cascade="all, delete-orphan"
     )
+
     ChatMessages: Mapped[list["ChatMessageModel"]] = relationship(
         "ChatMessageModel", back_populates="chat", cascade="all, delete-orphan"
     )
+
     ChatsNotificationsSettings: Mapped[Optional["ChatNotificationSettingsModel"]] = relationship(
         "ChatNotificationSettingsModel", back_populates="chat", uselist=False, cascade="all, delete-orphan"
     )
+
     ErrorsFilters: Mapped[list["ErrorFilterModel"]] = relationship(
         "ErrorFilterModel", back_populates="chat", cascade="all, delete-orphan"
     )
-    Reminders: Mapped[list["ReminderModel"]] = relationship(
-        "ReminderModel", back_populates="chat", foreign_keys="ReminderModel.FK_Chat"
+
+    Reminders: Mapped[list["UserReminderModel"]] = relationship(
+        "UserReminderModel", back_populates="chat", foreign_keys="UserReminderModel.FK_Chat"
     )
-    AutomationRequests: Mapped[list["AutomationRequestModel"]] = relationship(
-        "AutomationRequestModel", foreign_keys="AutomationRequestModel.FK_Chat", back_populates="chat"
+
+    # Связи с автоматизацией
+    AutomationRequests: Mapped[list["UserAutomationRequestModel"]] = relationship(
+        "UserAutomationRequestModel", foreign_keys="UserAutomationRequestModel.FK_Chat", back_populates="chat"
     )
 
     def __repr__(self) -> str:
@@ -411,6 +195,7 @@ class ChatMemberModel(BaseModel, ChatMemberMixin):
 
     user: Mapped["UserModel"] = relationship("UserModel", back_populates="ChatsMembers")
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatsMembers")
+
     ChatMemberMessages: Mapped[list["ChatMessageModel"]] = relationship(
         "ChatMessageModel", back_populates="chat_member", foreign_keys="ChatMessageModel.FK_ChatMember"
     )
@@ -515,9 +300,7 @@ class ChatMessageModel(BaseModel):
         return f"[{self.FK_MessageType.value}]"
 
 
-# ============================================================
-# МОДЕЛИ ОШИБОК
-# ============================================================
+# ============ МОДЕЛИ ОШИБОК ============
 
 
 class ErrorModel(BaseModel):
@@ -645,9 +428,7 @@ class ErrorFilterModel(BaseModel):
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ErrorsFilters")
 
 
-# ============================================================
-# МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ
-# ============================================================
+# ============ МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ ============
 
 
 class PeriodicTaskModel(BaseModel):
@@ -694,22 +475,20 @@ class PeriodicTaskModel(BaseModel):
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
 
-# ============================================================
-# МОДЕЛИ НАПОМИНАНИЙ
-# ============================================================
+# ============ МОДЕЛИ НАПОМИНАНИЙ ============
 
 
-class ReminderModel(BaseModel):
+class UserReminderModel(BaseModel):
     """Модель для напоминаний (дела, события)"""
 
-    __tablename__ = "TReminders"
+    __tablename__ = "TUsersReminders"
     __table_args__ = (
-        PrimaryKeyConstraint("FID", name="PK_Reminders"),
-        Index("IX_Reminders_UserID", "FK_User"),
-        Index("IX_Reminders_RemindAt", "FRemindAt"),
-        Index("IX_Reminders_IsCompleted", "FIsCompleted"),
-        Index("IX_Reminders_GroupID", "FGroupID"),
-        Index("IX_Reminders_CodeWord", "FCodeWord"),
+        PrimaryKeyConstraint("FID", name="PK_UsersReminders"),
+        Index("IX_UsersReminders_UserID", "FK_User"),
+        Index("IX_UsersReminders_RemindAt", "FRemindAt"),
+        Index("IX_UsersReminders_IsCompleted", "FIsCompleted"),
+        Index("IX_UsersReminders_GroupID", "FGroupID"),
+        Index("IX_UsersReminders_CodeWord", "FCodeWord"),
     )
 
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -747,30 +526,29 @@ class ReminderModel(BaseModel):
     FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
-    # Связи
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User])
     chat: Mapped[Optional["ChatModel"]] = relationship("ChatModel", foreign_keys=[FK_Chat], back_populates="Reminders")
 
-    child_reminders: Mapped[list["ReminderModel"]] = relationship(
-        "ReminderModel",
+    child_reminders: Mapped[list["UserReminderModel"]] = relationship(
+        "UserReminderModel",
         remote_side=[FID],
         foreign_keys=[FGroupID],
-        primaryjoin="ReminderModel.FID == ReminderModel.FGroupID",
+        primaryjoin="UserReminderModel.FID == UserReminderModel.FGroupID",
         uselist=True,
     )
 
 
-class ReminderShareModel(BaseModel):
+class UserReminderShareModel(BaseModel):
     """Связь дела с пользователем (для общих дел)"""
 
-    __tablename__ = "TRemindersShares"
+    __tablename__ = "TUsersRemindersShares"
     __table_args__ = (
-        PrimaryKeyConstraint("FK_Reminder", "FK_User", name="PK_RemindersShares"),
+        PrimaryKeyConstraint("FK_Reminder", "FK_User", name="PK_UsersRemindersShares"),
         ForeignKeyConstraint(
-            ["FK_Reminder"], ["TReminders.FID"], ondelete="CASCADE", name="FK_RemindersShares_Reminder"
+            ["FK_Reminder"], ["TUsersReminders.FID"], ondelete="CASCADE", name="FK_UsersRemindersShares_Reminder"
         ),
-        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_RemindersShares_User"),
-        UniqueConstraint("FK_Reminder", "FK_User", name="UK_RemindersShares_Reminder_User"),
+        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_UsersRemindersShares_User"),
+        UniqueConstraint("FK_Reminder", "FK_User", name="UK_UsersRemindersShares_Reminder_User"),
     )
 
     FK_Reminder: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -784,9 +562,7 @@ class ReminderShareModel(BaseModel):
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
 
-# ============================================================
-# МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ
-# ============================================================
+# ============ МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ ============
 
 
 class ChatNotificationSettingsModel(BaseModel):
@@ -832,25 +608,23 @@ class ChatNotificationSettingsModel(BaseModel):
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatsNotificationsSettings")
 
 
-# ============================================================
-# МОДЕЛИ АВТОМАТИЗАЦИИ
-# ============================================================
+# ============ МОДЕЛИ АВТОМАТИЗАЦИИ ============
 
 
-class AutomationRequestModel(BaseModel):
+class UserAutomationRequestModel(BaseModel):
     """Модель заявки на автоматизацию"""
 
-    __tablename__ = "TAutomationRequests"
+    __tablename__ = "TUsersAutomationRequests"
     __table_args__ = (
-        PrimaryKeyConstraint("FID", name="PK_AutomationRequests"),
-        Index("IX_AutomationRequests_UserID", "FK_User"),
-        Index("IX_AutomationRequests_Status", "FStatus"),
-        Index("IX_AutomationRequests_CreatedAt", "FCreatedAt"),
-        Index("IX_AutomationRequests_Priority", "FPriority"),
-        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_AutomationRequests_User"),
-        ForeignKeyConstraint(["FK_Chat"], ["TChats.FID"], ondelete="SET NULL", name="FK_AutomationRequests_Chat"),
+        PrimaryKeyConstraint("FID", name="PK_UsersAutomationRequests"),
+        Index("IX_UsersAutomationRequests_UserID", "FK_User"),
+        Index("IX_UsersAutomationRequests_Status", "FStatus"),
+        Index("IX_UsersAutomationRequests_CreatedAt", "FCreatedAt"),
+        Index("IX_UsersAutomationRequests_Priority", "FPriority"),
+        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_UsersAutomationRequests_User"),
+        ForeignKeyConstraint(["FK_Chat"], ["TChats.FID"], ondelete="SET NULL", name="FK_UsersAutomationRequests_Chat"),
         ForeignKeyConstraint(
-            ["FCompletedBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_AutomationRequests_CompletedBy"
+            ["FCompletedBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_UsersAutomationRequests_CompletedBy"
         ),
     )
 
@@ -860,11 +634,12 @@ class AutomationRequestModel(BaseModel):
     FTitle: Mapped[str] = mapped_column(String(200), nullable=False)
     FDescription: Mapped[str] = mapped_column(Text, nullable=False)
 
-    FPriority: Mapped[AutomationRequestPriority] = mapped_column(
-        SQLEnum(AutomationRequestPriority, name="automationrequestpriority"), default=AutomationRequestPriority.MEDIUM
+    FPriority: Mapped[UserAutomationRequestPriority] = mapped_column(
+        SQLEnum(UserAutomationRequestPriority, name="automationrequestpriority"),
+        default=UserAutomationRequestPriority.MEDIUM,
     )
-    FStatus: Mapped[AutomationRequestStatus] = mapped_column(
-        SQLEnum(AutomationRequestStatus, name="automationrequeststatus"), default=AutomationRequestStatus.NEW
+    FStatus: Mapped[UserAutomationRequestStatus] = mapped_column(
+        SQLEnum(UserAutomationRequestStatus, name="automationrequeststatus"), default=UserAutomationRequestStatus.NEW
     )
 
     FK_Chat: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -886,37 +661,18 @@ class AutomationRequestModel(BaseModel):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<AutomationRequest(id={self.FID}, user={self.FK_User}, status={self.FStatus}, priority={self.FPriority})>"
-        )
+        return f"<UserAutomationRequest(id={self.FID}, user={self.FK_User}, status={self.FStatus}, priority={self.FPriority})>"
 
+
+# ============ ЭКСПОРТ ============
 
 __all__ = [
-    # Вспомогательные функции
-    "datetime_now",
-    # Базовые классы
-    "BaseModel",
-    "UserMixin",
-    "ChatMemberMixin",
-    # Enum классы - базовые
-    "ChatType",
-    "ChatMemberStatus",
-    "MessageType",
-    "MessageActionType",
-    "MessageSource",
-    # Enum классы - ошибки
-    "ErrorCategory",
-    "ErrorSeverity",
-    "ErrorStatus",
-    # Enum классы - автоматизация
-    "AutomationRequestStatus",
-    "AutomationRequestPriority",
     # Основные модели
-    "UserModel",
     "ChatModel",
-    "UserChatMemberModel",
     "ChatMemberModel",
     "ChatMessageModel",
+    "UserModel",
+    "UserChatMemberModel",
     # Модели ошибок
     "ErrorModel",
     "ErrorMessageLinkModel",
@@ -924,10 +680,10 @@ __all__ = [
     # Модели периодических задач
     "PeriodicTaskModel",
     # Модели напоминаний
-    "ReminderModel",
-    "ReminderShareModel",
+    "UserReminderModel",
+    "UserReminderShareModel",
     # Модели настроек
     "ChatNotificationSettingsModel",
     # Модели автоматизации
-    "AutomationRequestModel",
+    "UserAutomationRequestModel",
 ]

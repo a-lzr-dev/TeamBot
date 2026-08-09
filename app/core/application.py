@@ -9,7 +9,7 @@ from ..db.manager import db_manager
 from ..db.repositories import ReminderRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import MessageType, ReminderModel, datetime_now
+from ..models import MessageType, UserReminderModel, datetime_now
 from ..services.log_handler_service import log_handler_service
 from ..tg.manager import tg_manager
 
@@ -293,7 +293,7 @@ class ApplicationManager:
             app_logger.error(f"❌ Failed to check reminders: {e}", exc_info=True)
             raise
 
-    async def _send_reminder_notification(self, reminder: ReminderModel) -> None:
+    async def _send_reminder_notification(self, reminder: UserReminderModel) -> None:
         """Отправка уведомления о напоминании"""
         try:
             # Формирование текста уведомления
@@ -327,7 +327,7 @@ class ApplicationManager:
             raise
 
     @staticmethod
-    def _format_reminder_message(reminder: ReminderModel) -> str:
+    def _format_reminder_message(reminder: UserReminderModel) -> str:
         """Форматирование сообщения для напоминания"""
         message = "🔔 **Напоминание!**\n\n"
         message += f"📌 **{reminder.FTitle or 'Без названия'}**\n"

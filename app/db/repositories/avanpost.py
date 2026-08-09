@@ -44,7 +44,7 @@ class AvanpostRepository:
             tg_logger.error(f"❌ Failed to check user in Avanpost: {e}", exc_info=True)
             return None, None
 
-    # ==================== ГРУППЫ ====================
+    # ==================== ГРУППЫ ДЕЙСТВИЙ ====================
 
     @staticmethod
     async def get_groups(
@@ -88,7 +88,7 @@ class AvanpostRepository:
             tg_logger.error(f"❌ Failed to get groups: {e}", exc_info=True)
             return []
 
-    # ==================== ПУНКТЫ МЕНЮ ====================
+    # ==================== ДЕЙСТВИЯ ====================
 
     @staticmethod
     async def get_menu_items(
@@ -97,7 +97,7 @@ class AvanpostRepository:
         parent_item_id: int | None = None,
     ) -> list[dict]:
         """
-        Получение пунктов меню из Avanpost.
+        Получение действий из Avanpost.
 
         Args:
             session: Сессия БД (avanpost)
@@ -147,7 +147,7 @@ class AvanpostRepository:
         item_id: int,
     ) -> bool:
         """
-        Проверка, есть ли у пункта меню дочерние элементы.
+        Проверка, есть ли у действия дочерние элементы.
         Использует get_menu_items для получения данных.
 
         Args:
@@ -159,7 +159,6 @@ class AvanpostRepository:
             bool: True, если есть дочерние элементы
         """
         try:
-            # Используем существующий метод get_menu_items
             items = await AvanpostRepository.get_menu_items(
                 session=session,
                 group_id=group_id,
@@ -202,7 +201,6 @@ class AvanpostRepository:
 
         except Exception as e:
             tg_logger.error(f"❌ Failed to check error via procedure {check_procedure}: {e}", exc_info=True)
-            # При ошибке считаем, что ошибка все еще существует (безопасное поведение)
             return True
 
 

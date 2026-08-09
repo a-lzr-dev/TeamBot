@@ -26,18 +26,16 @@ class DynamicCommandsMiddleware(BaseMiddleware):
             user_id = event.from_user.id
             tg_manager = get_tg_manager()
 
-            # Проверка, является ли пользователь администратором
             is_admin = user_id in getattr(settings, "ADMIN_IDS", [])
+            is_authorized = await tg_manager.is_user_authorized(user_id)
 
-            # Проверка, есть ли пользователь в кеше через публичный метод
-            if not tg_manager.is_user_in_cache(user_id):
-                # Проверка авторизацию через публичный метод
-                is_authorized = await tg_manager.is_user_authorized(user_id)
-
-                if is_authorized or is_admin:
-                    await tg_manager.update_user_commands(user_id, is_admin)
-                    tg_logger.debug(f"✅ Commands updated for user {user_id} via middleware")
-                else:
-                    tg_logger.debug(f"ℹ️ User {user_id} not authorized, skipping commands update")
+            # Если пользователь авторизован или админ, но нет в кеше - обновляем
+            if (is_authorized or is_admin) and not tg_manager.is_user_in_cache(user_id):
+                await tg_manager.update_user_commands(user_id, is_admin)
+                tg_logger.debug(f"✅ Commands updated for user {user_id} via middleware")
+            elif not is_authorized and tg_manager.is_user_in_cache(user_id):
+                # Если пользователь разлогинился - очищаем кеш
+                tg_manager.clear_user_cache(user_id)
+                tg_logger.debug(f"🧹 Cache cleared for unauthorized user {user_id}")
 
         return await handler(event, data)

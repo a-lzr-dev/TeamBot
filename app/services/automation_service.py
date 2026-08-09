@@ -7,15 +7,16 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ..config import settings
 from ..db import AutomationRequestRepository, UserRepository, db_manager
 from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import (
-    AutomationRequestPriority,
-    AutomationRequestStatus,
     MessageType,
+    UserAutomationRequestPriority,
+    UserAutomationRequestStatus,
     datetime_now,
 )
 
@@ -444,12 +445,12 @@ class AutomationService:
 
         # Преобразование приоритета
         priority_map = {
-            "low": AutomationRequestPriority.LOW,
-            "medium": AutomationRequestPriority.MEDIUM,
-            "high": AutomationRequestPriority.HIGH,
-            "critical": AutomationRequestPriority.CRITICAL,
+            "low": UserAutomationRequestPriority.LOW,
+            "medium": UserAutomationRequestPriority.MEDIUM,
+            "high": UserAutomationRequestPriority.HIGH,
+            "critical": UserAutomationRequestPriority.CRITICAL,
         }
-        priority_enum = priority_map.get(priority.lower(), AutomationRequestPriority.MEDIUM)
+        priority_enum = priority_map.get(priority.lower(), UserAutomationRequestPriority.MEDIUM)
 
         try:
             # Сохранение в БД через репозиторий
@@ -517,11 +518,15 @@ class AutomationService:
                     session=new_session,
                 )
 
+        from sqlalchemy import select
+
+        from ..models import UserAutomationRequestModel
+
         # Преобразование статуса
         status_enum = None
         if status:
             try:
-                status_enum = AutomationRequestStatus(status)
+                status_enum = UserAutomationRequestStatus(status)
             except ValueError as status_error:
                 app_logger.warning(f"⚠️ Invalid status: {status}, error: {status_error}")
 
@@ -529,27 +534,26 @@ class AutomationService:
         priority_enum = None
         if priority:
             try:
-                priority_enum = AutomationRequestPriority(priority)
+                priority_enum = UserAutomationRequestPriority(priority)
             except ValueError as priority_error:
                 app_logger.warning(f"⚠️ Invalid priority: {priority}, error: {priority_error}")
 
-        # Получение заявок через репозиторий
+        stmt = select(UserAutomationRequestModel).options(selectinload(UserAutomationRequestModel.user))
+
         if user_id:
-            requests = await AutomationRequestRepository.get_by_user(
-                session=session,
-                user_id=user_id,
-                status=status_enum,
-                limit=limit,
-                offset=offset,
-            )
-        else:
-            requests = await AutomationRequestRepository.get_all(
-                session=session,
-                status=status_enum,
-                priority=priority_enum,
-                limit=limit,
-                offset=offset,
-            )
+            stmt = stmt.where(UserAutomationRequestModel.FK_User == user_id)
+
+        if status_enum:
+            stmt = stmt.where(UserAutomationRequestModel.FStatus == status_enum)
+
+        if priority_enum:
+            stmt = stmt.where(UserAutomationRequestModel.FPriority == priority_enum)
+
+        stmt = stmt.order_by(UserAutomationRequestModel.FCreatedAt.desc())
+        stmt = stmt.limit(limit).offset(offset)
+
+        result = await session.execute(stmt)
+        requests = result.scalars().all()
 
         return [self._format_request(req) for req in requests]
 
@@ -573,7 +577,19 @@ class AutomationService:
             async with db_manager.get_session() as new_session:
                 return await self.get_request_by_id(request_id, new_session)
 
-        request = await AutomationRequestRepository.get_by_id(session, request_id)
+        # ✅ Используем прямой запрос с selectinload
+        from sqlalchemy import select
+
+        from ..models import UserAutomationRequestModel
+
+        stmt = (
+            select(UserAutomationRequestModel)
+            .options(selectinload(UserAutomationRequestModel.user))
+            .where(UserAutomationRequestModel.FID == request_id)
+        )
+
+        result = await session.execute(stmt)
+        request = result.scalar_one_or_none()
 
         if not request:
             return None
@@ -614,7 +630,7 @@ class AutomationService:
 
         # Преобразование статуса
         try:
-            status_enum = AutomationRequestStatus(status)
+            status_enum = UserAutomationRequestStatus(status)
         except ValueError as status_error:
             return {"success": False, "error": f"Неверный статус: {status}, error: {status_error}"}
 
@@ -634,9 +650,22 @@ class AutomationService:
 
             app_logger.info(f"✅ Request #{request_id} status updated to {status}")
 
+            # ✅ Получаем обновленную заявку с загруженным пользователем
+            from sqlalchemy import select
+
+            from ..models import UserAutomationRequestModel
+
+            stmt = (
+                select(UserAutomationRequestModel)
+                .options(selectinload(UserAutomationRequestModel.user))
+                .where(UserAutomationRequestModel.FID == request_id)
+            )
+            result = await session.execute(stmt)
+            updated_request = result.scalar_one_or_none()
+
             return {
                 "success": True,
-                "request": self._format_request(request) if request else None,
+                "request": self._format_request(updated_request) if updated_request else None,
                 "error": None,
             }
 
@@ -673,7 +702,7 @@ class AutomationService:
 
         # Преобразование приоритета
         try:
-            priority_enum = AutomationRequestPriority(priority)
+            priority_enum = UserAutomationRequestPriority(priority)
         except ValueError as priority_error:
             return {"success": False, "error": f"Неверный приоритет: {priority}, error: {priority_error}"}
 
@@ -691,9 +720,22 @@ class AutomationService:
 
             app_logger.info(f"✅ Request #{request_id} priority updated to {priority}")
 
+            # ✅ Получаем обновленную заявку с загруженным пользователем
+            from sqlalchemy import select
+
+            from ..models import UserAutomationRequestModel
+
+            stmt = (
+                select(UserAutomationRequestModel)
+                .options(selectinload(UserAutomationRequestModel.user))
+                .where(UserAutomationRequestModel.FID == request_id)
+            )
+            result = await session.execute(stmt)
+            updated_request = result.scalar_one_or_none()
+
             return {
                 "success": True,
-                "request": self._format_request(request) if request else None,
+                "request": self._format_request(updated_request) if updated_request else None,
                 "error": None,
             }
 
@@ -786,7 +828,7 @@ class AutomationService:
                 success, _ = await AutomationRequestRepository.update_status(
                     session=session,
                     request_id=request_id,
-                    status=AutomationRequestStatus.CANCELLED,
+                    status=UserAutomationRequestStatus.CANCELLED,
                     note="Удалено пользователем",
                 )
             else:
@@ -859,18 +901,18 @@ class AutomationService:
             from ..tg import tg_manager
 
             priority_emoji = {
-                AutomationRequestPriority.LOW: "🟢",
-                AutomationRequestPriority.MEDIUM: "🟡",
-                AutomationRequestPriority.HIGH: "🟠",
-                AutomationRequestPriority.CRITICAL: "🔴",
+                UserAutomationRequestPriority.LOW: "🟢",
+                UserAutomationRequestPriority.MEDIUM: "🟡",
+                UserAutomationRequestPriority.HIGH: "🟠",
+                UserAutomationRequestPriority.CRITICAL: "🔴",
             }.get(request.FPriority, "🟡")
 
             status_emoji = {
-                AutomationRequestStatus.NEW: "🆕",
-                AutomationRequestStatus.IN_PROGRESS: "🔄",
-                AutomationRequestStatus.COMPLETED: "✅",
-                AutomationRequestStatus.CANCELLED: "❌",
-                AutomationRequestStatus.REJECTED: "⛔",
+                UserAutomationRequestStatus.NEW: "🆕",
+                UserAutomationRequestStatus.IN_PROGRESS: "🔄",
+                UserAutomationRequestStatus.COMPLETED: "✅",
+                UserAutomationRequestStatus.CANCELLED: "❌",
+                UserAutomationRequestStatus.REJECTED: "⛔",
             }.get(request.FStatus, "📌")
 
             message = (

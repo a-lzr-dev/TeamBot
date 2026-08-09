@@ -248,7 +248,7 @@ async def get_menu_items(
     ),
 ) -> JSONResponse:
     """
-    Получение пунктов меню для группы действий.
+    Получение списка действий для группы действий.
 
     Args:
         group_id: ID группы
@@ -319,7 +319,7 @@ async def check_has_subitems(
     item_id: int,
 ) -> JSONResponse:
     """
-    Проверка наличия дочерних элементов у пункта меню.
+    Проверка наличия дочерних элементов у действия группы.
 
     Args:
         group_id: ID группы
@@ -365,149 +365,6 @@ async def check_has_subitems(
                 error=f"Failed to check subitems: {str(e)}",
                 timestamp=get_timestamp(),
             ).model_dump(),
-        )
-
-
-@router.get(
-    "/groups/{group_id}/menu/tree",
-    summary="Получить дерево меню",
-    description="Возвращает полное дерево меню для группы действий",
-)
-@log_exceptions(api_logger)
-async def get_menu_tree(
-    group_id: int,
-    max_depth: int = Query(3, description="Максимальная глубина дерева", ge=1, le=10),
-) -> JSONResponse:
-    """
-    Получение полного дерева меню для группы.
-
-    Args:
-        group_id: ID группы
-        max_depth: Максимальная глубина
-
-    Returns:
-        JSONResponse: Дерево меню
-    """
-    api_logger.info(f"🌳 Getting menu tree for group {group_id}, max_depth={max_depth}")
-
-    _validate_group_id(group_id)
-
-    try:
-        async with db_manager.get_session("avanpost") as session:
-            root_items = await AvanpostRepository.get_menu_items(
-                session=session,
-                group_id=group_id,
-                parent_item_id=None,
-            )
-
-            tree = await _build_menu_tree(
-                session=session,
-                group_id=group_id,
-                items=root_items,
-                current_depth=0,
-                max_depth=max_depth,
-            )
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "group_id": group_id,
-                "tree": tree,
-                "count": len(tree),
-                "timestamp": get_timestamp(),
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        api_logger.error(f"❌ Failed to get menu tree: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": False,
-                "error": f"Failed to get menu tree: {str(e)}",
-                "timestamp": get_timestamp(),
-            },
-        )
-
-
-@router.get(
-    "/groups/{group_id}/menu/ancestors",
-    summary="Получить путь к элементу",
-    description="Возвращает путь (цепочку родителей) до указанного элемента",
-)
-@log_exceptions(api_logger)
-async def get_item_ancestors(
-    group_id: int,
-    item_id: int = Query(..., description="ID элемента"),
-) -> JSONResponse:
-    """
-    Получение пути к элементу меню.
-
-    Args:
-        group_id: ID группы
-        item_id: ID элемента
-
-    Returns:
-        JSONResponse: Путь к элементу
-    """
-    api_logger.info(f"🔗 Getting ancestors for group {group_id}, item {item_id}")
-
-    _validate_group_id(group_id)
-    _validate_item_id(item_id)
-
-    try:
-        async with db_manager.get_session("avanpost") as session:
-            all_items = await AvanpostRepository.get_menu_items(
-                session=session,
-                group_id=group_id,
-                parent_item_id=None,
-            )
-
-            items_map = {item.get("id"): item for item in all_items}
-
-            ancestors = []
-            current_id: int | None = item_id
-
-            while current_id is not None and current_id in items_map:
-                item = items_map[current_id]
-                ancestors.append(
-                    {
-                        "id": item.get("id"),
-                        "name": item.get("name"),
-                        "parent_id": item.get("parent_id"),
-                    }
-                )
-                parent_id = item.get("parent_id")
-                current_id = int(parent_id) if parent_id is not None else None
-
-            ancestors.reverse()
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "group_id": group_id,
-                "item_id": item_id,
-                "ancestors": ancestors,
-                "depth": len(ancestors),
-                "timestamp": get_timestamp(),
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        api_logger.error(f"❌ Failed to get ancestors: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": False,
-                "error": f"Failed to get ancestors: {str(e)}",
-                "timestamp": get_timestamp(),
-            },
         )
 
 

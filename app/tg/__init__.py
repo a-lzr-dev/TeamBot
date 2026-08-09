@@ -50,7 +50,10 @@ from .keyboards import (
     get_logout_keyboard,
     get_reply_keyboard,
 )
-from .manager import TelegramManager, tg_manager
+from .manager import (
+    TelegramManager,
+    tg_manager,
+)
 from .services import (
     AiogramBotService,
     BaseService,

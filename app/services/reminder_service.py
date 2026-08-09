@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import ReminderRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import ReminderModel
+from ..models import UserReminderModel
 
 
 class ReminderService:
@@ -32,7 +32,7 @@ class ReminderService:
         chat_id: int | None = None,
         shared_with: list[int] | None = None,
         encrypt: bool = False,
-    ) -> ReminderModel:
+    ) -> UserReminderModel:
         """Создание напоминания"""
         return await self._repository.create_reminder(
             user_id=user_id,
@@ -132,7 +132,7 @@ class ReminderService:
         before_time: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[ReminderModel]:
+    ) -> list[UserReminderModel]:
         """Получение активных напоминаний"""
         return await self._repository.get_active_reminders(
             before_time=before_time,

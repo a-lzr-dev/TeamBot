@@ -53,7 +53,7 @@ def clear_temp_data(user_id: int) -> None:
 
 @router.message(Command("automation"))
 @log_exceptions(tg_logger)
-async def cmd_automation(message: Message, _state: FSMContext) -> None:
+async def cmd_automation(message: Message, **_kwargs: Any) -> None:
     """Команда для вызова меню автоматизации"""
     tg_manager = get_tg_manager()
     user_id = message.from_user.id
@@ -357,7 +357,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 
 @router.message(AutomationStates.waiting_for_file, F.document)
 @log_exceptions(tg_logger)
-async def handle_document_for_convert(message: Message, _state: FSMContext) -> None:
+async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
     """Обработка документа для конвертации"""
     tg_manager = get_tg_manager()
     user_id = message.from_user.id
