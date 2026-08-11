@@ -1,3 +1,5 @@
+# app/services/automation_service.py
+
 import asyncio
 import contextlib
 import sys
@@ -220,7 +222,6 @@ class AutomationService:
 
             # Конвертация выбранным методом
             conversion_success = False
-            error_message = None
 
             if method == "pywin32" and HAS_PYWIN32:
                 conversion_success, error_message = await self._convert_with_pywin32(
@@ -486,9 +487,8 @@ class AutomationService:
 
             app_logger.info(f"✅ Automation request created: #{request.FID}")
 
-            # Отправка уведомления в чат поддержки
-            if chat_id:
-                await self._send_request_notification(request, chat_id)
+            # Отправка уведомления в чат поддержки (в топик Jobs)
+            await self._send_request_notification(request)
 
             return {
                 "success": True,
@@ -905,17 +905,28 @@ class AutomationService:
     # ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ============
 
     @staticmethod
-    async def _send_request_notification(request: Any, chat_id: int) -> None:
+    async def _send_request_notification(request: Any) -> None:
         """
         Отправка уведомления о новой заявке в Telegram.
 
+        Уведомление отправляется в топик Jobs для централизованного
+        отслеживания заявок на автоматизацию.
+
         Args:
             request: Модель заявки
-            chat_id: ID чата
         """
         try:
             from ..tg import tg_manager
 
+            # Получаем настройки для уведомлений
+            chats = settings.automation_get_notification_chats
+            topic_id = settings.automation_get_notification_topic
+
+            if not chats:
+                app_logger.warning("⚠️ No chats configured for automation notifications")
+                return
+
+            # Формируем сообщение
             priority_emoji = {
                 UserRequestAutomationPriority.LOW: "🟢",
                 UserRequestAutomationPriority.MEDIUM: "🟡",
@@ -942,17 +953,28 @@ class AutomationService:
                 f"Статус: {status_emoji} {request.FStatus.value.upper()}"
             )
 
-            send_result = await tg_manager.send_message(
-                chat_id=chat_id,
-                message_type=MessageType.SYSTEM_ALERT,
-                text=message,
-                parse_mode="Markdown",
-            )
+            # Отправляем в каждый чат из списка
+            for chat_id in chats:
+                send_kwargs = {
+                    "chat_id": chat_id,
+                    "text": message,
+                    "message_type": MessageType.SYSTEM_ALERT,
+                    "parse_mode": "Markdown",
+                }
 
-            if send_result.get("success"):
-                app_logger.info(f"✅ Request notification sent to chat {chat_id}")
-            else:
-                app_logger.warning(f"⚠️ Failed to send notification: {send_result.get('error')}")
+                # Добавляем топик, если он настроен и чат является основным
+                if topic_id and chat_id == settings.SUPPORT_CHAT_ID:
+                    send_kwargs["message_thread_id"] = topic_id
+                    app_logger.info(f"📨 Sending automation notification to topic {topic_id} in chat {chat_id}")
+                else:
+                    app_logger.info(f"📨 Sending automation notification to chat {chat_id}")
+
+                send_result = await tg_manager.send_message(**send_kwargs)
+
+                if send_result.get("success"):
+                    app_logger.info(f"✅ Request notification sent to chat {chat_id}")
+                else:
+                    app_logger.warning(f"⚠️ Failed to send notification to chat {chat_id}: {send_result.get('error')}")
 
         except Exception as notify_error:
             app_logger.error(f"❌ Failed to send notification: {notify_error}")

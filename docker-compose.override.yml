@@ -1,0 +1,39 @@
+# ============================================================
+# Docker Compose Override для разработки
+# ============================================================
+# Использование: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+# ============================================================
+
+services:
+  app:
+    environment:
+      APP_ENV: development
+      APP_DEBUG: true
+      LOG_LEVEL: DEBUG
+      API_RELOAD: true
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    command: ["--mode", "dev"]
+
+  # Для внутренней БД раскомментируйте:
+  # postgres:
+  #   ports:
+  #     - "5433:5432"
+  #
+  # adminer:
+  #   image: adminer:latest
+  #   container_name: teambot_adminer
+  #   restart: unless-stopped
+  #   environment:
+  #     ADMINER_DEFAULT_SERVER: postgres
+  #   ports:
+  #     - "8080:8080"
+  #   depends_on:
+  #     - postgres
+  #   networks:
+  #     - teambot_network

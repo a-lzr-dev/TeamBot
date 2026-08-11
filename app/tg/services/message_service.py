@@ -69,9 +69,40 @@ class UnifiedMessageService(BaseService):
         user_group_id: int | None = None,
         lifetime_seconds: int | None = None,
         allow_sender: bool = True,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Отправка сообщения через оптимальный клиент"""
+        """
+        Отправка сообщения через оптимальный клиент с поддержкой топиков.
+
+        Args:
+            chat_id: ID чата
+            text: Текст сообщения
+            message_type: Тип сообщения
+            delete_message_id: ID сообщения для удаления
+            delete_by_type: Тип для очистки предыдущих сообщений
+            exclude_message_types: Типы для исключения из очистки
+            parse_mode: Режим парсинга
+            disable_web_page_preview: Отключить предпросмотр ссылок
+            disable_notification: Отключить уведомление
+            protect_content: Защитить содержимое от пересылки
+            reply_to_message_id: ID сообщения, на которое отвечаем
+            reply_markup: Клавиатура
+            user_id: ID пользователя
+            user_first_name: Имя пользователя
+            user_last_name: Фамилия пользователя
+            user_username: Username пользователя
+            user_is_bot: Является ли пользователь ботом
+            user_phone: Телефон пользователя
+            user_group_id: ID группы пользователя
+            lifetime_seconds: Время жизни сообщения в секундах
+            allow_sender: Разрешить отправку от имени пользователя
+            message_thread_id: ID топика для отправки (для супергрупп)
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            Dict[str, Any]: Результат отправки
+        """
         if not self._initialized:
             await self.initialize()
 
@@ -106,6 +137,7 @@ class UnifiedMessageService(BaseService):
                     protect_content=protect_content,
                     reply_to_message_id=reply_to_message_id,
                     reply_markup=reply_markup,
+                    message_thread_id=message_thread_id,
                     **kwargs,
                 )
 
@@ -115,7 +147,7 @@ class UnifiedMessageService(BaseService):
             except Exception as e:
                 tg_logger.warning(f"⚠️ Aiogram send failed: {e}, trying Telethon...")
 
-        # 2. Fallback через Telethon
+        # 2. Fallback через Telethon (если разрешено и клиент доступен)
         if not client_used and allow_sender and self._telethon:
             try:
                 result = await self._send_via_telethon(
@@ -124,6 +156,7 @@ class UnifiedMessageService(BaseService):
                     parse_mode=parse_mode,
                     disable_notification=disable_notification,
                     reply_to_message_id=reply_to_message_id,
+                    # Telethon может не поддерживать message_thread_id
                     **kwargs,
                 )
 
@@ -181,6 +214,7 @@ class UnifiedMessageService(BaseService):
         show_alert: bool = False,
         lifetime_seconds: int | None = None,
         delete_original: bool = False,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -197,6 +231,7 @@ class UnifiedMessageService(BaseService):
             show_alert: Показывать как всплывающее окно (только для callback)
             lifetime_seconds: Время жизни сообщения
             delete_original: Удалить исходное сообщение
+            message_thread_id: ID топика для отправки
             **kwargs: Дополнительные параметры
 
         Returns:
@@ -275,6 +310,7 @@ class UnifiedMessageService(BaseService):
             reply_markup=reply_markup,
             reply_to_message_id=original_message_id if is_message else None,
             lifetime_seconds=lifetime_seconds,
+            message_thread_id=message_thread_id,
             **user_data,
             **kwargs,
         )
@@ -303,12 +339,19 @@ class UnifiedMessageService(BaseService):
         }
 
     async def _send_via_aiogram(self, **kwargs: Any) -> dict[str, Any]:
-        """Отправка через Aiogram"""
+        """Отправка через Aiogram с поддержкой топиков"""
         if not self._bot:
             return {"success": False, "error": "Bot not available", "chat_id": kwargs.get("chat_id")}
 
         try:
             parse_mode = self._normalize_parse_mode(kwargs.get("parse_mode"))
+            message_thread_id = kwargs.get("message_thread_id")
+
+            tg_logger.debug(
+                f"🔍 [_send_via_aiogram] chat_id={kwargs['chat_id']}, message_thread_id={message_thread_id}"
+            )
+            tg_logger.debug(f"🔍 [_send_via_aiogram] text preview: {kwargs['text'][:100]}...")
+
             message = await self._bot.send_message(
                 chat_id=kwargs["chat_id"],
                 text=kwargs["text"],
@@ -318,8 +361,11 @@ class UnifiedMessageService(BaseService):
                 protect_content=kwargs.get("protect_content", False),
                 reply_to_message_id=kwargs.get("reply_to_message_id"),
                 reply_markup=kwargs.get("reply_markup"),
+                message_thread_id=message_thread_id,
                 **{k: v for k, v in kwargs.items() if k not in self._AIAGRAM_IGNORED_PARAMS},
             )
+
+            tg_logger.debug(f"✅ [_send_via_aiogram] SUCCESS! message_id={message.message_id}")
 
             return {
                 "success": True,
@@ -331,6 +377,10 @@ class UnifiedMessageService(BaseService):
 
         except TelegramAPIError as e:
             error_str = str(e).lower()
+            tg_logger.error(f"❌ [_send_via_aiogram] TelegramAPIError: {e}")
+            tg_logger.error(f"❌ [_send_via_aiogram] Error type: {type(e).__name__}")
+            tg_logger.error(f"❌ [_send_via_aiogram] Full error: {e}")
+
             if "message to be replied not found" in error_str:
                 kwargs["reply_to_message_id"] = None
                 return await self._send_via_aiogram(**kwargs)
@@ -768,9 +818,10 @@ class UnifiedMessageService(BaseService):
         filename: str | None = None,
         reply_markup: Any = None,
         lifetime_seconds: int | None = None,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Отправка фото"""
+        """Отправка фото с поддержкой топиков"""
         if not self._bot:
             return {"success": False, "error": "Bot not initialized"}
 
@@ -789,6 +840,7 @@ class UnifiedMessageService(BaseService):
                 caption=caption,
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
+                message_thread_id=message_thread_id,
                 **kwargs,
             )
 
@@ -818,6 +870,7 @@ class UnifiedMessageService(BaseService):
     # ==================== СТАТУС ====================
 
     async def get_status(self) -> dict[str, Any]:
+        """Получение статуса сервиса"""
         return {
             "initialized": self._initialized,
             "aiogram_available": bool(self._bot),
@@ -826,6 +879,7 @@ class UnifiedMessageService(BaseService):
         }
 
     async def health_check(self) -> bool:
+        """Проверка здоровья сервиса"""
         if not self._initialized:
             return False
         try:
@@ -855,6 +909,7 @@ class UnifiedMessageService(BaseService):
         "lifetime_seconds",
         "clear_previous",
         "allow_sender",
+        "message_thread_id",
     }
 
 

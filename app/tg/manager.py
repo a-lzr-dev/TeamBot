@@ -158,9 +158,39 @@ class TelegramManager:
         user_group_id: int | None = None,
         lifetime_seconds: int | None = None,
         allow_sender: bool = True,
+        message_thread_id: int | None = None,  # <-- ДОБАВЛЕНО: поддержка топиков
         **_kwargs: Any,
     ) -> dict[str, Any]:
-        """Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни"""
+        """
+        Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни.
+
+        Args:
+            chat_id: ID чата
+            text: Текст сообщения
+            message_type: Тип сообщения
+            delete_message_id: ID сообщения для удаления
+            delete_by_type: Тип для очистки предыдущих сообщений
+            exclude_message_types: Типы для исключения из очистки
+            parse_mode: Режим парсинга (HTML, Markdown, MarkdownV2)
+            disable_web_page_preview: Отключить предпросмотр ссылок
+            disable_notification: Отключить уведомление
+            protect_content: Защитить содержимое от пересылки
+            reply_to_message_id: ID сообщения, на которое отвечаем
+            reply_markup: Клавиатура
+            user_id: ID пользователя
+            user_first_name: Имя пользователя
+            user_last_name: Фамилия пользователя
+            user_username: Username пользователя
+            user_is_bot: Является ли пользователь ботом
+            user_phone: Телефон пользователя
+            user_group_id: ID группы пользователя
+            lifetime_seconds: Время жизни сообщения в секундах
+            allow_sender: Разрешить отправку от имени пользователя
+            message_thread_id: ID топика для отправки (для супергрупп)
+
+        Returns:
+            Dict[str, Any]: Результат отправки
+        """
         return await self._message_service.send_message(
             chat_id=chat_id,
             text=text,
@@ -183,6 +213,7 @@ class TelegramManager:
             user_group_id=user_group_id,
             lifetime_seconds=lifetime_seconds,
             allow_sender=allow_sender,
+            message_thread_id=message_thread_id,
         )
 
     @ensure_initialized
@@ -198,6 +229,7 @@ class TelegramManager:
         show_alert: bool = False,
         lifetime_seconds: int | None = None,
         delete_original: bool = True,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -214,6 +246,7 @@ class TelegramManager:
             show_alert: Показывать как всплывающее окно (только для callback)
             lifetime_seconds: Время жизни сообщения
             delete_original: Удалить исходное сообщение
+            message_thread_id: ID топика для отправки
             **kwargs: Дополнительные параметры
 
         Returns:
@@ -230,6 +263,7 @@ class TelegramManager:
             show_alert=show_alert,
             lifetime_seconds=lifetime_seconds,
             delete_original=delete_original,
+            message_thread_id=message_thread_id,
             **kwargs,
         )
 
@@ -245,6 +279,7 @@ class TelegramManager:
         filename: str | None = None,
         reply_markup: Any = None,
         lifetime_seconds: int | None = None,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Отправка фото с сохранением в БД"""
@@ -257,6 +292,7 @@ class TelegramManager:
             filename=filename,
             reply_markup=reply_markup,
             lifetime_seconds=lifetime_seconds,
+            message_thread_id=message_thread_id,
             **kwargs,
         )
 
@@ -268,6 +304,7 @@ class TelegramManager:
         show_alert: bool = False,
         duration: int = 1,
         chat_id: int | None = None,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -284,6 +321,7 @@ class TelegramManager:
             show_alert: Показывать как всплывающее окно (только для CallbackQuery)
             duration: Время жизни сообщения в секундах (только для Message)
             chat_id: ID чата (используется, если event не передан)
+            message_thread_id: ID топика для отправки
         """
         try:
             # Обработка CallbackQuery
@@ -316,6 +354,7 @@ class TelegramManager:
                         parse_mode="Markdown",
                         lifetime_seconds=duration,
                         disable_notification=True,
+                        message_thread_id=message_thread_id,
                         **kwargs,
                     )
 
@@ -341,6 +380,7 @@ class TelegramManager:
         text: str,
         parse_mode: str | None = None,
         reply_markup: Any = None,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Редактирование сообщения"""
@@ -350,6 +390,7 @@ class TelegramManager:
             text=text,
             parse_mode=parse_mode,
             reply_markup=reply_markup,
+            message_thread_id=message_thread_id,
             **kwargs,
         )
 
@@ -360,6 +401,7 @@ class TelegramManager:
         text: str,
         parse_mode: str | None = None,
         reply_markup: Any = None,
+        message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Редактирование сообщения из callback"""
@@ -368,6 +410,7 @@ class TelegramManager:
             text=text,
             parse_mode=parse_mode,
             reply_markup=reply_markup,
+            message_thread_id=message_thread_id,
             **kwargs,
         )
 
@@ -421,9 +464,23 @@ class TelegramManager:
         sender_first_name: str | None = None,
         sender_username: str | None = None,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
+        message_thread_id: int | None = None,
     ) -> dict[str, Any]:
         """
         Рассылка сообщения во все активные чаты.
+
+        Args:
+            text: Текст сообщения
+            parse_mode: Режим парсинга
+            disable_web_page_preview: Отключить предпросмотр ссылок
+            chat_types: Типы чатов для рассылки
+            exclude_chat_ids: ID чатов для исключения
+            only_active: Только активные чаты
+            sender_user_id: ID отправителя
+            sender_first_name: Имя отправителя
+            sender_username: Username отправителя
+            progress_callback: Callback для прогресса
+            message_thread_id: ID топика для отправки
         """
         if not self._aiogram_client.bot:
             return {
@@ -473,6 +530,7 @@ class TelegramManager:
                             user_id=sender_user_id,
                             user_first_name=sender_first_name,
                             user_username=sender_username,
+                            message_thread_id=message_thread_id,
                         )
 
                         if result.get("success"):
@@ -524,72 +582,6 @@ class TelegramManager:
                 "failed": 0,
                 "failed_chats": [],
             }
-
-    @log_exceptions(tg_logger)
-    @ensure_initialized
-    async def broadcast_to_chats(
-        self,
-        chat_ids: list[int],
-        text: str,
-        parse_mode: str = "HTML",
-        disable_web_page_preview: bool = True,
-        progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
-    ) -> dict[str, Any]:
-        """Рассылка сообщения в конкретные чаты."""
-        if not self._aiogram_client.bot:
-            return {
-                "success": False,
-                "error": "Bot not initialized",
-                "total": 0,
-                "successful": 0,
-                "failed": 0,
-                "failed_chats": [],
-            }
-
-        total = len(chat_ids)
-        success_count = 0
-        failed_chats = []
-
-        for idx, chat_id in enumerate(chat_ids, 1):
-            try:
-                result = await self.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    message_type=MessageType.BROADCAST_MESSAGE,
-                    parse_mode=parse_mode,
-                    disable_web_page_preview=disable_web_page_preview,
-                )
-
-                if result.get("success"):
-                    success_count += 1
-                else:
-                    failed_chats.append(
-                        {
-                            "chat_id": chat_id,
-                            "error": result.get("error", "Unknown error"),
-                        }
-                    )
-
-                if progress_callback:
-                    await progress_callback(idx, total)
-
-                await asyncio.sleep(0.05)
-
-            except Exception as e:
-                failed_chats.append(
-                    {
-                        "chat_id": chat_id,
-                        "error": str(e),
-                    }
-                )
-
-        return {
-            "success": True,
-            "total": total,
-            "successful": success_count,
-            "failed": len(failed_chats),
-            "failed_chats": failed_chats[:10],
-        }
 
     # ==================== ЖИЗНЕННЫЙ ЦИКЛ ====================
 

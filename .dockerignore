@@ -1,0 +1,12 @@
+*
+
+!app/
+!run.py
+!run.sh
+!requirements.txt
+!pyproject.toml
+!uv.lock
+
+**/__pycache__/
+**/*.py[cod]
+**/*$py/class

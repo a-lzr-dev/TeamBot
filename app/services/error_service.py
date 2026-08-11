@@ -284,14 +284,17 @@ class ErrorService:
 
         group_hash = ErrorRepository.create_group_hash(error_code, error_message, source_system)
 
+        # Поиск существующей ошибки
         existing = await ErrorRepository.find_existing_error(
             session=session,
             group_hash=group_hash,
         )
 
         if existing:
+            # Очистка старых сообщений перед обновлением
             await self._cleanup_old_messages(session, existing)
 
+            # Обновление существующей ошибки
             updated_error = await ErrorRepository.increment_occurrences(
                 session=session,
                 error_id=existing.FID,
@@ -315,10 +318,18 @@ class ErrorService:
                 )
                 await session.commit()
                 await session.refresh(error)
+
+                # Отправка уведомления через LogHandlerService
+                if send_to_telegram:
+                    from ..services.log_handler_service import log_handler_service
+
+                    await log_handler_service.send_notification(error)
+
                 return error
 
             existing = updated_error
 
+            # Отправка в указанные чаты (если есть)
             if chat_ids and send_to_telegram:
                 for chat_id in chat_ids:
                     message_id = await self._send_error_message(
@@ -343,8 +354,16 @@ class ErrorService:
 
             await session.commit()
             await session.refresh(existing)
+
+            # Отправка уведомления через LogHandlerService (для всех случаев, если send_to_telegram=True)
+            if send_to_telegram:
+                from ..services.log_handler_service import log_handler_service
+
+                await log_handler_service.send_notification(existing)
+
             return existing
 
+        # Создание новой ошибки
         sent_messages = []
         if chat_ids and send_to_telegram:
             for chat_id in chat_ids:
@@ -389,6 +408,11 @@ class ErrorService:
         app_logger.info(
             f"✅ External error saved: ID={error.FID}, Code={error.FErrorCode}, Sent to {len(sent_messages)} chats"
         )
+
+        if send_to_telegram:
+            from ..services.log_handler_service import log_handler_service
+
+            await log_handler_service.send_notification(error)
 
         return error
 
@@ -958,6 +982,7 @@ class ErrorService:
         details: str | None = None,
         is_repeat: bool = False,
         repeat_count: int = 0,
+        lifetime_seconds: int | None = None,
     ) -> int | None:
         """
         Отправка сообщения об ошибке в Telegram.
@@ -973,6 +998,7 @@ class ErrorService:
             details: Детали ошибки
             is_repeat: Является ли повторением
             repeat_count: Количество повторений
+            lifetime_seconds: Срок жизни
 
         Returns:
             int | None: ID отправленного сообщения или None
@@ -998,6 +1024,7 @@ class ErrorService:
                 text=text,
                 parse_mode="Markdown",
                 disable_notification=False,
+                lifetime_seconds=lifetime_seconds,
             )
 
             if result.get("success"):

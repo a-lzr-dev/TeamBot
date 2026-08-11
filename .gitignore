@@ -161,3 +161,40 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
+
+# ============================================================
+# TeamBot specific
+# ============================================================
+
+# Requirements (генерируется, НЕ в Git)
+requirements.txt
+requirements-dev.txt
+
+# Telegram sessions (сессионные файлы Telethon)
+*.session
+*.session-journal
+bot_session.session
+user_session.session
+*.session.*
+!*_session  # Исключение, если нужно
+
+# Docker
+*.log
+logs/
+temp/
+*.tmp
+
+# IDE
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Misc
+node_modules/
+static/

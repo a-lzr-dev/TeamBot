@@ -1,0 +1,135 @@
+# ============================================================
+# TeamBot Docker Compose - Внутренняя PostgreSQL (ОПЦИОНАЛЬНО)
+# ============================================================
+# Использование: docker-compose -f docker-compose.internal.yml up -d
+# ============================================================
+
+services:
+  # ============ Основная БД (PostgreSQL в контейнере) ============
+  postgres:
+    image: postgres:15-alpine
+    container_name: teambot_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_MAIN_NAME:-team_bot}
+      POSTGRES_USER: ${DB_MAIN_USER:?set DB_MAIN_USER}
+      POSTGRES_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${DB_MAIN_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_MAIN_USER} -d ${DB_MAIN_NAME:-team_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - teambot_network
+
+  # ============ Приложение ============
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: teambot:latest
+    container_name: teambot_app
+    restart: unless-stopped
+    environment:
+      # Основная БД (внутренняя)
+      DB_MAIN_NAME: ${DB_MAIN_NAME:-team_bot}
+      DB_MAIN_USER: ${DB_MAIN_USER:?set DB_MAIN_USER}
+      DB_MAIN_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
+      DB_MAIN_HOST: postgres  # <-- Имя контейнера
+      DB_MAIN_PORT: ${DB_MAIN_PORT:-5432}
+      # Внешняя БД Avanpost (MSSQL)
+      DB_AVANPOST_NAME: ${DB_AVANPOST_NAME:-avanpost}
+      DB_AVANPOST_USER: ${DB_AVANPOST_USER:?set DB_AVANPOST_USER}
+      DB_AVANPOST_PASSWORD: ${DB_AVANPOST_PASSWORD:?set DB_AVANPOST_PASSWORD}
+      DB_AVANPOST_HOST: ${DB_AVANPOST_HOST:-localhost}
+      DB_AVANPOST_PORT: ${DB_AVANPOST_PORT:-1433}
+      # Telegram
+      BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
+      BOT_ID: ${BOT_ID:?set BOT_ID}
+      BOT_HASH: ${BOT_HASH:?set BOT_HASH}
+      BOT_SESSION_NAME: ${BOT_SESSION_NAME:-bot_session}
+      BOT_USERNAME: ${BOT_USERNAME:?set BOT_USERNAME}
+      TELEGRAM_ACCOUNT_TYPE: ${TELEGRAM_ACCOUNT_TYPE:-bot}
+      USER_PHONE: ${USER_PHONE:-+375336391519}
+      USER_SESSION_NAME: ${USER_SESSION_NAME:-user_session}
+      # API
+      API_HOST: 0.0.0.0
+      API_PORT: ${API_PORT:-8000}
+      APP_ENV: ${APP_ENV:-production}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Настройки
+      ADMIN_IDS: ${ADMIN_IDS:?set ADMIN_IDS}
+      SUPPORT_CHAT_ID: ${SUPPORT_CHAT_ID:?set SUPPORT_CHAT_ID}
+      SUPPORT_CHAT_TOPIC_IDS: ${SUPPORT_CHAT_TOPIC_IDS:?set SUPPORT_CHAT_TOPIC_IDS}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:?set ENCRYPTION_SECRET}
+      LOG_DIR: /app/logs
+      AUTOMATION_TEMP_DIR: /app/temp/automation
+    volumes:
+      - ./logs:/app/logs
+      - ./temp:/app/temp
+      - ./docker/app/config:/app/config:ro
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - teambot_network
+    command: ["--mode", "${APP_MODE:-full}"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ============ Adminer (только для разработки) ============
+  adminer:
+    image: adminer:latest
+    container_name: teambot_adminer
+    restart: unless-stopped
+    profiles:
+      - dev
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - teambot_network
+
+  # ============ Nginx (опционально) ============
+  nginx:
+    image: nginx:alpine
+    container_name: teambot_nginx
+    restart: unless-stopped
+    profiles:
+      - production
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./static:/static:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - app
+    networks:
+      - teambot_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  teambot_network:
+    driver: bridge

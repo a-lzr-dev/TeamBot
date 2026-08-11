@@ -1,4 +1,3 @@
-import ast
 import asyncio
 import contextlib
 import logging
@@ -258,65 +257,41 @@ class LogHandlerService:
         else:
             return ErrorSeverity.INFO
 
-    @staticmethod
-    def _parse_support_chat_ids(value: Any) -> list[int]:
-        """Парсинг SUPPORT_CHAT_IDS из разных форматов"""
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [int(x) for x in value]
-        if isinstance(value, str):
-            value = value.strip()
-            if not value:
-                return []
-
-            if value.startswith("[") and value.endswith("]"):
-                try:
-                    result = ast.literal_eval(value)
-                    if isinstance(result, list):
-                        return [int(x) for x in result]
-                except (ValueError, SyntaxError):
-                    pass
-
-            if "," in value:
-                parts = [p.strip() for p in value.split(",") if p.strip()]
-                result = []
-                for part in parts:
-                    part = part.strip("[]")
-                    if part:
-                        try:
-                            result.append(int(part))
-                        except ValueError:
-                            continue
-                return result  # type: ignore[no-any-return]
-
-            try:
-                return [int(value)]
-            except ValueError:
-                return []
-        return []
-
     async def _send_notification(self, error_model: Any) -> None:
-        """Приватный метод отправки уведомления в чат техподдержки"""
+        """
+        Отправка уведомления об ошибке в чат техподдержки.
+
+        Поддерживает отправку в разные топики в зависимости от источника ошибки:
+        - Globus → топик Globus
+        - TeamBot → топик TeamBot
+        - Avanpost → топик Avanpost
+        - Jobs → топик Jobs
+        - SyncFrom1C → топик SyncFrom1C
+        - Unknown → основной чат (без топика)
+        """
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Service is shutting down, skipping notification")
             return
 
         try:
-            support_chats = self._parse_support_chat_ids(getattr(settings, "SUPPORT_CHAT_IDS", []))
-            app_logger.debug(f"🔍 SUPPORT_CHAT_IDS parsed: {support_chats}")
+            chat_id = getattr(settings, "SUPPORT_CHAT_ID", 0)
+            topic_mapping = getattr(settings, "SUPPORT_CHAT_TOPIC_IDS", {})
 
-            if not support_chats:
-                app_logger.debug("ℹ️ No SUPPORT_CHAT_IDS configured, skipping notification")
+            # Проверка настроек
+            if not chat_id:
+                app_logger.warning("⚠️ SUPPORT_CHAT_ID not configured, skipping notification")
+                return
+
+            if not topic_mapping:
+                app_logger.warning("⚠️ SUPPORT_CHAT_TOPIC_IDS not configured, skipping notification")
                 return
 
             message = self._format_notification(error_model)
 
-            if self._shutting_down:
-                app_logger.debug("ℹ️ Shutdown detected before get_status, skipping")
-                return
+            source = error_model.FSourceSystem or "Unknown"
+            topic_id = topic_mapping.get(source)
+            lifetime_seconds = getattr(settings, "ERROR_MESSAGE_LIFETIME_SECONDS", 604800)
 
-            # Проверка статуса Telegram менеджера
             try:
                 status = await asyncio.shield(get_tg_manager().get_status())
                 if not status.get("is_running", False):
@@ -330,48 +305,48 @@ class LogHandlerService:
                 return
 
             if self._shutting_down:
-                app_logger.debug("ℹ️ Shutdown detected after get_status, cancelling notification sending")
+                app_logger.debug("ℹ️ Shutdown detected, cancelling notification sending")
                 return
 
-            app_logger.info(f"📨 Sending notification to {len(support_chats)} chats: {support_chats}")
+            tg_manager = get_tg_manager()
 
-            success_count = 0
-            for chat_id in support_chats:
-                if self._shutting_down:
-                    app_logger.debug("ℹ️ Shutdown detected during sending, stopping")
-                    break
+            # Подготавка параметров к отправке
+            send_kwargs = {
+                "chat_id": chat_id,
+                "text": message,
+                "message_type": MessageType.SYSTEM_ALERT,
+                "parse_mode": "HTML",
+                "disable_notification": False,
+                "lifetime_seconds": lifetime_seconds,
+            }
 
-                try:
-                    app_logger.debug(f"📤 Sending to chat {chat_id}")
+            # Добавление топика, если он найден
+            if topic_id:
+                send_kwargs["message_thread_id"] = topic_id
+                app_logger.debug(f"📨 Sending notification to topic {topic_id} in chat {chat_id} (source: {source})")
+            else:
+                app_logger.debug(f"📨 Sending notification to chat {chat_id} (no specific topic for source: {source})")
 
-                    tg_manager = get_tg_manager()
+            try:
+                result = await asyncio.shield(tg_manager.send_message(**send_kwargs))
 
-                    # Отправка сообщения
-                    result = await asyncio.shield(
-                        tg_manager.send_message(
-                            chat_id=chat_id,
-                            message_type=MessageType.SYSTEM_ALERT,
-                            text=message,
-                            parse_mode="Markdown",
-                            disable_notification=False,
-                        )
-                    )
-
-                    if result.get("success"):
-                        success_count += 1
-                        app_logger.info(f"✅ Error notification sent to chat {chat_id}")
+                if result.get("success"):
+                    self._notification_stats["sent_notifications"] += 1
+                    if topic_id:
+                        app_logger.info(f"✅ Error notification sent to topic {topic_id} (source: {source})")
                     else:
-                        error_msg = result.get("error", "Unknown error")
-                        app_logger.warning(f"⚠️ Failed to send notification to chat {chat_id}: {error_msg}")
-
-                except asyncio.CancelledError:
-                    app_logger.debug("ℹ️ send_message cancelled during shutdown")
-                    break
-                except Exception as e:
+                        app_logger.info(f"✅ Error notification sent to chat {chat_id}")
+                else:
+                    self._notification_stats["failed_notifications"] += 1
+                    app_logger.warning(f"⚠️ Failed to send notification: {result.get('error')}")
+            except asyncio.CancelledError:
+                app_logger.debug("ℹ️ send_message cancelled during shutdown")
+            except Exception as e:
+                self._notification_stats["failed_notifications"] += 1
+                if topic_id:
+                    app_logger.error(f"❌ Failed to send to topic {topic_id}: {e}")
+                else:
                     app_logger.error(f"❌ Failed to send to chat {chat_id}: {e}")
-
-            if not self._shutting_down:
-                app_logger.info(f"✅ Sent notification to {success_count}/{len(support_chats)} chats")
 
         except asyncio.CancelledError:
             app_logger.debug("ℹ️ _send_notification cancelled")
@@ -381,7 +356,8 @@ class LogHandlerService:
 
     @staticmethod
     def _format_notification(error: Any) -> str:
-        """Форматирование сообщения для чата техподдержки"""
+        """Форматирование сообщения для чата техподдержки (HTML)"""
+
         severity_emoji = {
             ErrorSeverity.CRITICAL: "🚨",
             ErrorSeverity.ERROR: "❌",
@@ -397,28 +373,48 @@ class LogHandlerService:
             ErrorStatus.REOPENED: "🔁",
         }.get(error.FStatus, "❌")
 
-        message = f"{severity_emoji} **Ошибка в логах приложения**\n\n"
-        message += f"{status_emoji} **ID:** #{error.FID}\n"
-        message += f"📊 **Уровень:** `{error.FSeverity.value.upper()}`\n"
-        message += f"🔑 **Код:** `{error.FErrorCode}`\n\n"
-        message += f"📝 **Сообщение:**\n```\n{error.FErrorMessage[:300]}\n```\n"
+        # Экранирование для HTML
+        def escape_html(text: str) -> str:
+            """Экранирование основных спецсимволов для HTML"""
+            if not text:
+                return ""
+            return (
+                text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#39;")
+            )
+
+        # Экранируем только те поля, которые могут содержать спецсимволы
+        error_code = escape_html(error.FErrorCode or "")
+        error_message = escape_html(error.FErrorMessage[:300] if error.FErrorMessage else "")
+        error_details = escape_html(error.FErrorDetails[:300] if error.FErrorDetails else "")
+        source_system = escape_html(error.FSourceSystem or "")
+        source_module = escape_html(error.FSourceModule or "") if error.FSourceModule else ""
+
+        message = f"{severity_emoji} <b>Ошибка в логах приложения</b>\n\n"
+        message += f"{status_emoji} <b>ID:</b> #{error.FID}\n"
+        message += f"📊 <b>Уровень:</b> <code>{error.FSeverity.value.upper()}</code>\n"
+        message += f"🔑 <b>Код:</b> <code>{error_code}</code>\n\n"
+        message += f"📝 <b>Сообщение:</b>\n<pre>{error_message}</pre>\n"
 
         if error.FErrorDetails:
-            message += f"📎 **Детали:**\n```\n{error.FErrorDetails[:300]}\n```\n"
+            message += f"📎 <b>Детали:</b>\n<pre>{error_details}</pre>\n"
 
-        message += f"🖥️ **Система:** {error.FSourceSystem}\n"
+        message += f"🖥️ <b>Система:</b> {source_system}\n"
 
-        if error.FSourceModule:
-            message += f"📦 **Модуль:** {error.FSourceModule}\n"
+        if source_module:
+            message += f"📦 <b>Модуль:</b> {source_module}\n"
 
         if error.FUserID:
-            message += f"👤 **User ID:** {error.FUserID}\n"
+            message += f"👤 <b>User ID:</b> {error.FUserID}\n"
 
         if error.FCountOccurrences > 1:
-            message += f"🔄 **Повторов:** {error.FCountOccurrences}\n"
+            message += f"🔄 <b>Повторов:</b> {error.FCountOccurrences}\n"
 
-        message += f"\n📅 **Время:** {error.FLastOccurrence.strftime('%d.%m.%Y %H:%M:%S')}\n\n"
-        message += f"🔗 Используйте `/resolve_{error.FID}` для отметки как решенное"
+        message += f"\n📅 <b>Время:</b> {error.FLastOccurrence.strftime('%d.%m.%Y %H:%M:%S')}\n\n"
+        message += f"🔗 Используйте <code>/resolve_{error.FID}</code> для отметки как решенное"
 
         return message
 

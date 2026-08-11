@@ -5,7 +5,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import settings
 from ...db.repositories import ErrorRepository, NotificationSettingsRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
@@ -73,30 +72,6 @@ class ChatNotificationSettingsRequest(BaseModel):
     auto_report_hour_end: int = Field(18, description="Конец рабочего времени")
 
 
-# ============ Вспомогательные функции ============
-
-
-def _get_all_support_chats() -> list:
-    """Получение всех чатов поддержки"""
-    support_chats = getattr(settings, "SUPPORT_CHAT_IDS", [])
-    if isinstance(support_chats, list):
-        return support_chats
-    if isinstance(support_chats, str):
-        try:
-            import ast
-
-            if support_chats.startswith("[") and support_chats.endswith("]"):
-                result = ast.literal_eval(support_chats)
-                if isinstance(result, list):
-                    return result
-        except (ValueError, SyntaxError):
-            pass
-        # Если через запятую
-        if "," in support_chats:
-            return [int(x.strip()) for x in support_chats.split(",") if x.strip()]
-    return []
-
-
 # ============ Эндпоинты ============
 
 
@@ -108,23 +83,23 @@ async def register_external_error(
     request: ErrorRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Регистрация внешней ошибки"""
+    """
+    Регистрация внешней ошибки.
 
+    Отправка в Telegram происходит автоматически через LogHandlerService,
+    который определяет топик на основе source_system.
+    """
     api_logger.info(f"📝 Registering external error: {request.error_code} from {request.source_system}")
 
     try:
-        chat_ids = request.chat_ids
-        if not chat_ids:
-            chat_ids = _get_all_support_chats()
-            if chat_ids:
-                api_logger.debug(f"ℹ️ Using default chat_ids from settings: {chat_ids}")
+        chat_ids = request.chat_ids or []
 
-        if not chat_ids:
-            api_logger.warning("⚠️ No chat_ids provided, message will not be sent to Telegram")
+        if chat_ids:
+            api_logger.info(f"📨 Will send to {len(chat_ids)} specified chats: {chat_ids}")
+        else:
+            api_logger.debug("ℹ️ No chat_ids specified, error will be handled by LogHandlerService")
 
-        api_logger.info(f"📨 Will send to {len(chat_ids) if chat_ids else 0} chats: {chat_ids}")
-
-        # Сохранение ошибки (с отправкой в Telegram во все чаты)
+        # Сохранение ошибки с отправкой в Telegram
         error = await error_service.log_external_error(
             error_code=request.error_code,
             error_message=request.error_message,
