@@ -1,4 +1,5 @@
 from ..utils.datetime import get_timestamp
+from .avanpost_sync_service import AvanpostSyncService, avanpost_sync_service
 from .error_service import ErrorService, error_service
 from .message_lifetime_service import MessageLifetimeService, message_lifetime_service
 from .notification_service import NotificationService, notification_service
@@ -17,6 +18,8 @@ __all__ = [
     "reminder_service",
     "AvanpostSeedService",
     "avanpost_seed_service",
+    "AvanpostSyncService",
+    "avanpost_sync_service",
     # Утилиты
     "get_timestamp",
 ]

@@ -252,6 +252,8 @@ async def create_automation_request(
 
     # Проверка пользователя через репозиторий
     user = await UserRepository.get_user_by_id(session, request.user_id)
+
+    # Проверка, что пользователь существует и авторизован (есть связь с AvanpostUser)
     if not user:
         return JSONResponse(
             status_code=404,
@@ -259,6 +261,17 @@ async def create_automation_request(
                 success=False,
                 request_id=None,
                 error=f"Пользователь с ID {request.user_id} не найден",
+                timestamp=get_timestamp(),
+            ).model_dump(),
+        )
+
+    if not user.avanpost_user:
+        return JSONResponse(
+            status_code=403,
+            content=AutomationRequestResponse(
+                success=False,
+                request_id=None,
+                error=f"Пользователь с ID {request.user_id} не авторизован в системе",
                 timestamp=get_timestamp(),
             ).model_dump(),
         )

@@ -144,7 +144,7 @@ async def check_user_by_phone(
         phone = request.phone_number
 
         async with db_manager.get_session("avanpost") as session:
-            user_id, group_id = await AvanpostRepository.check_user_by_phone(
+            user_id, group_id, contact_id = await AvanpostRepository.check_user_by_phone(
                 session=session,
                 phone_number=phone,
             )

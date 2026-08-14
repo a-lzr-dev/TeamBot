@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from .avanpost import AvanpostUserModel
 from .base import (
     BaseModel,
     ChatMemberMixin,
@@ -44,14 +45,10 @@ class UserModel(BaseModel, UserMixin):
         PrimaryKeyConstraint("FID", name="PK_Users"),
         UniqueConstraint("FUserName", name="UK_Users_FUserName"),
         UniqueConstraint("FPhone", name="UK_Users_FPhone"),
-        Index("IX_Users_FK_Avanpost", "FK_Avanpost"),
-        Index("IX_Users_FK_AvanpostGroup", "FK_AvanpostGroup"),
     )
 
     FK_Chat: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     FK_Language: Mapped[str | None] = mapped_column(String(2), nullable=True)
-    FK_Avanpost: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    FK_AvanpostGroup: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FPhone: Mapped[str | None] = mapped_column(String(20), nullable=True)
     FDateCreated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FDateUpdated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
@@ -80,6 +77,14 @@ class UserModel(BaseModel, UserMixin):
         back_populates="completed_by_user",
     )
 
+    # Связь с AvanpostUser (один к одному)
+    avanpost_user: Mapped[Optional["AvanpostUserModel"]] = relationship(
+        "AvanpostUserModel",
+        foreign_keys="AvanpostUserModel.FK_User",
+        back_populates="telegram_user",
+        uselist=False,
+    )
+
     def __str__(self) -> str:
         return self.fullname
 
@@ -98,7 +103,18 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def is_authenticated(self) -> bool:
-        return self.FK_Avanpost is not None
+        """Проверка авторизации через наличие связи с AvanpostUser"""
+        return self.avanpost_user is not None
+
+    @property
+    def avanpost_id(self) -> int | None:
+        """Получение ID пользователя в Avanpost"""
+        return self.avanpost_user.FID if self.avanpost_user else None
+
+    @property
+    def avanpost_group_id(self) -> int | None:
+        """Получение ID группы меню из AvanpostUser"""
+        return self.avanpost_user.FK_MenuGroup if self.avanpost_user else None
 
     @property
     def display_name(self) -> str:

@@ -303,7 +303,7 @@ async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
                     db_message.FK_DeletedByMessage = deleted_by_message_id
                     db_message.FDeletedByType = deleted_by_type
                     deleted_count += 1
-                    tg_logger.debug(f"   ✅ Marked message {msg_id} as deleted (by {deleted_by_type})")
+                    tg_logger.debug(f"✅ Marked message {msg_id} as deleted (by {deleted_by_type})")
 
             await session.commit()
             tg_logger.info(f"✅ Marked {deleted_count} messages as deleted in chat {event.chat_id}")

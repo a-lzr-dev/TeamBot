@@ -84,7 +84,7 @@ from .base import (
     UserRequestAutomationStatus,
     datetime_now,
 )
-from .tg import (
+from .main import (
     ChatMemberModel,
     ChatMessageModel,
     ChatModel,

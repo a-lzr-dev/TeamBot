@@ -255,7 +255,7 @@ class DBManager:
 
         db_logger.debug("🔍 Seeding Avanpost system data types...")
 
-        async with self.get_session("main") as session:
+        async with self.get_session(db_name="main") as session:
             success = await avanpost_seed_service.seed_system_tables(session)
             if success:
                 db_logger.info("✅ Avanpost system data seeded successfully")

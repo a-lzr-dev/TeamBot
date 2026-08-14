@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from sqlalchemy import (
     CHAR,
@@ -18,6 +18,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import BaseModel
+
+if TYPE_CHECKING:
+    from .main import UserModel
 
 # ============ МОДЕЛИ ДЛЯ МЕНЮ ДЕЙСТВИЙ (AVANPOST) ============
 
@@ -801,10 +804,13 @@ class AvanpostUserModel(BaseModel):
         PrimaryKeyConstraint("FID", name="PK_AvanpostUsers"),
         ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_Avp_Users_User"),
         ForeignKeyConstraint(
-            ["FK_Contact"], ["TAvanpostContacts.FID"], ondelete="RESTRICT", name="FK_Avp_Users_Contact"
+            ["FK_MenuGroup"], ["TAvanpostDirScenariosGroups.FID"], ondelete="SET NULL", name="FK_Avp_Users_MenuGroup"
         ),
         ForeignKeyConstraint(
-            ["FK_MenuGroup"], ["TAvanpostDirScenariosGroups.FID"], ondelete="SET NULL", name="FK_Avp_Users_MenuGroup"
+            ["FK_Group"], ["TAvanpostDirContactsGroups.FID"], ondelete="RESTRICT", name="FK_Avp_Users_Group"
+        ),
+        ForeignKeyConstraint(
+            ["FK_Contact"], ["TAvanpostContacts.FID"], ondelete="RESTRICT", name="FK_Avp_Users_Contact"
         ),
         ForeignKeyConstraint(["FK_Owner"], ["TAvanpostDirOwners.FID"], ondelete="SET NULL", name="FK_Avp_Users_Owner"),
         ForeignKeyConstraint(
@@ -820,14 +826,23 @@ class AvanpostUserModel(BaseModel):
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True)
-    FK_User: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    FK_Contact: Mapped[int] = mapped_column(Integer, nullable=False)
+    FK_User: Mapped[int] = mapped_column(Integer, nullable=True)
     FK_MenuGroup: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    FK_Group: Mapped[int] = mapped_column(SmallInteger, nullable=True)
+    FK_Contact: Mapped[int] = mapped_column(Integer, nullable=True)
     FK_Owner: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     FK_MotorCade: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    FK_Language: Mapped[str] = mapped_column(CHAR(2), nullable=False)
+    FK_Language: Mapped[str] = mapped_column(CHAR(2), nullable=True)
     FName: Mapped[str | None] = mapped_column(String(50), nullable=True)
     FPhone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    # Связь с Telegram пользователем
+    telegram_user: Mapped[Optional["UserModel"]] = relationship(
+        "UserModel",
+        foreign_keys=[FK_User],
+        back_populates="avanpost_user",
+        uselist=False,
+    )
 
 
 class AvanpostUserChatModel(BaseModel):

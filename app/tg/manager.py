@@ -1054,7 +1054,8 @@ class TelegramManager:
         """Внутренний метод для проверки авторизации пользователя"""
         try:
             async with db_manager.get_session() as session:
-                return await UserRepository.is_user_authorized(session, user_id)
+                user = await UserRepository.get_user_by_id(session, user_id)
+                return user is not None and user.avanpost_user is not None
         except Exception as e:
             tg_logger.debug(f"⚠️ Failed to check user authorization: {e}")
             return False

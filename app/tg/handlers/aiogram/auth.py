@@ -1,3 +1,4 @@
+import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -9,10 +10,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Contact, Message, ReplyKeyboardRemove, TelegramObject, Update
 
 from ....config import settings
-from ....db import AvanpostRepository, UserRepository, db_manager
+from ....db import db_manager
+from ....db.repositories import AvanpostRepository, UserRepository
 from ....exceptions import log_exceptions
 from ....logger import tg_logger
-from ....models import ErrorCategory, MessageActionType, MessageType, datetime_now
+from ....models.base import ErrorCategory, MessageActionType, MessageType, datetime_now
 from ....services.error_service import error_service
 from ....tg.dependencies import get_tg_manager
 from ...keyboards import AuthKeyboard
@@ -32,16 +34,10 @@ _auth_cache: dict[int, dict[str, Any]] = {}
 
 
 async def is_user_authenticated(user_id: int) -> bool:
-    """Проверка, авторизован ли пользователь"""
+    """Проверка, авторизован ли пользователь (есть ли связь с AvanpostUser)"""
     try:
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_user_by_id(session, user_id)
-
-            if user and user.FK_Avanpost:
-                user.FDateLastActivity = datetime_now()
-                await session.commit()
-                return True
-            return False
+            return await UserRepository.is_user_authenticated(session, user_id)
     except Exception as e:
         tg_logger.error(f"❌ Failed to check authentication: {e}")
         return False
@@ -84,7 +80,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
         await state.set_state(AuthStates.authenticated)
 
-        # Обновление времеми последней активности
+        # Обновление времени последней активности
         async with db_manager.get_session() as session:
             user = await UserRepository.get_user_by_id(session, user_id)
             if user:
@@ -150,20 +146,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     tg_manager = get_tg_manager()
     contact: Contact = message.contact
 
-    # Удаление сообщения с контактом
-    #    await tg_manager.delete_message_by_link(message)
-
-    # Получение ID сообщения с запросом авторизации
-    #    data = await state.get_data()
-    #    auth_message_id = data.get("auth_message_id")
-
-    # Удаление сообщения с запросом авторизации
-    #    if auth_message_id:
-    #        await tg_manager.delete_message_by_id(
-    #            chat_id=message.chat.id,
-    #           message_id=auth_message_id
-    #        )
-
     await tg_manager.send_toast(text="⏳ Проверка данных...", message=message)
 
     if not contact or not contact.phone_number:
@@ -189,20 +171,12 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     tg_logger.info(f"📱 Received contact from user {message.from_user.id}: {phone_number}")
 
     try:
-        # Проверка пользователя через хранимую процедуру Avanpost
-        user_id_avanpost, group_id = await check_user_by_phone_avanpost(phone_number)
+        # 1. Проверка пользователя через хранимую процедуру Avanpost
+        avanpost_user_id, menu_group_id, fk_contact = await check_user_by_phone_avanpost(phone_number)
 
-        # Удаление сообщений о проверке
-        # if loading_result.get("success"):
-        #     await tg_manager.delete_message_by_id(
-        #         chat_id=message.chat.id,
-        #         message_id=loading_result.get("message_id")
-        #     )
-
-        if not user_id_avanpost:
+        if not avanpost_user_id:
             keyboard = AuthKeyboard.get_auth_request_keyboard()
 
-            # Отправка сообщения об ошибке
             await tg_manager.send_answer(
                 text="❌ **Пользователь не найден**\n\n"
                 f"Номер телефона `{phone_number}` не зарегистрирован в системе.\n\n"
@@ -216,31 +190,70 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             )
             return
 
-        async with db_manager.get_session() as session:
+        # 2. Сохранение инфломации о пользователе в БД
+        async with db_manager.get_session("main") as session:
+            # Сохранение пользователя
             user = await UserRepository.save_user(
                 session=session,
                 user_id=message.from_user.id,
                 chat_id=message.chat.id,
-                avanpost_id=user_id_avanpost,
-                avanpost_group_id=group_id,
+                first_name=contact.first_name or message.from_user.first_name,
+                last_name=contact.last_name or message.from_user.last_name,
+                username=message.from_user.username,
+                is_bot=message.from_user.is_bot,
+                phone=phone_number,
             )
 
-        if not user:
-            await tg_manager.send_answer(
-                text="❌ Ошибка при сохранении данных пользователя.\n\n"
-                "Пожалуйста, попробуйте позже или обратитесь к администратору.",
-                event=message,
-                message_type=MessageType.COMMAND_AUTH,
-                delete_by_type=MessageActionType.COMMAND_AUTH_CLEANUP,
-            )
-            return
+            if not user:
+                await tg_manager.send_answer(
+                    text="❌ Ошибка при сохранении данных пользователя.\n\n"
+                    "Пожалуйста, попробуйте позже или обратитесь к администратору.",
+                    event=message,
+                    message_type=MessageType.COMMAND_AUTH,
+                    delete_by_type=MessageActionType.COMMAND_AUTH_CLEANUP,
+                )
+                return
 
-        # Сохранение ID группы в кеш
-        _auth_cache[message.from_user.id] = {"user_id": user_id_avanpost, "group_id": group_id, "phone": phone_number}
+            # Создание или обновляние связи с AvanpostUser
+            success, avanpost_user = await UserRepository.create_or_update_avanpost_user(
+                session=session,
+                telegram_user_id=user.FID,
+                avanpost_user_id=avanpost_user_id,
+                fk_contact=fk_contact,
+                fk_menugroup=menu_group_id,
+                fphone=phone_number,
+            )
+
+            if not success or not avanpost_user:
+                await tg_manager.send_answer(
+                    text="❌ Ошибка при создании пользователя в системе.\n\n"
+                    "Пожалуйста, попробуйте позже или обратитесь к администратору.",
+                    event=message,
+                    message_type=MessageType.COMMAND_AUTH,
+                    delete_by_type=MessageActionType.COMMAND_AUTH_CLEANUP,
+                )
+                return
+
+            await session.commit()
+
+        # 3. Обновление кеша авторизации
+        _auth_cache[message.from_user.id] = {
+            "user_id": avanpost_user_id,
+            "group_id": menu_group_id,
+            "phone": phone_number,
+        }
 
         await state.set_state(AuthStates.authenticated)
 
-        # Обновление команды для пользователя
+        # 4. Запуск синхронизации пользовательских данных в фоне
+        asyncio.create_task(
+            _sync_user_in_background(
+                telegram_user_id=message.from_user.id,
+                avanpost_user_id=avanpost_user_id,
+            )
+        )
+
+        # 5. Обновление команды для пользователя
         is_admin = message.from_user.id in settings.ADMIN_IDS
         try:
             await tg_manager.update_user_commands(message.from_user.id, is_admin)
@@ -248,28 +261,10 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         except Exception as e:
             tg_logger.warning(f"⚠️ Failed to update commands: {e}")
 
-        # Формирование приветственного сообщения
-        welcome_text = (
-            f"✅ **Авторизация успешна!**\n\n"
-            f"👋 Добро пожаловать!\n\n"
-            f"📱 Ваш номер телефона подтвержден.\n"
-            f"🆔 ID пользователя: `{user_id_avanpost}`\n"
-        )
+        # 6. Формирование приветственного сообщения
+        welcome_text = _build_welcome_message(avanpost_user_id, menu_group_id, is_admin)
 
-        if group_id:
-            welcome_text += f"📂 Группа действий: `{group_id}`\n\n"
-        else:
-            welcome_text += "\n"
-
-        welcome_text += "**Доступные команды:**\n• /help - Помощь\n• /actions - Меню действий\n• /stats - Статистика\n"
-
-        if user_id_avanpost in settings.ADMIN_IDS:
-            welcome_text += "• /groups - Группы действий (админ)\n"
-            welcome_text += "• /sync - Синхронизация (админ)\n"
-
-        welcome_text += "\n📌 Используйте /logout для выхода из системы."
-
-        # Отправка финального сообщения
+        # 7. Отправка финального сообщения
         await tg_manager.send_answer(
             text=welcome_text,
             event=message,
@@ -285,7 +280,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             error=e,
             component="auth",
             category=ErrorCategory.SYSTEM,
-            session=session,
         )
 
         await tg_manager.send_answer(
@@ -306,20 +300,19 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 
     try:
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_user_by_id(session, message.from_user.id)
+            success = await UserRepository.logout_user(session, message.from_user.id)
 
-            if user:
-                user.FK_Avanpost = None
-                user.FK_Chat = None
+            if success:
                 await session.commit()
-                tg_logger.info(f"✅ User {user.FID} logged out")
+                tg_logger.info(f"✅ User {message.from_user.id} logged out")
+            else:
+                tg_logger.warning(f"⚠️ User {message.from_user.id} not found for logout")
 
+        # Очистка кешиа
         _auth_cache.pop(message.from_user.id, None)
-
-        # Очистка кеша команд пользователя
         tg_manager.clear_user_cache(message.from_user.id)
 
-        # Сброс команды пользователя до базовых
+        # Сброс команд
         try:
             await tg_manager.reset_user_commands(message.from_user.id)
             tg_logger.info(f"✅ Commands reset for user {message.from_user.id}")
@@ -328,7 +321,6 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 
         await state.clear()
 
-        # Отправка и сохранение сообщения о выходе
         await tg_manager.send_answer(
             text="👋 Вы вышли из системы.\n\nДля повторной авторизации используйте /start",
             event=message,
@@ -450,8 +442,13 @@ def normalize_phone(phone: str) -> str:
     return phone
 
 
-async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, int | None]:
-    """Проверка пользователя через хранимую процедуру Avanpost"""
+async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, int | None, int | None]:
+    """
+    Проверка пользователя через хранимую процедуру Avanpost.
+
+    Returns:
+        tuple[int | None, int | None, int | None]: (avanpost_user_id, menu_group_id, fk_contact)
+    """
     try:
         normalized_phone = normalize_phone(phone_number)
 
@@ -462,11 +459,11 @@ async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, i
             )
     except Exception as e:
         tg_logger.error(f"❌ Failed to check user in Avanpost: {e}", exc_info=True)
-        return None, None
+        return None, None, None
 
 
 async def get_user_group_id(user_id: int) -> int | None:
-    """Получение ID группы действий для пользователя."""
+    """Получение ID группы действий для пользователя из TAvanpostUsers.FK_MenuGroup."""
     # Проверка кеша
     user_data = _auth_cache.get(user_id)
     if user_data:
@@ -474,16 +471,62 @@ async def get_user_group_id(user_id: int) -> int | None:
 
     try:
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_user_by_id(session, user_id)
-            if user:
-                group_id = user.FK_AvanpostGroup
-                if group_id is not None:
-                    return int(group_id)
-                return None
+            return await UserRepository.get_user_group_id(session, user_id)
     except Exception as e:
         tg_logger.error(f"❌ Failed to get user group: {e}")
 
     return None
+
+
+async def _sync_user_in_background(avanpost_user_id: int, **_kwargs: Any) -> None:
+    """
+    Фоновая синхронизация пользовательских данных из Avanpost.
+    """
+    try:
+        from ....services import avanpost_sync_service
+
+        tg_logger.info(f"🔄 Background sync started for user {avanpost_user_id}")
+        await avanpost_sync_service.initialize()
+        stats = await avanpost_sync_service.sync_user_data(avanpost_user_id, force=False)
+
+        if hasattr(stats, "to_dict"):
+            stats_dict = stats.to_dict()
+            tg_logger.info(
+                f"✅ Background sync completed for user {avanpost_user_id}: "
+                f"inserted={stats_dict.get('total_inserted', 0)}, "
+                f"updated={stats_dict.get('total_updated', 0)}, "
+                f"deleted={stats_dict.get('total_deleted', 0)}"
+            )
+        else:
+            tg_logger.info(f"✅ Background sync completed for user {avanpost_user_id}: {stats}")
+
+    except Exception as e:
+        tg_logger.error(f"❌ Background sync failed for user {avanpost_user_id}: {e}", exc_info=True)
+
+
+def _build_welcome_message(avanpost_user_id: int, menu_group_id: int | None, is_admin: bool) -> str:
+    """Формирование приветственного сообщения"""
+    welcome_text = (
+        f"✅ **Авторизация успешна!**\n\n"
+        f"👋 Добро пожаловать!\n\n"
+        f"📱 Ваш номер телефона подтвержден.\n"
+        f"🆔 ID пользователя в Avanpost: `{avanpost_user_id}`\n"
+    )
+
+    if menu_group_id:
+        welcome_text += f"📂 Группа действий: `{menu_group_id}`\n\n"
+    else:
+        welcome_text += "\n"
+
+    welcome_text += "**Доступные команды:**\n• /help - Помощь\n• /actions - Меню действий\n• /stats - Статистика\n"
+
+    if is_admin:
+        welcome_text += "• /groups - Группы действий (админ)\n"
+        welcome_text += "• /sync - Синхронизация (админ)\n"
+
+    welcome_text += "\n📌 Используйте /logout для выхода из системы."
+
+    return welcome_text
 
 
 __all__ = [

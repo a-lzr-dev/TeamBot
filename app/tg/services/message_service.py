@@ -490,7 +490,6 @@ class UnifiedMessageService(BaseService):
                             is_bot=kwargs.get("user_is_bot", False),
                             phone=kwargs.get("user_phone"),
                             chat_id=chat_id_int,
-                            avanpost_group_id=kwargs.get("user_group_id"),
                         )
                         await session.flush()
                         tg_logger.debug(f"✅ User {user_id} created automatically")
@@ -590,7 +589,6 @@ class UnifiedMessageService(BaseService):
             phone=kwargs.get("phone"),
             avanpost_id=kwargs.get("user_id"),
             chat_id=kwargs.get("chat_id"),
-            avanpost_group_id=kwargs.get("group_id"),
         )
 
     @staticmethod

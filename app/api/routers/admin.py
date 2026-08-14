@@ -181,6 +181,22 @@ async def full_health_check() -> dict[str, Any]:
             try:
                 stats = await db_manager.get_stats()
                 db_details.update(stats)
+
+                # Получение количества авторизованных пользователей через AvanpostUser
+                from sqlalchemy import func, select
+
+                from app.models.avanpost import AvanpostUserModel
+
+                async with db_manager.get_session("main") as session:
+                    stmt = (
+                        select(func.count())
+                        .select_from(AvanpostUserModel)
+                        .where(AvanpostUserModel.FK_User.is_not(None))
+                    )
+                    result = await session.execute(stmt)
+                    authorized_users = result.scalar() or 0
+                    db_details["authorized_users"] = authorized_users
+
             except Exception as e:
                 api_logger.warning(f"Could not get DB stats: {e}")
                 db_details["stats_error"] = str(e)
