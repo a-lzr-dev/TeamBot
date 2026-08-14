@@ -1,8 +1,11 @@
+# app/db/manager.py
+
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -232,13 +235,7 @@ class DBManager:
         if not engine.is_initialized:
             await engine.initialize()
 
-        # Получение моделей, если они не заданы - используем BaseModel
         models = engine.config.models or BaseModel
-
-        # Проверка, что models - это класс с атрибутом metadata
-        if not hasattr(models, "metadata"):
-            db_logger.error(f"❌ Models {models} has no metadata attribute")
-            raise TypeError(f"Models {models} has no metadata attribute")
 
         async with engine.engine.connect() as conn, conn.begin():
             if drop_first:
@@ -246,8 +243,144 @@ class DBManager:
                 await conn.run_sync(models.metadata.drop_all)
 
             db_logger.debug(f"🔄 Creating tables for '{db_name or self._primary_name}'...")
+
             await conn.run_sync(models.metadata.create_all)
+
             db_logger.info(f"✅ Tables created for '{db_name or self._primary_name}'")
+
+    @log_exceptions(db_logger)
+    async def seed_tables(self) -> None:
+        """Заполнение таблиц данными"""
+        from app.services.seed_service import avanpost_seed_service
+
+        db_logger.debug("🔍 Seeding Avanpost system data types...")
+
+        async with self.get_session("main") as session:
+            success = await avanpost_seed_service.seed_system_tables(session)
+            if success:
+                db_logger.info("✅ Avanpost system data seeded successfully")
+            else:
+                db_logger.warning("⚠️ Avanpost seeding completed with errors")
+
+    # ==================== AVANPOST SYNC ====================
+
+    @log_exceptions(db_logger)
+    async def sync_avanpost(self, force: bool = False) -> dict[str, Any]:
+        """
+        Синхронизация данных Avanpost с выводом статистики только при изменениях.
+
+        Args:
+            force: Принудительная полная синхронизация (игнорировать кеш)
+
+        Returns:
+            dict: Результат синхронизации с информацией о статусе и статистикой
+        """
+        db_logger.info(f"🔄 Starting Avanpost data sync (force={force})...")
+
+        try:
+            from app.services.avanpost_sync_service import AvanpostSyncService
+
+            sync_service = AvanpostSyncService()
+            await sync_service.initialize()
+
+            # Запуск синхронизации базовых данных с получением статистики
+            stats = await sync_service.sync_base_data(force=force)
+
+            # Получение статуса после синхронизации
+            status = await sync_service.get_status()
+
+            stats_dict = stats.to_dict()
+
+            # Проверяем, были ли изменения или ошибки
+            has_changes = (
+                stats_dict.get("total_inserted", 0) > 0
+                or stats_dict.get("total_updated", 0) > 0
+                or stats_dict.get("total_deleted", 0) > 0
+            )
+            has_errors = len(stats_dict.get("error_messages", [])) > 0
+
+            if has_changes or has_errors:
+                db_logger.info("✅ Avanpost data sync completed with changes")
+                db_logger.info(f"📊 Inserted: {stats_dict.get('total_inserted', 0)}")
+                db_logger.info(f"📊 Updated:  {stats_dict.get('total_updated', 0)}")
+                db_logger.info(f"📊 Deleted:  {stats_dict.get('total_deleted', 0)}")
+                db_logger.info(f"📊 Skipped:  {stats_dict.get('total_skipped', 0)}")
+                if has_errors:
+                    db_logger.warning(f"📊 Errors:   {len(stats_dict.get('error_messages', []))}")
+            else:
+                db_logger.info("✅ Avanpost data sync completed - no changes detected")
+
+            return {
+                "success": True,
+                "message": "Avanpost data sync completed successfully",
+                "status": status,
+                "stats": stats_dict,
+                "has_changes": has_changes,
+                "has_errors": has_errors,
+                "force": force,
+            }
+
+        except ImportError as e:
+            db_logger.warning(f"⚠️ Avanpost sync service not available: {e}")
+            return {
+                "success": False,
+                "message": "Sync service not available",
+                "error": str(e),
+                "force": force,
+            }
+        except Exception as e:
+            db_logger.error(f"❌ Avanpost data sync failed: {e}", exc_info=True)
+            return {
+                "success": False,
+                "message": f"Sync failed: {str(e)}",
+                "error": str(e),
+                "force": force,
+            }
+
+    @log_exceptions(db_logger)
+    async def sync_avanpost_async(self, force: bool = False) -> asyncio.Task:
+        """
+        Запуск синхронизации Avanpost в фоновом режиме.
+
+        Args:
+            force: Принудительная полная синхронизация
+
+        Returns:
+            asyncio.Task: Задача фоновой синхронизации
+        """
+        db_logger.info(f"🔄 Starting Avanpost sync in background (force={force})...")
+
+        async def _sync_task() -> None:
+            try:
+                result = await self.sync_avanpost(force=force)
+                if result.get("success"):
+                    db_logger.info("✅ Background Avanpost sync completed")
+                    stats = result.get("stats", {})
+                    if (
+                        stats.get("total_inserted", 0) > 0
+                        or stats.get("total_updated", 0) > 0
+                        or stats.get("total_deleted", 0) > 0
+                    ):
+                        db_logger.info(
+                            f"📊 Inserted: {stats.get('total_inserted', 0)}, "
+                            f"Updated: {stats.get('total_updated', 0)}, "
+                            f"Deleted: {stats.get('total_deleted', 0)}, "
+                            f"Skipped: {stats.get('total_skipped', 0)}"
+                        )
+                    else:
+                        db_logger.info("📊 No changes detected")
+                else:
+                    db_logger.warning(f"⚠️ Background Avanpost sync failed: {result.get('message')}")
+            except asyncio.CancelledError:
+                db_logger.debug("ℹ️ Background Avanpost sync cancelled")
+                raise
+            except Exception as e:
+                db_logger.error(f"❌ Background Avanpost sync error: {e}", exc_info=True)
+
+        task = asyncio.create_task(_sync_task(), name="avanpost_background_sync")
+        return task
+
+    # ==================== ЗАКРЫТИЕ И СТАТУС ====================
 
     @log_exceptions(db_logger)
     async def close_all(self) -> None:
@@ -297,6 +430,8 @@ class DBManager:
             "total_databases": len(self._engines),
         }
 
+
+# ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
 db_manager = DBManager()
 

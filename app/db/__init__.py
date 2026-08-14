@@ -13,6 +13,7 @@ from .repositories import (
     ErrorRepository,
     MessageRepository,
     ReminderRepository,
+    SystemRepository,
     UserRepository,
 )
 
@@ -31,6 +32,7 @@ __all__ = [
     "MessageRepository",
     "ReminderRepository",
     "UserRepository",
+    "SystemRepository",
     # Зависимости
     "get_db_manager",
 ]

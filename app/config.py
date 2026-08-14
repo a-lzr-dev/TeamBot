@@ -35,6 +35,29 @@ class Settings(BaseSettings):
     DB_AVANPOST_POOL_SIZE: int = 5
     DB_AVANPOST_MAX_OVERFLOW: int = 10
 
+    # ============ AVANPOST SYNC ============
+
+    # Автоматическая синхронизация данных Avanpost при старте приложения
+    AVANPOST_AUTO_SYNC_ON_START: bool = True
+
+    # Принудительная полная синхронизация (игнорировать кеш)
+    AVANPOST_SYNC_FORCE: bool = False
+
+    # Режим синхронизации (True - фоновая, False - синхронная)
+    AVANPOST_SYNC_ASYNC: bool = True
+
+    # Синхронизация пользовательских данных
+    AVANPOST_SYNC_USERS: bool = False
+
+    # Требовать успешную синхронизацию для старта приложения
+    AVANPOST_SYNC_REQUIRED: bool = False
+
+    # Таймаут синхронизации в секундах (0 - без ограничения)
+    AVANPOST_SYNC_TIMEOUT: int = 300
+
+    # Размер чанка для синхронизации (количество типов данных за один запрос)
+    AVANPOST_SYNC_CHUNK_SIZE: int = 10
+
     # ============ TELEGRAM ============
 
     # Telegram Bot
@@ -407,6 +430,24 @@ class Settings(BaseSettings):
             raise ValueError("TELEGRAM_MAX_RETRIES must not exceed 20")
         return v
 
+    @field_validator("AVANPOST_SYNC_CHUNK_SIZE")
+    @classmethod
+    def validate_sync_chunk_size(cls, v: int) -> int:
+        """Валидация размера чанка синхронизации"""
+        if v < 1:
+            raise ValueError("AVANPOST_SYNC_CHUNK_SIZE must be at least 1")
+        if v > 50:
+            raise ValueError("AVANPOST_SYNC_CHUNK_SIZE must not exceed 50")
+        return v
+
+    @field_validator("AVANPOST_SYNC_TIMEOUT")
+    @classmethod
+    def validate_sync_timeout(cls, v: int) -> int:
+        """Валидация таймаута синхронизации"""
+        if v < 0:
+            raise ValueError("AVANPOST_SYNC_TIMEOUT must be >= 0")
+        return v
+
     # ============ СВОЙСТВА ============
 
     @property
@@ -513,6 +554,21 @@ class Settings(BaseSettings):
         """
         # Заявки на автоматизацию отправляем в топик Jobs
         return self.SUPPORT_CHAT_TOPIC_IDS.get("Jobs")
+
+    @property
+    def avanpost_sync_enabled(self) -> bool:
+        """Проверка, включена ли синхронизация Avanpost"""
+        return self.AVANPOST_AUTO_SYNC_ON_START
+
+    @property
+    def avanpost_sync_mode(self) -> str:
+        """Режим синхронизации: 'async' или 'sync'"""
+        return "async" if self.AVANPOST_SYNC_ASYNC else "sync"
+
+    @property
+    def avanpost_sync_is_required(self) -> bool:
+        """Является ли синхронизация обязательной"""
+        return self.AVANPOST_SYNC_REQUIRED
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent / ".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"

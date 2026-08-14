@@ -7,6 +7,7 @@ from .messages import MessageRepository
 from .notifications_settings import NotificationSettingsRepository
 from .reminders import ReminderRepository
 from .stats import StatsRepository
+from .system import SystemRepository
 from .users import UserRepository
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "NotificationSettingsRepository",
     "ReminderRepository",
     "StatsRepository",
+    "SystemRepository",
     "UserRepository",
 ]

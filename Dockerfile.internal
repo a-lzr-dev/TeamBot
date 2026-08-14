@@ -1,38 +1,30 @@
 # ============================================================
-# TeamBot - Production Dockerfile (Alpine)
+# TeamBot - Production Dockerfile
 # ============================================================
 
 # ============ Установка зависимостей (builder) ============
 
-FROM python:3.14-alpine AS builder
+FROM python:3.14-slim AS builder
 
 # Установка UV
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Установка системных зависимостей для сборки (Alpine)
-RUN apk add --no-cache \
+# Установка системных зависимостей для сборки
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
     curl \
     gnupg \
-    musl-dev \
-    postgresql-dev \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
-# ============================================================
-# ВНИМАНИЕ: ODBC Driver для Alpine сложнее
-# Альтернатива: использовать pyodbc с unixODBC
-# ============================================================
-# Вариант 1: Установка unixODBC (для pyodbc)
-RUN apk add --no-cache \
-    unixodbc \
-    unixodbc-dev \
-    && rm -rf /var/cache/apk/*
-
-# Вариант 2: Microsoft ODBC для Alpine (если нужен)
-# Microsoft не предоставляет официальные пакеты для Alpine
-# Используйте альтернативный образ или pyodbc с unixODBC
+# Настройка ODBC (только необходимые пакеты)
+RUN curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > /usr/share/keyrings/microsoft-prod.gpg \
+    && curl -sSL https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list \
+    && sed -i 's/deb \[arch=amd64,armhf,arm64\] https:\/\/packages.microsoft.com\/debian\/12\/prod bookworm main/deb [arch=amd64,armhf,arm64] signed-by=\/usr\/share\/keyrings\/microsoft-prod.gpg https:\/\/packages.microsoft.com\/debian\/12\/prod bookworm main/' /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
@@ -63,14 +55,14 @@ RUN uv venv .venv && \
 
 # ============ Финальный образ (Runtime) ============
 
-FROM python:3.14-alpine
+FROM python:3.14-slim
 
-# Установка runtime зависимостей
-RUN apk add --no-cache \
-    libpq \
-    unixodbc \
-    curl \
-    && rm -rf /var/cache/apk/*
+# Копирование только ODBC-драйвера и системных зависимостей из builder
+COPY --from=builder /usr/share/keyrings/microsoft-prod.gpg /usr/share/keyrings/microsoft-prod.gpg
+COPY --from=builder /etc/apt/sources.list.d/mssql-release.list /etc/apt/sources.list.d/mssql-release.list
+RUN apt-get update && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Копирование виртуального окружения из builder
 COPY --from=builder /build/.venv /app/.venv
@@ -93,7 +85,7 @@ COPY run.py ./
 COPY run.sh ./
 
 # Создание непривилегированного пользователя
-RUN adduser -D -u 1000 botuser && \
+RUN useradd -m -u 1000 botuser && \
     chown -R botuser:botuser /app
 
 USER botuser
