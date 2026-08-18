@@ -25,7 +25,7 @@ class MessageLifetimeService:
             "total_checked": 0,
             "total_expired": 0,
             "total_deleted": 0,
-            "total_telegram_deleted": 0,
+            "total_bot_deleted": 0,
             "last_check": None,
         }
 
@@ -86,33 +86,35 @@ class MessageLifetimeService:
                 app_logger.info(f"📊 Found {len(message_ids)} expired messages to delete")
                 self._stats["total_expired"] = self._stats.get("total_expired", 0) + len(message_ids)
 
-                telegram_deleted = 0
+                bot_deleted = 0
                 try:
-                    from ..tg import tg_manager
+                    from ..bot.dependencies import get_bot_manager
 
-                    status = await tg_manager.get_status()
+                    bot_manager = get_bot_manager()
+
+                    status = await bot_manager.get_status()
                     if status.get("is_running", False):
                         for msg in expired_messages:
                             try:
-                                delete_result = await tg_manager.delete_message_by_id(
+                                delete_result = await bot_manager.delete_message_by_id(
                                     chat_id=msg.FK_Chat, message_id=msg.FID
                                 )
                                 if delete_result.get("success"):
-                                    telegram_deleted += 1
-                                    app_logger.debug(f"✅ Deleted expired message {msg.FID} from Telegram")
+                                    bot_deleted += 1
+                                    app_logger.debug(f"✅ Deleted expired message {msg.FID} by Bot")
                                 else:
                                     app_logger.warning(
-                                        f"⚠️ Failed to delete expired message {msg.FID} from Telegram: "
+                                        f"⚠️ Failed to delete expired message {msg.FID} by Bot: "
                                         f"{delete_result.get('error')}"
                                     )
                             except Exception as e:
-                                app_logger.warning(f"⚠️ Error deleting expired message {msg.FID} from Telegram: {e}")
+                                app_logger.warning(f"⚠️ Error deleting expired message {msg.FID} by Bot: {e}")
                     else:
-                        app_logger.warning("⚠️ Telegram manager not running, skipping Telegram deletion")
+                        app_logger.warning("⚠️ Bot manager not running, skipping Bot deletion")
                 except Exception as e:
-                    app_logger.error(f"❌ Failed to delete expired messages from Telegram: {e}")
+                    app_logger.error(f"❌ Failed to delete expired messages by Bot: {e}")
 
-                self._stats["total_telegram_deleted"] = self._stats.get("total_telegram_deleted", 0) + telegram_deleted
+                self._stats["total_bot_deleted"] = self._stats.get("total_bot_deleted", 0) + bot_deleted
 
                 deleted_count = await MessageRepository.mark_messages_as_deleted(
                     session=session, message_ids=message_ids, deleted_by_type="expired"
@@ -122,7 +124,7 @@ class MessageLifetimeService:
 
                 app_logger.info(
                     f"✅ Marked {deleted_count} expired messages as deleted in DB "
-                    f"(telegram_deleted: {telegram_deleted}, "
+                    f"(bot_deleted: {bot_deleted}, "
                     f"total: {self._stats['total_deleted']})"
                 )
 
@@ -156,7 +158,7 @@ class MessageLifetimeService:
                 "total_checked": self._stats.get("total_checked", 0),
                 "total_expired": self._stats.get("total_expired", 0),
                 "total_deleted": self._stats.get("total_deleted", 0),
-                "total_telegram_deleted": self._stats.get("total_telegram_deleted", 0),
+                "total_bot_deleted": self._stats.get("total_bot_deleted", 0),
                 "last_check": last_check_str,
             },
         }
@@ -172,42 +174,41 @@ class MessageLifetimeService:
             )
 
             if not expired_messages:
-                return {"deleted": 0, "found": 0, "telegram_deleted": 0}
+                return {"deleted": 0, "found": 0, "bot_deleted": 0}
 
             message_ids = [msg.FID for msg in expired_messages]
 
-            telegram_deleted = 0
+            bot_deleted = 0
             try:
-                from ..tg import tg_manager
+                from ..bot.dependencies import get_bot_manager
 
-                status = await tg_manager.get_status()
+                bot_manager = get_bot_manager()
+                status = await bot_manager.get_status()
                 if status.get("is_running", False):
                     for msg in expired_messages:
                         try:
-                            delete_result = await tg_manager.delete_message_by_id(
+                            delete_result = await bot_manager.delete_message_by_id(
                                 chat_id=msg.FK_Chat, message_id=msg.FID
                             )
                             if delete_result.get("success"):
-                                telegram_deleted += 1
+                                bot_deleted += 1
                         except Exception as e:
                             app_logger.warning(f"⚠️ Error deleting expired message {msg.FID}: {e}")
                 else:
-                    app_logger.warning("⚠️ Telegram manager not running, skipping Telegram deletion")
+                    app_logger.warning("⚠️ Bot manager not running, skipping Bot deletion")
             except Exception as e:
-                app_logger.error(f"❌ Failed to delete expired messages from Telegram: {e}")
+                app_logger.error(f"❌ Failed to delete expired messages by Bot: {e}")
 
             deleted_count = await MessageRepository.mark_messages_as_deleted(
                 session=session, message_ids=message_ids, deleted_by_type="expired_force"
             )
 
             self._stats["total_deleted"] = self._stats.get("total_deleted", 0) + deleted_count
-            self._stats["total_telegram_deleted"] = self._stats.get("total_telegram_deleted", 0) + telegram_deleted
+            self._stats["total_bot_deleted"] = self._stats.get("total_bot_deleted", 0) + bot_deleted
 
-            app_logger.info(
-                f"✅ Force check: deleted {deleted_count} messages in DB (telegram_deleted: {telegram_deleted})"
-            )
+            app_logger.info(f"✅ Force check: deleted {deleted_count} messages in DB (bot_deleted: {bot_deleted})")
 
-            return {"deleted": deleted_count, "found": len(message_ids), "telegram_deleted": telegram_deleted}
+            return {"deleted": deleted_count, "found": len(message_ids), "bot_deleted": bot_deleted}
 
 
 message_lifetime_service = MessageLifetimeService()

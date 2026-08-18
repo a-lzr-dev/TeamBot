@@ -1,5 +1,3 @@
-# app/db/repositories/filters.py
-
 import re
 from typing import Any
 
@@ -156,9 +154,9 @@ class ErrorFilterRepository:
         """
         stmt = select(ErrorFilterModel).where(ErrorFilterModel.FID == filter_id)
         result = await session.execute(stmt)
-        filter_ = result.scalar_one_or_none()
+        filter_: ErrorFilterModel | None = result.scalar_one_or_none()
 
-        if not filter_:
+        if filter_ is None:
             return None
 
         for key, value in kwargs.items():
@@ -166,7 +164,7 @@ class ErrorFilterRepository:
                 setattr(filter_, key, value)
 
         await session.flush()
-        return filter_  # type: ignore[no-any-return]
+        return filter_
 
     @staticmethod
     @log_exceptions(db_logger)

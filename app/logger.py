@@ -227,14 +227,14 @@ logger_setup = LoggerSetup()
 # Базовые логгеры
 _app_logger = logger_setup.get_logger("app")
 _api_logger = logger_setup.get_logger("api")
-_tg_logger = logger_setup.get_logger("tg")
+_bot_logger = logger_setup.get_logger("bot")
 _db_logger = logger_setup.get_logger("db")
 _admin_logger = logger_setup.get_logger("admin")
 
 # Расширенные логгеры с дополнительными методами
 app_logger = ExtendedLogger(_app_logger, "app")
 api_logger = ExtendedLogger(_api_logger, "api")
-tg_logger = ExtendedLogger(_tg_logger, "tg")
+bot_logger = ExtendedLogger(_bot_logger, "bot")
 db_logger = ExtendedLogger(_db_logger, "db")
 admin_logger = ExtendedLogger(_admin_logger, "admin")
 
@@ -248,13 +248,13 @@ __all__ = [
     # Базовые логгеры
     "_app_logger",
     "_api_logger",
-    "_tg_logger",
+    "_bot_logger",
     "_db_logger",
     "_admin_logger",
     # Расширенные логгеры
     "app_logger",
     "api_logger",
-    "tg_logger",
+    "bot_logger",
     "db_logger",
     "admin_logger",
 ]

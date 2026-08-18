@@ -42,7 +42,7 @@ services:
       DB_MAIN_NAME: ${DB_MAIN_NAME:-team_bot}
       DB_MAIN_USER: ${DB_MAIN_USER:?set DB_MAIN_USER}
       DB_MAIN_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
-      DB_MAIN_HOST: postgres  # <-- Имя контейнера
+      DB_MAIN_HOST: postgres
       DB_MAIN_PORT: ${DB_MAIN_PORT:-5432}
       # Внешняя БД Avanpost (MSSQL)
       DB_AVANPOST_NAME: ${DB_AVANPOST_NAME:-avanpost}

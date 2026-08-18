@@ -44,7 +44,8 @@ def decrypt_data(encrypted_data: str) -> str:
         f = Fernet(key)
         encrypted = base64.urlsafe_b64decode(encrypted_data.encode())
         decrypted = f.decrypt(encrypted)
-        return decrypted.decode("utf-8")  # type: ignore[no-any-return]
+        result: str = decrypted.decode("utf-8")
+        return result
     except Exception as e:
         raise ValueError(f"Failed to decrypt data: {e}") from e
 

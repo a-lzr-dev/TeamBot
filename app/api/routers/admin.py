@@ -4,7 +4,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from ...db import db_manager
+from ...bot.dependencies import get_bot_manager
+from ...db import UserRepository, db_manager
 from ...exceptions import DatabaseError, log_exceptions
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
@@ -104,11 +105,10 @@ async def readiness() -> JSONResponse:
         api_logger.error(f"❌ Database check failed: {e}")
         errors.append(f"database error: {str(e)}")
 
-    # Проверка Telegram
+    # Проверка Bot
     try:
-        from ...tg import tg_manager
-
-        status = await tg_manager.get_status()
+        bot_manager = get_bot_manager()
+        status = await bot_manager.get_status()
         if not status.get("is_running", False):
             errors.append("telegram bot not running")
             api_logger.warning("⚠️ Telegram bot not running")
@@ -183,19 +183,9 @@ async def full_health_check() -> dict[str, Any]:
                 db_details.update(stats)
 
                 # Получение количества авторизованных пользователей через AvanpostUser
-                from sqlalchemy import func, select
-
-                from app.models.avanpost import AvanpostUserModel
 
                 async with db_manager.get_session("main") as session:
-                    stmt = (
-                        select(func.count())
-                        .select_from(AvanpostUserModel)
-                        .where(AvanpostUserModel.FK_User.is_not(None))
-                    )
-                    result = await session.execute(stmt)
-                    authorized_users = result.scalar() or 0
-                    db_details["authorized_users"] = authorized_users
+                    db_details["authorized_users"] = await UserRepository.get_authorized_users_count(session)
 
             except Exception as e:
                 api_logger.warning(f"Could not get DB stats: {e}")
@@ -210,30 +200,29 @@ async def full_health_check() -> dict[str, Any]:
 
     database_status = create_service_status("database", db_status, db_details)
 
-    # Статус Telegram
-    tg_details = {}
-    tg_status = "ok"
+    # Статус Bot
+    bot_details = {}
+    bot_status = "ok"
     try:
-        from ...tg import tg_manager
-
-        status_info = await tg_manager.get_status()
-        tg_details = {
+        bot_manager = get_bot_manager()
+        status_info = await bot_manager.get_status()
+        bot_details = {
             "is_running": status_info.get("is_running", False),
             "is_initialized": status_info.get("is_initialized", False),
             "tasks_count": status_info.get("tasks_count", 0),
         }
         if not status_info.get("is_running", False):
-            tg_status = "error"
-            tg_details["error"] = "Telegram bot is not running"
+            bot_status = "error"
+            bot_details["error"] = "Bot is not running"
     except Exception as e:
-        tg_status = "error"
-        tg_details["error"] = str(e)
-        api_logger.error(f"Telegram health check failed: {e}")
+        bot_status = "error"
+        bot_details["error"] = str(e)
+        api_logger.error(f"Bot health check failed: {e}")
 
-    telegram_status = create_service_status("telegram", tg_status, tg_details)
+    bot_status_dict = create_service_status("bot", bot_status, bot_details)
 
     # Определение общего статуса
-    statuses = [api_status["status"], database_status["status"], telegram_status["status"]]
+    statuses = [api_status["status"], database_status["status"], bot_status_dict["status"]]
     if all(s == "ok" for s in statuses):
         overall = "healthy"
     elif any(s == "error" for s in statuses):
@@ -244,7 +233,7 @@ async def full_health_check() -> dict[str, Any]:
     response = {
         "api": api_status,
         "database": database_status,
-        "telegram": telegram_status,
+        "telegram": bot_status,
         "timestamp": get_timestamp(),
         "overall_status": overall,
     }
@@ -282,16 +271,15 @@ async def get_stats() -> dict[str, Any]:
         api_logger.error(f"❌ Failed to get database stats: {e}")
         stats["database"] = {"error": str(e)}
 
-    # Статистика Telegram
+    # Статистика Bot
     try:
-        from ...tg import tg_manager
-
-        tg_stats = await tg_manager.get_status()
-        stats["telegram"] = tg_stats
-        api_logger.debug("✅ Telegram stats collected")
+        bot_manager = get_bot_manager()
+        bot_stats = await bot_manager.get_status()
+        stats["bot"] = bot_stats
+        api_logger.debug("✅ Bot stats collected")
     except Exception as e:
-        api_logger.error(f"❌ Failed to get telegram stats: {e}")
-        stats["telegram"] = {"error": str(e)}
+        api_logger.error(f"❌ Failed to get bot stats: {e}")
+        stats["bot"] = {"error": str(e)}
 
     return stats
 

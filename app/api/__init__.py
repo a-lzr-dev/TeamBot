@@ -4,10 +4,10 @@ from .routers import (
     admin_router,
     automation_router,
     avanpost_router,
+    bot_msgs_router,
+    bot_sync_router,
     errors_router,
     reminders_router,
-    tg_msgs_router,
-    tg_sync_router,
 )
 
 __all__ = [
@@ -20,8 +20,8 @@ __all__ = [
     "avanpost_router",
     "errors_router",
     "reminders_router",
-    "tg_msgs_router",
-    "tg_sync_router",
+    "bot_msgs_router",
+    "bot_sync_router",
     # Зависимости
     "get_api_manager",
 ]

@@ -1368,6 +1368,109 @@ class AvanpostSysUserUpdateModel(BaseModel):
     FDate: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+# ============ МАППИНГ ТИПОВ ДАННЫХ ДЛЯ СИНХРОНИЗАЦИИ ============
+
+AVANPOST_MODEL_MAPPING: dict[int, Any] = {
+    # Базовые справочники (ID 1-20)
+    1: AvanpostDirLanguageModel,
+    2: AvanpostDirContactGroupModel,
+    3: AvanpostDirContactLinkTypeModel,
+    4: AvanpostDirOperatorModel,
+    5: AvanpostDirOwnerModel,
+    6: AvanpostDirOwnerMotorCadeModel,
+    7: AvanpostDirFileTypeModel,
+    8: AvanpostDirContactMsgDirectionTypeModel,
+    9: AvanpostDirContactMsgTypeModel,
+    10: AvanpostDirContactMsgProcessTypeModel,
+    11: AvanpostDirScenarioTypeModel,
+    12: AvanpostDirScenarioGroupItemTypeModel,
+    13: AvanpostDirUserStatusTypeModel,
+    14: AvanpostDirUserContactRoleTypeModel,
+    15: AvanpostDirUserLinkContactMsgControlProcessTypeModel,
+    16: AvanpostDirScenarioActionTypeModel,
+    17: AvanpostDirScenarioActionValueTypeModel,
+    # Сценарии действий (ID 101-120)
+    101: AvanpostDirScenarioModel,
+    102: AvanpostDirScenarioActionModel,
+    103: AvanpostDirScenarioActionLangModel,
+    104: AvanpostDirScenarioActionValueModel,
+    105: AvanpostDirScenarioInstructionModel,
+    106: AvanpostDirScenarioInstructionLangModel,
+    107: AvanpostDirScenarioCustomModel,
+    108: AvanpostDirScenarioGroupModel,
+    # Меню действий (ID 201-220)
+    201: AvanpostDirScenarioGroupItemModel,
+    202: AvanpostDirScenarioGroupItemLangModel,
+    203: AvanpostDirScenarioGroupItemLinkScenarioModel,
+    204: AvanpostDirScenarioGroupItemLinkScenarioGroupModel,
+    205: AvanpostDirScenarioGroupItemLinkScenarioInstructionModel,
+    # Данные (ID 301-320)
+    301: AvanpostContactModel,
+    302: AvanpostContactLangModel,
+    303: AvanpostContactLinkModel,
+    # Данные с пользователями (ID 401-420)
+    401: AvanpostUserModel,
+    402: AvanpostUserChatModel,
+    403: AvanpostUserChatLangModel,
+    # Оперативная синхронизация (ID 501-520)
+    501: AvanpostUserStatusModel,
+    502: AvanpostUserLinkContactModel,
+    503: AvanpostUserMissionModel,
+    504: AvanpostUserMissionLangModel,
+    505: AvanpostUserMissionItemModel,
+    506: AvanpostUserMissionItemLangModel,
+    507: AvanpostUserOrderModel,
+    508: AvanpostUserOrderLangModel,
+    509: AvanpostUserOrderLinkMissionModel,
+    510: AvanpostUserVehicleModel,
+    # Медленная синхронизация (ID 601-620)
+    601: AvanpostMsgModel,
+    602: AvanpostContactMsgModel,
+    603: AvanpostContactMsgProcessModel,
+    604: AvanpostUserLinkChatContactMsgModel,
+    605: AvanpostUserLinkContactMsgControlModel,
+    # Отложенная синхронизация (ID 701-720)
+    701: AvanpostFileModel,
+    702: AvanpostLinkMsgFileModel,
+    703: AvanpostLinkContactMsgFileModel,
+    704: AvanpostDirScenarioInstructionFileModel,
+}
+
+
+def get_avanpost_model(data_type_id: int) -> Any:
+    """Получение модели по типу данных."""
+    return AVANPOST_MODEL_MAPPING.get(data_type_id)
+
+
+def get_avanpost_table_name(data_type_id: int) -> str | None:
+    """Получение имени таблицы по типу данных."""
+    model = get_avanpost_model(data_type_id)
+    return model.__tablename__ if model else None
+
+
+# ============ КОНСТАНТЫ ТИПОВ ДАННЫХ ДЛЯ СИНХРОНИЗАЦИИ ============
+
+AVANPOST_BASE_DATA_TYPES: list[int] = (
+    list(range(1, 18)) + list(range(101, 109)) + list(range(201, 206)) + list(range(301, 304))
+)
+
+AVANPOST_USER_DATA_TYPES: list[int] = [
+    401,  # Пользователи
+    402,  # Чаты
+    403,  # Переводы чатов
+    501,  # Статусы пользователей
+    502,  # Связи пользователей с контактами
+    503,  # Задания
+    504,  # Переводы заданий
+    505,  # Пункты заданий
+    506,  # Переводы пунктов
+    507,  # Заказы
+    508,  # Переводы заказов
+    509,  # Связи заказов с заданиями
+    510,  # Транспорт
+]
+
+
 # ============ ЭКСПОРТ ============
 
 __all__ = [
@@ -1436,4 +1539,10 @@ __all__ = [
     "AvanpostDirSysDataTypeModel",
     "AvanpostSysUpdateModel",
     "AvanpostSysUserUpdateModel",
+    # Маппинг и константы
+    "AVANPOST_MODEL_MAPPING",
+    "get_avanpost_model",
+    "get_avanpost_table_name",
+    "AVANPOST_BASE_DATA_TYPES",
+    "AVANPOST_USER_DATA_TYPES",
 ]

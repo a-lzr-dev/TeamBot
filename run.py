@@ -17,16 +17,16 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
         Режимы запуска:
-          full    - Запуск всех компонентов (БД + API + Telegram) [по умолчанию]
+          full    - Запуск всех компонентов (БД + API + Bot) [по умолчанию]
           api     - Запуск только API (БД + API)
-          tg      - Запуск только Telegram (БД + Telegram)
+          bot     - Запуск только Bot (БД + Bot)
           dev     - Запуск API в режиме разработки с автоперезагрузкой
 
         Примеры:
           python run.py              # Запуск всех компонентов
           python run.py --mode api   # Запуск только API
           python run.py --mode dev   # Запуск API с автоперезагрузкой
-          python run.py --mode tg    # Запуск только Telegram
+          python run.py --mode bot    # Запуск только Bot
         """,
     )
 
@@ -34,7 +34,7 @@ def parse_arguments() -> argparse.Namespace:
         "--mode",
         "-m",
         type=str,
-        choices=["full", "api", "tg", "dev"],
+        choices=["full", "api", "bot", "dev"],
         default="full",
         help="Режим запуска (по умолчанию: full)",
     )
@@ -67,13 +67,13 @@ def parse_arguments() -> argparse.Namespace:
 def get_components_for_mode(mode: str) -> list[str]:
     """Определение списка компонентов для запуска в зависимости от режима"""
     components_map = {
-        "full": ["db", "api", "tg"],
+        "full": ["db", "api", "bot"],
         "api": ["db", "api"],
-        "tg": ["db", "tg"],
+        "bot": ["db", "bot"],
         "dev": ["db", "api"],  # В dev режиме запускаем только БД и API
     }
 
-    return components_map.get(mode, ["db", "api", "tg"])
+    return components_map.get(mode, ["db", "api", "bot"])
 
 
 def is_dev_mode(mode: str) -> bool:
@@ -165,8 +165,8 @@ async def run_application(mode: str, components: list[str]) -> None:
         elif "api" in components:
             app_logger.info(f"✅ API is running on {manager.api.host}:{manager.api.port}")
 
-        if "tg" in components:
-            app_logger.info("✅ Telegram bot is running")
+        if "bot" in components:
+            app_logger.info("✅ Bot is running")
 
         app_logger.info("✅ Application is running. Press Ctrl+C to stop.")
 

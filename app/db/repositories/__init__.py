@@ -3,6 +3,7 @@ from .avanpost import AvanpostRepository
 from .chats import ChatRepository
 from .errors import ErrorRepository
 from .errors_filters import ErrorFilterRepository
+from .generic import GenericRepository
 from .messages import MessageRepository
 from .notifications_settings import NotificationSettingsRepository
 from .reminders import ReminderRepository
@@ -16,6 +17,7 @@ __all__ = [
     "ChatRepository",
     "ErrorRepository",
     "ErrorFilterRepository",
+    "GenericRepository",
     "MessageRepository",
     "NotificationSettingsRepository",
     "ReminderRepository",

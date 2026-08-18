@@ -24,10 +24,10 @@ from .routers import (
     admin_router,
     automation_router,
     avanpost_router,
+    bot_msgs_router,
+    bot_sync_router,
     errors_router,
     reminders_router,
-    tg_msgs_router,
-    tg_sync_router,
 )
 
 
@@ -65,28 +65,17 @@ class APIManager:
         """Управление жизненным циклом API"""
         # Startup
         api_logger.info("🚀 API starting up...")
-        try:
-            from ..tg import tg_manager
-
-            api_logger.info(f"✅ Telegram manager instance: {tg_manager!r}")
-        except Exception as e:
-            api_logger.error(f"❌ Telegram manager initialization failed: {e}", exc_info=True)
-            await error_service.log_error(
-                error=e,
-                component="api",
-                context={"phase": "lifespan_start"},
-            )
-
         yield  # Приложение работает здесь
 
         # Shutdown
         api_logger.info("⛔ API shutting down...")
         try:
-            from ..tg import tg_manager
+            from ..bot.dependencies import get_bot_manager
 
-            status = await tg_manager.get_status()
+            bot_manager = get_bot_manager()
+            status = await bot_manager.get_status()
             if status.get("is_running", False):
-                await tg_manager.stop()
+                await bot_manager.stop()
             else:
                 api_logger.info("ℹ️ Telegram manager was not running")
         except Exception as e:
@@ -174,8 +163,8 @@ class APIManager:
             raise RuntimeError("App not initialized")
 
         self._app.include_router(admin_router, prefix="/api/v1")
-        self._app.include_router(tg_msgs_router, prefix="/api/v1")
-        self._app.include_router(tg_sync_router, prefix="/api/v1")
+        self._app.include_router(bot_msgs_router, prefix="/api/v1")
+        self._app.include_router(bot_sync_router, prefix="/api/v1")
         self._app.include_router(avanpost_router, prefix="/api/v1")
         self._app.include_router(errors_router, prefix="/api/v1")
         self._app.include_router(reminders_router, prefix="/api/v1")
@@ -320,19 +309,20 @@ class APIManager:
                 "url": str(request.url),
             }
 
-        @self._app.get("/debug/telegram-status")
+        @self._app.get("/debug/bot-status")
         @log_exceptions(api_logger)
-        async def debug_telegram_status() -> dict[str, Any]:
+        async def debug_bot_status() -> dict[str, Any]:
             try:
-                from ..tg import tg_manager
+                from ..bot.dependencies import get_bot_manager
 
-                status = await tg_manager.get_status()
-                return {"telegram": status, "timestamp": datetime_now().isoformat() + "Z"}
+                bot_manager = get_bot_manager()
+                status = await bot_manager.get_status()
+                return {"bot": status, "timestamp": datetime_now().isoformat() + "Z"}
             except Exception as e:
                 await error_service.log_error(
                     error=e,
                     component="api",
-                    context={"endpoint": "debug_telegram_status"},
+                    context={"endpoint": "bot_telegram_status"},
                 )
                 return {"error": str(e), "timestamp": datetime_now().isoformat() + "Z"}
 
@@ -420,6 +410,10 @@ class APIManager:
 
     async def _run_server(self) -> None:
         try:
+            if self._app is None:
+                api_logger.error("❌ App is not initialized")
+                return
+
             config = uvicorn.Config(
                 self._app,
                 host=self.host,

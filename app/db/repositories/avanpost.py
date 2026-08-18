@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...exceptions import log_exceptions
 from ...logger import db_logger
 
 
@@ -14,6 +15,7 @@ class AvanpostRepository:
     # ==================== ПОЛЬЗОВАТЕЛИ (ТОЛЬКО ПРОВЕРКА) ====================
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def check_user_by_phone(
         session: AsyncSession,
         phone_number: str,
@@ -57,6 +59,7 @@ class AvanpostRepository:
     # ==================== ГРУППЫ ДЕЙСТВИЙ ====================
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def get_groups(
         session: AsyncSession,
     ) -> list[dict]:
@@ -101,6 +104,7 @@ class AvanpostRepository:
     # ==================== ДЕЙСТВИЯ ====================
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def get_menu_items(
         session: AsyncSession,
         group_id: int,
@@ -151,6 +155,7 @@ class AvanpostRepository:
             return []
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def has_subitems(
         session: AsyncSession,
         group_id: int,
@@ -183,6 +188,7 @@ class AvanpostRepository:
     # ==================== ОШИБКИ ====================
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def check_error_exists_by_procedure(
         session: AsyncSession,
         error_code: str,
@@ -213,6 +219,7 @@ class AvanpostRepository:
     # ==================== ХРАНИМЫЕ ПРОЦЕДУРЫ СИНХРОНИЗАЦИИ ====================
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def call_base_data_procedure(
         session: AsyncSession,
         data_types: list[int],
@@ -347,6 +354,7 @@ class AvanpostRepository:
             return {"Data": []}
 
     @staticmethod
+    @log_exceptions(db_logger)
     async def call_user_data_procedure(
         session: AsyncSession,
         user_id: int,
@@ -476,8 +484,9 @@ class AvanpostRepository:
 
                             # Вывод деталей для отладки
                             for item in result_data:
+                                records_len = len(item["Data"]) if isinstance(item["Data"], list) else 0
                                 db_logger.debug(
-                                    f"  └─ DataTypeId {item['DataTypeId']}: {len(item['Data'])} records, FlagExpire={item['FlagExpire']}"
+                                    f"  └─ DataTypeId {item['DataTypeId']}: {records_len} records, FlagExpire={item['FlagExpire']}"
                                 )
 
                             # Проверка Stats из ответа

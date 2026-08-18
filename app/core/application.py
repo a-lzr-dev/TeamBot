@@ -1,19 +1,17 @@
-# app/core/application.py
-
 import asyncio
-from datetime import timedelta
 from enum import StrEnum
 from typing import Any, Optional
 
 from ..api.manager import api_manager
+from ..bot.manager import bot_manager
 from ..config import settings
 from ..db.manager import db_manager
-from ..db.repositories import ReminderRepository
+from ..db.repositories import ReminderRepository, UserRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
-from ..models import MessageType, UserReminderModel, datetime_now
+from ..models import datetime_now
 from ..services.log_handler_service import log_handler_service
-from ..tg.manager import tg_manager
+from ..services.reminder_notification_service import reminder_notification_service
 
 
 class AppState(StrEnum):
@@ -30,9 +28,9 @@ class ApplicationManager:
 
     _instance: Optional["ApplicationManager"] = None
 
-    VALID_COMPONENTS: set[str] = {"db", "api", "tg"}
-    COMPONENT_ORDER_START: list[str] = ["db", "api", "tg"]
-    COMPONENT_ORDER_STOP: list[str] = ["api", "tg", "db"]
+    VALID_COMPONENTS: set[str] = {"db", "api", "bot"}
+    COMPONENT_ORDER_START: list[str] = ["db", "api", "bot"]
+    COMPONENT_ORDER_STOP: list[str] = ["api", "bot", "db"]
 
     def __new__(cls) -> Any:
         if cls._instance is None:
@@ -50,7 +48,7 @@ class ApplicationManager:
 
         self.db = db_manager
         self.api = api_manager
-        self.tg = tg_manager
+        self.bot = bot_manager
 
         # Настройки из конфига с значениями по умолчанию
         self.REMINDER_CHECK_INTERVAL = getattr(settings, "REMINDER_CHECK_INTERVAL", 60)
@@ -131,15 +129,23 @@ class ApplicationManager:
             await self._start_database()
         elif component == "api":
             await self._start_api()
-        elif component == "tg":
-            await self._start_telegram()
+        elif component == "bot":
+            await self._start_bot()
         else:
             app_logger.warning(f"⚠️ Unknown component: {component}")
 
-    # ==================== ЗАПУСК БАЗЫ ДАННЫХ (С СИНХРОНИЗАЦИЕЙ) ====================
+    # ==================== ЗАПУСК БАЗЫ ДАННЫХ (С ИСПРАВЛЕННЫМ ПОРЯДКОМ) ====================
 
     async def _start_database(self) -> None:
-        """Запуск базы данных с инициализацией, seed и sync."""
+        """
+        Запуск базы данных с правильным порядком:
+        1. Инициализация БД
+        2. Создание таблиц
+        3. SEED (системные данные)
+        4. SYNC BASE (справочники Avanpost)
+        5. ADD USERS (добавление пользователей из настроек)
+        6. SYNC USERS (пользовательские данные Avanpost)
+        """
         app_logger.debug("🗄️ Starting database...")
 
         # 1. Инициализация и подключение к БД
@@ -150,106 +156,196 @@ class ApplicationManager:
         await self.db.init_tables(drop_first=False)
         app_logger.info("✅ Database tables created")
 
-        # 3. Заполнение системных данных (seed)
+        # 3. Заполнение систесмных данных
         try:
             await self.db.seed_tables()
             app_logger.info("✅ Seed data completed")
         except Exception as e:
-            app_logger.error(f"❌ Failed to seed data: {e}")
+            app_logger.error(f"❌ Failed to seed data: {e}", exc_info=True)
+            raise RuntimeError(f"Seed failed: {e}") from e
 
-        # 4. Синхронизация Avanpost
+        # 4. Синхронизация базовых данных из Avanpost
         if getattr(settings, "AVANPOST_AUTO_SYNC_ON_START", True):
             try:
                 sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
                 sync_async = getattr(settings, "AVANPOST_SYNC_ASYNC", True)
                 sync_timeout = getattr(settings, "AVANPOST_SYNC_TIMEOUT", 300)
                 sync_required = getattr(settings, "AVANPOST_SYNC_REQUIRED", False)
-                sync_users = getattr(settings, "AVANPOST_SYNC_USERS", False)
 
-                app_logger.info(
-                    f"🔄 Starting Avanpost sync (force={sync_force}, async={sync_async}, users={sync_users})..."
-                )
+                app_logger.debug(f"🔄 Starting Avanpost base data sync (force={sync_force}, async={sync_async})...")
 
                 if sync_async:
-                    # Фоновая синхронизация (не блокирует старт)
-                    task = await self.db.sync_avanpost_async(force=sync_force)
+                    # Фоновая синхронизация базовых данных
+                    task = asyncio.create_task(
+                        self._sync_avanpost_base_data(force=sync_force), name="avanpost_base_sync"
+                    )
                     self._tasks.append(task)
-                    app_logger.info("✅ Avanpost background sync started")
-
-                    # Если нужна синхронизация пользователей - запускаем отдельной задачей
-                    if sync_users:
-                        app_logger.info("👤 Starting user data sync in background...")
-                        user_task = asyncio.create_task(
-                            self._sync_avanpost_users_in_background(force=sync_force), name="avanpost_users_sync"
-                        )
-                        self._tasks.append(user_task)
-                        app_logger.info("✅ Avanpost users sync started in background")
-
+                    app_logger.info("✅ Avanpost base data background sync started")
                 else:
-                    # Синхронная синхронизация (блокирует старт до завершения)
+                    # Синхронная синхронизация (блокирующая)
                     try:
-                        result = await asyncio.wait_for(
-                            self.db.sync_avanpost(force=sync_force), timeout=sync_timeout if sync_timeout > 0 else None
+                        await asyncio.wait_for(
+                            self._sync_avanpost_base_data(force=sync_force),
+                            timeout=sync_timeout if sync_timeout > 0 else None,
                         )
-
-                        if result.get("success"):
-                            app_logger.info("✅ Avanpost sync completed")
-
-                            # Вывод статистики если она есть
-                            status = result.get("status", {})
-                            stats = status.get("stats", {})
-                            if stats:
-                                app_logger.info(f"📊 Sync stats: {stats.get('total_data_types', 0)} data types")
-                                app_logger.info(f"   ✅ Inserted: {stats.get('total_inserted', 0)}")
-                                app_logger.info(f"   🔄 Updated:  {stats.get('total_updated', 0)}")
-                                app_logger.info(f"   🗑️ Deleted:  {stats.get('total_deleted', 0)}")
-                                app_logger.info(f"   ❌ Errors:   {len(stats.get('error_messages', []))}")
-
-                            # Синхронизация пользователей
-                            if sync_users:
-                                app_logger.info("👤 Starting user data sync...")
-                                await self._sync_avanpost_users(force=sync_force)
-                                app_logger.info("✅ Avanpost users sync completed")
-                        else:
-                            error_msg = result.get("message", "Unknown error")
-                            if sync_required:
-                                raise RuntimeError(f"Required Avanpost sync failed: {error_msg}")
-                            app_logger.warning(f"⚠️ Avanpost sync failed: {error_msg}")
-
-                    except TimeoutError as e:
-                        error_msg = f"Avanpost sync timed out after {sync_timeout}s"
+                        app_logger.info("✅ Avanpost base data sync completed")
+                    except TimeoutError as err:
+                        error_msg = f"Avanpost base sync timed out after {sync_timeout}s"
                         if sync_required:
-                            raise TimeoutError(error_msg) from e
+                            raise TimeoutError(error_msg) from err
                         app_logger.error(f"❌ {error_msg}")
 
             except Exception as e:
-                app_logger.error(f"❌ Avanpost sync error: {e}", exc_info=True)
+                app_logger.error(f"❌ Avanpost base sync error: {e}", exc_info=True)
                 if getattr(settings, "AVANPOST_SYNC_REQUIRED", False):
                     raise
-        else:
-            app_logger.info("ℹ️ Avanpost sync disabled by configuration")
 
-        # 5. Инициализация LogHandlerService
+        # 5. Синхронизация пользовательских данных из Avanpost
+        if getattr(settings, "AVANPOST_SYNC_USERS", False):
+            try:
+                sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
+                sync_async = getattr(settings, "AVANPOST_SYNC_ASYNC", True)
+
+                app_logger.debug("👤 Starting Avanpost users data sync...")
+
+                if sync_async:
+                    task = asyncio.create_task(
+                        self._sync_avanpost_users_in_background(force=sync_force), name="avanpost_users_sync"
+                    )
+                    self._tasks.append(task)
+                    app_logger.info("✅ Avanpost users sync started in background")
+                else:
+                    await self._sync_avanpost_users(force=sync_force)
+                    app_logger.info("✅ Avanpost users sync completed")
+
+            except Exception as e:
+                app_logger.error(f"❌ Avanpost users sync error: {e}", exc_info=True)
+
+        # 6. Инициализация LogHandlerService
         try:
             await log_handler_service.initialize()
             app_logger.info("✅ LogHandlerService initialized")
         except Exception as e:
             app_logger.error(f"❌ Failed to initialize LogHandlerService: {e}", exc_info=True)
 
-    # ==================== СИНХРОНИЗАЦИЯ ПОЛЬЗОВАТЕЛЕЙ AVANPOST ====================
+    # ==================== СИНХРОНИЗАЦИЯ ДАННЫХ ====================
 
     @staticmethod
-    async def _sync_avanpost_users(force: bool = False) -> None:
-        """
-        Синхронизация пользовательских данных Avanpost.
-
-        Args:
-            force: Принудительная полная синхронизация
-        """
+    async def _sync_avanpost_base_data(force: bool = False) -> None:
+        """Синхронизация базовых данных Avanpost"""
         try:
             from app.services.avanpost_sync_service import AvanpostSyncService
 
-            app_logger.info("👤 Syncing Avanpost user data...")
+            app_logger.debug(f"🔄 Syncing Avanpost base data (force={force})...")
+            sync_service = AvanpostSyncService()
+            await sync_service.initialize()
+
+            stats = await sync_service.sync_base_data(force=force)
+
+            stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
+
+            if stats_dict.get("total_inserted", 0) > 0 or stats_dict.get("total_updated", 0) > 0:
+                app_logger.info(
+                    f"📊 Base data sync: "
+                    f"inserted={stats_dict.get('total_inserted', 0)}, "
+                    f"updated={stats_dict.get('total_updated', 0)}, "
+                    f"deleted={stats_dict.get('total_deleted', 0)}"
+                )
+            else:
+                app_logger.info("📊 Base data sync: no changes detected")
+
+        except ImportError as e:
+            app_logger.warning(f"⚠️ Sync service not available: {e}")
+            raise
+        except Exception as e:
+            app_logger.error(f"❌ Failed to sync base data: {e}", exc_info=True)
+            raise
+
+    @staticmethod
+    async def _add_avanpost_users() -> None:
+        """Добавление пользователей Avanpost из настроек"""
+        user_ids = getattr(settings, "AVANPOST_AUTO_ADD_USERS_ON_START", [])
+
+        if not user_ids:
+            app_logger.debug("ℹ️ No Avanpost users to add from settings")
+            return
+
+        app_logger.debug(f"👤 Adding Avanpost users from settings: {user_ids}")
+
+        try:
+            async with db_manager.get_session("main") as session:
+                # Проверка существования языков перед добавлением
+                from sqlalchemy import select
+
+                from app.models.avanpost import AvanpostDirLanguageModel
+
+                # Проверка, что язык RU существует
+                stmt = select(AvanpostDirLanguageModel).where(AvanpostDirLanguageModel.FID == "RU")
+                result = await session.execute(stmt)
+                lang_ru = result.scalar_one_or_none()
+
+                if not lang_ru:
+                    app_logger.warning("⚠️ Language 'RU' not found in TAvanpostDirLanguages!")
+                    app_logger.info("   Please run seed first or check Avanpost sync")
+                    # Создание языка RU
+                    try:
+                        from app.models.avanpost import AvanpostDirLanguageModel
+
+                        lang = AvanpostDirLanguageModel(FID="RU", FFlagDefault=True)
+                        session.add(lang)
+                        await session.flush()
+                        app_logger.info("✅ Created language 'RU'")
+                    except Exception as e:
+                        app_logger.error(f"❌ Failed to create language 'RU': {e}")
+                        return
+
+                result_dict = {}
+                for user_id in user_ids:
+                    try:
+                        success, user = await UserRepository.create_or_update_avanpost_user_upsert(
+                            session=session,
+                            telegram_user_id=None,
+                            avanpost_user_id=user_id,
+                            telegram_user_required=False,
+                            fk_contact=None,
+                            fk_language="RU",
+                            fk_menugroup=None,
+                            fk_owner=None,
+                            fk_motorcade=None,
+                            fname=f"User_{user_id}",
+                            fphone=None,
+                        )
+
+                        if success:
+                            result_dict[user_id] = True
+                            app_logger.info(f"✅ Added/updated Avanpost user {user_id}")
+                        else:
+                            result_dict[user_id] = False
+                            app_logger.warning(f"⚠️ Failed to add Avanpost user {user_id}")
+
+                    except Exception as e:
+                        app_logger.error(f"❌ Error adding Avanpost user {user_id}: {e}")
+                        await session.rollback()
+                        result_dict[user_id] = False
+
+                await session.commit()
+
+                added = [uid for uid, was_added in result_dict.items() if was_added]
+                if added:
+                    app_logger.info(f"✅ Successfully added Avanpost users: {added}")
+                else:
+                    app_logger.warning("⚠️ No Avanpost users were added successfully")
+
+        except Exception as e:
+            app_logger.error(f"❌ Failed to add Avanpost users: {e}", exc_info=True)
+
+    @staticmethod
+    async def _sync_avanpost_users(force: bool = False) -> None:
+        """Синхронизация пользовательских данных Avanpost"""
+        try:
+            from app.services.avanpost_sync_service import AvanpostSyncService
+
+            app_logger.debug(f"👤 Syncing Avanpost user data (force={force})...")
             sync_service = AvanpostSyncService()
             await sync_service.initialize()
             await sync_service.sync_all_users(force=force)
@@ -261,14 +357,9 @@ class ApplicationManager:
             raise
 
     async def _sync_avanpost_users_in_background(self, force: bool = False) -> None:
-        """
-        Фоновая синхронизация пользовательских данных Avanpost.
-
-        Args:
-            force: Принудительная полная синхронизация
-        """
+        """Фоновая синхронизация пользовательских данных Avanpost."""
         try:
-            app_logger.info("👤 Starting Avanpost users sync in background...")
+            app_logger.debug("👤 Starting Avanpost users sync in background...")
             await self._sync_avanpost_users(force=force)
             app_logger.info("✅ Avanpost users background sync completed")
         except asyncio.CancelledError:
@@ -297,17 +388,17 @@ class ApplicationManager:
             else:
                 app_logger.warning("⚠️ API start is not a coroutine, skipping")
 
-    # ==================== ЗАПУСК TELEGRAM ====================
+    # ==================== ЗАПУСК БОТА ====================
 
-    async def _start_telegram(self) -> None:
-        """Запуск Telegram компонента"""
-        app_logger.debug("🤖 Starting Telegram...")
+    async def _start_bot(self) -> None:
+        """Запуск Bot компонента"""
+        app_logger.debug("🤖 Starting Bot...")
 
         # Запуск бота
-        if hasattr(self.tg, "start") and callable(self.tg.start):
-            tg_start_coro = self.tg.start()
-            if asyncio.iscoroutine(tg_start_coro):
-                task: asyncio.Task[Any] = asyncio.create_task(tg_start_coro, name="telegram_bot")
+        if hasattr(self.bot, "start") and callable(self.bot.start):
+            bot_start_coro = self.bot.start()
+            if asyncio.iscoroutine(bot_start_coro):
+                task: asyncio.Task[Any] = asyncio.create_task(bot_start_coro, name="bot_main")
                 self._tasks.append(task)
 
         # Запуск проверки напоминаний
@@ -323,7 +414,7 @@ class ApplicationManager:
         except Exception as e:
             app_logger.error(f"❌ Failed to start MessageLifetimeService: {e}")
 
-        app_logger.info("✅ Telegram started")
+        app_logger.info("✅ Bot started")
 
     # ==================== ПРОВЕРКА НАПОМИНАНИЙ ====================
 
@@ -368,7 +459,8 @@ class ApplicationManager:
             now = datetime_now()
             app_logger.debug(f"⏰ Checking reminders at {now}")
 
-            async with self.db.get_session() as session, session.begin():
+            async with self.db.get_session() as session:
+                # Получаем активные напоминания
                 reminders = await ReminderRepository.get_active_reminders(
                     session=session,
                     before_time=now,
@@ -380,117 +472,24 @@ class ApplicationManager:
 
                 app_logger.info(f"⏰ Found {len(reminders)} reminders to process")
 
+                # Преобразование модели в DTO и отправление уведомления
+                from app.dtos.reminder import ReminderNotificationDTO
+
                 for reminder in reminders:
                     try:
-                        # Отправка уведомления
-                        await self._send_reminder_notification(reminder)
+                        # Создание DTO из модели
+                        reminder_dto = ReminderNotificationDTO.from_model(reminder)
 
-                        # Обновление статуса через репозиторий
-                        remind_count = reminder.FRemindCount + 1
-                        last_reminded = now
-                        is_active = True
-                        new_remind_at = None
-
-                        # Определение, нужно ли деактивировать напоминание
-                        should_deactivate = False
-
-                        if reminder.FMaxRemindCount and remind_count >= reminder.FMaxRemindCount:
-                            should_deactivate = True
-                            app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (max count reached)")
-                        elif reminder.FRemindUntil and now > reminder.FRemindUntil:
-                            should_deactivate = True
-                            app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (until date passed)")
-
-                        if not should_deactivate and reminder.FRemindInterval and reminder.FRemindInterval > 0:
-                            new_remind_at = now + timedelta(minutes=reminder.FRemindInterval)
-                            app_logger.debug(f"⏰ Reminder {reminder.FID} rescheduled to {new_remind_at}")
-                        elif not should_deactivate:
-                            should_deactivate = True
-                            app_logger.debug(f"⏰ Reminder {reminder.FID} deactivated (one-time)")
-
-                        if should_deactivate:
-                            is_active = False
-
-                        await ReminderRepository.update_reminder_status(
-                            session=session,
-                            reminder_id=reminder.FID,
-                            remind_count=remind_count,
-                            last_reminded=last_reminded,
-                            is_active=is_active,
-                            remind_at=new_remind_at,
-                        )
+                        # Отправление уведомление через сервис с DTO
+                        await reminder_notification_service.send_notification(reminder=reminder_dto, session=session)
 
                     except Exception as e:
                         app_logger.error(f"❌ Failed to process reminder {reminder.FID}: {e}", exc_info=True)
-                        # session.begin() автоматически откатит транзакцию при ошибке
                         continue
 
         except Exception as e:
             app_logger.error(f"❌ Failed to check reminders: {e}", exc_info=True)
             raise
-
-    async def _send_reminder_notification(self, reminder: UserReminderModel) -> None:
-        """Отправка уведомления о напоминании"""
-        try:
-            # Формирование текста уведомления
-            message = self._format_reminder_message(reminder)
-
-            # Отправка в зависимости от типа уведомления
-            notification_type = getattr(reminder, "FNotificationType", "private")
-
-            if notification_type in ["private", "both"]:
-                # В личные сообщения пользователю
-                try:
-                    await tg_manager.send_message(
-                        chat_id=reminder.FK_User, message_type=MessageType.REMINDER, text=message, parse_mode="Markdown"
-                    )
-                    app_logger.debug(f"📨 Sent private reminder to {reminder.FK_User}")
-                except Exception as e:
-                    app_logger.error(f"❌ Failed to send private reminder to {reminder.FK_User}: {e}")
-
-            if notification_type in ["group", "both"] and reminder.FK_Chat:
-                # В групповой чат
-                try:
-                    await tg_manager.send_message(
-                        chat_id=reminder.FK_Chat, message_type=MessageType.REMINDER, text=message, parse_mode="Markdown"
-                    )
-                    app_logger.debug(f"📨 Sent group reminder to {reminder.FK_Chat}")
-                except Exception as e:
-                    app_logger.error(f"❌ Failed to send group reminder to {reminder.FK_Chat}: {e}")
-
-        except Exception as e:
-            app_logger.error(f"❌ Failed to send reminder notification: {e}", exc_info=True)
-            raise
-
-    @staticmethod
-    def _format_reminder_message(reminder: UserReminderModel) -> str:
-        """Форматирование сообщения для напоминания"""
-        message = "🔔 **Напоминание!**\n\n"
-        message += f"📌 **{reminder.FTitle or 'Без названия'}**\n"
-
-        if reminder.FDescription:
-            message += f"📝 {reminder.FDescription}\n"
-
-        if reminder.FCategory:
-            message += f"📂 Категория: {reminder.FCategory}\n"
-
-        # Информация о повторениях
-        if reminder.FRemindCount > 0:
-            message += f"🔄 Повтор: {reminder.FRemindCount + 1}"
-
-            if reminder.FMaxRemindCount:
-                message += f" (макс. {reminder.FMaxRemindCount})"
-            message += "\n"
-
-        # Информация о следующем напоминании
-        if reminder.FIsActive and reminder.FRemindInterval and reminder.FRemindInterval > 0:
-            next_time = reminder.FRemindAt + timedelta(minutes=reminder.FRemindInterval)
-            message += f"⏰ Следующее: {next_time.strftime('%d.%m.%Y %H:%M')}\n"
-
-        # Добавление инструкции
-        message += "\n✅ Для завершения дела используйте /complete"
-
-        return message
 
     # ==================== ОСТАНОВКА ====================
 
@@ -516,7 +515,7 @@ class ApplicationManager:
                 if component in to_stop:
                     await self._stop_component(component, graceful)
 
-            # Останавливаение LogHandlerService в последнюю очередь
+            # Останавливаем LogHandlerService в последнюю очередь
             await self._stop_log_handler(graceful)
 
             if graceful:
@@ -536,8 +535,8 @@ class ApplicationManager:
     async def _stop_component(self, component: str, graceful: bool) -> None:
         if component == "api":
             await self._stop_api(graceful)
-        elif component == "tg":
-            await self._stop_telegram(graceful)
+        elif component == "bot":
+            await self._stop_bot(graceful)
         elif component == "db":
             await self._stop_database(graceful)
         else:
@@ -548,9 +547,8 @@ class ApplicationManager:
         """Остановка LogHandlerService"""
         app_logger.debug("🚀 Stopping LogHandlerService...")
         try:
-            # Проверка наличия атрибутов перед использованием
-            if hasattr(log_handler_service, "_shutting_down"):
-                log_handler_service._shutting_down = True
+            if hasattr(log_handler_service, "set_shutting_down"):
+                await log_handler_service.set_shutting_down(True)
 
             if hasattr(log_handler_service, "shutdown") and callable(log_handler_service.shutdown):
                 await log_handler_service.shutdown()
@@ -574,9 +572,9 @@ class ApplicationManager:
             if not graceful:
                 raise
 
-    async def _stop_telegram(self, graceful: bool = True) -> None:
-        """Остановка Telegram компонента"""
-        app_logger.debug("🚀 Telegram Stopped starting...")
+    async def _stop_bot(self, graceful: bool = True) -> None:
+        """Остановка Bot компонента"""
+        app_logger.debug("🚀 Bot Stopped starting...")
 
         # Остановка сервиса времени жизни сообщений
         try:
@@ -589,18 +587,18 @@ class ApplicationManager:
             app_logger.error(f"❌ Failed to stop MessageLifetimeService: {e}")
 
         try:
-            if hasattr(self.tg, "stop") and callable(self.tg.stop):
-                await self.tg.stop()
-                app_logger.info("⛔ Telegram stopped")
+            if hasattr(self.bot, "stop") and callable(self.bot.stop):
+                await self.bot.stop()
+                app_logger.info("⛔ Bot stopped")
         except Exception as e:
-            app_logger.error(f"❌ Failed to stop Telegram: {e}")
+            app_logger.error(f"❌ Failed to stop Bot: {e}")
             if not graceful:
                 raise
 
     async def _stop_database(self, graceful: bool = True) -> None:
         app_logger.debug("🚀 Stopping database starting...")
         try:
-            # Останавка LogHandlerService перед закрытием БД
+            # Останавливаем LogHandlerService перед закрытием БД
             await self._stop_log_handler(graceful)
             if hasattr(self.db, "close_all") and callable(self.db.close_all):
                 await self.db.close_all()
@@ -693,13 +691,13 @@ class ApplicationManager:
             except Exception:
                 api_status = {"error": "Failed to get status"}
 
-        # Получение статуса Telegram
-        tg_status = {}
-        if hasattr(self.tg, "get_status") and callable(self.tg.get_status):
+        # Получение статуса бота
+        bot_status = {}
+        if hasattr(self.bot, "get_status") and callable(self.bot.get_status):
             try:
-                tg_status = await self.tg.get_status()
+                bot_status = await self.bot.get_status()
             except Exception:
-                tg_status = {"error": "Failed to get status"}
+                bot_status = {"error": "Failed to get status"}
 
         # Получение статуса LogHandler
         log_handler_status = {
@@ -715,7 +713,7 @@ class ApplicationManager:
             },
             "database": db_status,
             "api": api_status,
-            "telegram": tg_status,
+            "bot": bot_status,
             "log_handler": log_handler_status,
         }
 
@@ -734,19 +732,19 @@ class ApplicationManager:
         if hasattr(self.api, "is_running"):
             api_health = bool(self.api.is_running)
 
-        # Проверка Telegram
-        tg_health = False
-        if hasattr(self.tg, "health_check") and callable(self.tg.health_check):
+        # Проверка бота
+        bot_health = False
+        if hasattr(self.bot, "health_check") and callable(self.bot.health_check):
             try:
-                result = await self.tg.health_check()
+                result = await self.bot.health_check()
                 if isinstance(result, dict):
-                    tg_health = result.get("is_running", False) or result.get("manager_running", False)
+                    bot_health = result.get("is_running", False) or result.get("manager_running", False)
                 else:
-                    tg_health = bool(result)
+                    bot_health = bool(result)
             except Exception:
-                tg_health = False
-        elif hasattr(self.tg, "is_running"):
-            tg_health = bool(self.tg.is_running)
+                bot_health = False
+        elif hasattr(self.bot, "is_running"):
+            bot_health = bool(self.bot.is_running)
 
         log_handler_health = getattr(log_handler_service, "_initialized", False)
 
@@ -754,7 +752,7 @@ class ApplicationManager:
             "app": self.is_running,
             "database": db_health,
             "api": api_health,
-            "telegram": tg_health,
+            "bot": bot_health,
             "log_handler": log_handler_health,
         }
 

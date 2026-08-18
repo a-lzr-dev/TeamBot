@@ -281,7 +281,7 @@ class RateLimitScope(StrEnum):
     """Сферы применения rate limiting"""
 
     API = "api"
-    TELEGRAM = "telegram"
+    BOT = "bot"
     COMMAND = "command"
     GLOBAL = "global"
     CUSTOM = "custom"

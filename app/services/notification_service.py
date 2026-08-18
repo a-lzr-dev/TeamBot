@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..bot.dependencies import get_bot_manager
 from ..db.repositories import ErrorFilterRepository, NotificationSettingsRepository
 from ..db.repositories.errors import ErrorRepository
 from ..exceptions import log_exceptions
@@ -273,9 +274,8 @@ class NotificationService:
         while self._notification_queue:
             notification = self._notification_queue.pop(0)
             try:
-                from ..tg import tg_manager
-
-                await tg_manager.send_message(
+                bot_manager = get_bot_manager()
+                await bot_manager.send_message(
                     chat_id=notification["chat_id"],
                     message_type=MessageType.SYSTEM_ALERT,
                     text=notification["message"],

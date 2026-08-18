@@ -1,6 +1,6 @@
 import hashlib
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -105,7 +105,8 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
         result = await session.execute(stmt)
-        return cast("ErrorModel | None", result.scalar_one_or_none())
+        error: ErrorModel | None = result.scalar_one_or_none()
+        return error
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -133,7 +134,8 @@ class ErrorRepository:
             ErrorModel.FStatus.in_(statuses),
         )
         result = await session.execute(stmt)
-        return cast("ErrorModel | None", result.scalar_one_or_none())
+        error: ErrorModel | None = result.scalar_one_or_none()
+        return error
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -193,7 +195,7 @@ class ErrorRepository:
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -223,7 +225,7 @@ class ErrorRepository:
             .offset(offset)
         )
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -255,7 +257,7 @@ class ErrorRepository:
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -287,7 +289,7 @@ class ErrorRepository:
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     # ==================== ОБНОВЛЕНИЕ ОШИБКИ ====================
 
@@ -311,9 +313,12 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
         result = await session.execute(stmt)
-        error = cast("ErrorModel | None", result.scalar_one_or_none())
+        error = result.scalar_one_or_none()
 
-        if not error:
+        # Проверка типа
+        if error is None:
+            return None
+        if not isinstance(error, ErrorModel):
             return None
 
         error.FCountOccurrences += 1
@@ -452,9 +457,9 @@ class ErrorRepository:
             ErrorMessageLinkModel.FK_Message == message_id,
         )
         result = await session.execute(stmt)
-        existing = cast("ErrorMessageLinkModel | None", result.scalar_one_or_none())
+        existing: ErrorMessageLinkModel | None = result.scalar_one_or_none()
 
-        if existing:
+        if existing is not None:
             return existing
 
         link = ErrorMessageLinkModel(
@@ -510,7 +515,8 @@ class ErrorRepository:
         stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error == error_id)
         result = await session.execute(stmt)
         await session.commit()
-        return result.rowcount if hasattr(result, "rowcount") else 0
+        rowcount = result.rowcount if hasattr(result, "rowcount") else 0
+        return rowcount
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -534,7 +540,7 @@ class ErrorRepository:
             .where(ErrorMessageLinkModel.FK_Error == error_id)
         )
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -591,7 +597,11 @@ class ErrorRepository:
         result = await session.execute(stmt)
         await session.commit()
 
-        return result.rowcount > 0 if hasattr(result, "rowcount") else True
+        # Используем rowcount как int с явным приведением
+        rowcount = getattr(result, "rowcount", 0)
+        if isinstance(rowcount, int):
+            return rowcount > 0
+        return False
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -624,7 +634,8 @@ class ErrorRepository:
         result = await session.execute(stmt)
         await session.commit()
 
-        return result.rowcount if hasattr(result, "rowcount") else len(error_ids)
+        rowcount = result.rowcount if hasattr(result, "rowcount") else len(error_ids)
+        return rowcount
 
     # ==================== СТАТИСТИКА ====================
 
@@ -672,6 +683,22 @@ class ErrorRepository:
         result = await session.execute(stmt)
         stats = result.first()
 
+        if stats is None:
+            return {
+                "total": 0,
+                "total_occurrences": 0,
+                "new": 0,
+                "in_progress": 0,
+                "resolved": 0,
+                "reopened": 0,
+                "dismissed": 0,
+                "resolution_rate": 0,
+                "period": {
+                    "start": start_date.isoformat(),
+                    "end": end_date.isoformat(),
+                },
+            }
+
         return {
             "total": stats.total or 0,
             "total_occurrences": stats.total_occurrences or 0,
@@ -710,6 +737,15 @@ class ErrorRepository:
 
         total_result = await session.execute(total_stmt)
         total_stats = total_result.first()
+
+        if total_stats is None:
+            return {
+                "user_id": user_id,
+                "total_solved": 0,
+                "total_errors": 0,
+                "success_rate": 0,
+                "daily": [],
+            }
 
         # Статистика по дням
         daily_stmt = (
@@ -759,6 +795,14 @@ class ErrorRepository:
         Returns:
             list[dict]: Список лидеров
         """
+        conditions = [ErrorModel.FStatus == ErrorStatus.RESOLVED]
+
+        if start_date is not None:
+            conditions.append(ErrorModel.FResolvedAt >= start_date)
+
+        if end_date is not None:
+            conditions.append(ErrorModel.FResolvedAt <= end_date)
+
         stmt = (
             select(
                 UserModel.FFirstName.label("first_name"),
@@ -767,11 +811,7 @@ class ErrorRepository:
                 func.count(ErrorModel.FID).label("solved"),
             )
             .join(ErrorModel, ErrorModel.FResolvedBy == UserModel.FID)
-            .where(
-                ErrorModel.FStatus == ErrorStatus.RESOLVED,
-                ErrorModel.FResolvedAt >= start_date if start_date else True,
-                ErrorModel.FResolvedAt <= end_date if end_date else True,
-            )
+            .where(*conditions)
             .group_by(UserModel.FID, UserModel.FFirstName, UserModel.FLastName, UserModel.FUserName)
             .order_by(func.count(ErrorModel.FID).desc())
             .limit(limit)
@@ -824,7 +864,13 @@ class ErrorRepository:
         )
 
         result = await session.execute(stmt)
-        return {row.FCategory.value: row.count for row in result.all()}
+        category_stats: dict[str, int] = {}
+        for row in result.all():
+            # Используем getattr для безопасного получения значения
+            count_value = getattr(row, "count", 0)
+            # Принудительно преобразуем в int
+            category_stats[row.FCategory.value] = int(count_value) if count_value is not None else 0
+        return category_stats
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -862,7 +908,13 @@ class ErrorRepository:
         )
 
         result = await session.execute(stmt)
-        return {row.FSeverity.value: row.count for row in result.all()}
+        severity_stats: dict[str, int] = {}
+        for row in result.all():
+            # Используем getattr для безопасного получения значения
+            count_value = getattr(row, "count", 0)
+            # Принудительно преобразуем в int
+            severity_stats[row.FSeverity.value] = int(count_value) if count_value is not None else 0
+        return severity_stats
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
@@ -984,7 +1036,8 @@ class ErrorRepository:
         """
         stmt = select(ErrorModel).where(ErrorModel.FGroupHash == group_hash)
         result = await session.execute(stmt)
-        return cast("ErrorModel | None", result.scalar_one_or_none())
+        error: ErrorModel | None = result.scalar_one_or_none()
+        return error
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1019,7 +1072,7 @@ class ErrorRepository:
             .offset(offset)
         )
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1047,7 +1100,7 @@ class ErrorRepository:
             .offset(offset)
         )
         result = await session.execute(stmt)
-        return cast("list[ErrorModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1067,8 +1120,15 @@ class ErrorRepository:
             ErrorModel.FStatus,
             func.count(ErrorModel.FID).label("count"),
         ).group_by(ErrorModel.FStatus)
+
         result = await session.execute(stmt)
-        return {row.FStatus.value: row.count for row in result.all()}
+        status_stats: dict[str, int] = {}
+        for row in result.all():
+            # Используем getattr для безопасного получения значения
+            count_value = getattr(row, "count", 0)
+            # Принудительно преобразуем в int
+            status_stats[row.FStatus.value] = int(count_value) if count_value is not None else 0
+        return status_stats
 
 
 __all__ = ["ErrorRepository"]

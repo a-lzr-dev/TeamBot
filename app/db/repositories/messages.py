@@ -1,16 +1,261 @@
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
+from aiogram import enums
 from sqlalchemy import and_, delete, func, not_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...exceptions import log_exceptions
 from ...logger import db_logger
-from ...models import ChatMessageModel, MessageType, datetime_now
+from ...models import AvanpostDirSysDataTypeModel, ChatMessageModel, MessageSource, MessageType, datetime_now
 
 
 class MessageRepository:
     """Репозиторий для работы с сообщениями"""
+
+    # ==================== СОЗДАНИЕ И ОБНОВЛЕНИЕ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def create_message(
+        session: AsyncSession,
+        *,
+        message_id: int,
+        chat_id: int,
+        user_id: int | None = None,
+        message_type: MessageType,
+        text: str | None = None,
+        caption: str | None = None,
+        source: MessageSource = MessageSource.BOT,
+        reply_to_message_id: int | None = None,
+        lifetime_seconds: int | None = None,
+        expires_at: datetime | None = None,
+        command: str | None = None,
+        command_args: str | None = None,
+        category: str | None = None,
+        content_type: enums.ContentType = enums.ContentType.TEXT,
+        file_id: str | None = None,
+        file_unique_id: str | None = None,
+        file_size: int | None = None,
+        mime_type: str | None = None,
+        is_forwarded: bool = False,
+        is_reply: bool = False,
+    ) -> ChatMessageModel:
+        """
+        Создание нового сообщения в БД.
+
+        Args:
+            session: Сессия БД
+            message_id: ID сообщения в Telegram
+            chat_id: ID чата
+            user_id: ID пользователя (опционально)
+            message_type: Тип сообщения
+            text: Текст сообщения
+            caption: Подпись к медиа
+            source: Источник сообщения
+            reply_to_message_id: ID сообщения, на которое отвечаем
+            lifetime_seconds: Время жизни в секундах
+            expires_at: Время истечения
+            command: Команда (для командных сообщений)
+            command_args: Аргументы команды
+            category: Категория
+            content_type: Тип содержимого
+            file_id: ID файла
+            file_unique_id: Уникальный ID файла
+            file_size: Размер файла
+            mime_type: MIME тип
+            is_forwarded: Переслано ли сообщение
+            is_reply: Является ли ответом
+
+        Returns:
+            ChatMessageModel: Созданное сообщение
+        """
+        now = datetime_now()
+
+        # Проверка времени жизни
+        if lifetime_seconds is None and message_type not in (
+            MessageType.USER_REQUEST,
+            MessageType.BOT_RESPONSE,
+        ):
+            from ...config import settings
+
+            lifetime_seconds = getattr(settings, "BOT_MESSAGE_LIFETIME_SECONDS", 300)
+
+        if lifetime_seconds and expires_at is None:
+            expires_at = now + timedelta(seconds=lifetime_seconds)
+
+        message = ChatMessageModel(
+            FID=message_id,
+            FK_Chat=chat_id,
+            FK_User=user_id,
+            FK_MessageType=message_type,
+            FK_ContentType=content_type,
+            FText=text[:4096] if text else None,
+            FCaption=caption[:4096] if caption else None,
+            FSource=source,
+            FCommand=command[:64] if command else None,
+            FCommandArgs=command_args[:4096] if command_args else None,
+            FCategory=category[:32] if category else None,
+            FLifetimeSeconds=lifetime_seconds,
+            FExpiresAt=expires_at,
+            FDateSent=now,
+            FFlagForwarded=is_forwarded,
+            FFlagReply=is_reply,
+            FFlagDeleted=False,
+            FK_File=file_id,
+            FK_FileUnique=file_unique_id,
+            FFileSize=file_size,
+            FMimeType=mime_type[:100] if mime_type else None,
+        )
+
+        if reply_to_message_id:
+            message.FK_ReplyToMessage = reply_to_message_id
+            message.FFlagReply = True
+
+        session.add(message)
+        await session.flush()
+        await session.refresh(message)
+
+        db_logger.debug(f"✅ Created message {message.FID} in chat {chat_id}")
+        return message
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def update_message(
+        session: AsyncSession,
+        message_id: int,
+        *,
+        text: str | None = None,
+        caption: str | None = None,
+        edit_date: datetime | None = None,
+    ) -> ChatMessageModel | None:
+        """
+        Обновление существующего сообщения.
+
+        Args:
+            session: Сессия БД
+            message_id: ID сообщения
+            text: Новый текст
+            caption: Новая подпись
+            edit_date: Время редактирования
+
+        Returns:
+            ChatMessageModel | None: Обновленное сообщение или None
+        """
+        message = await MessageRepository.get_message_by_id(session, message_id)
+
+        if not message:
+            db_logger.warning(f"⚠️ Message {message_id} not found for update")
+            return None
+
+        # Не обновляем удаленные сообщения
+        if message.FFlagDeleted:
+            db_logger.debug(f"⏭️ Message {message_id} is deleted, skipping update")
+            return message
+
+        updated = False
+
+        if text is not None:
+            message.FText = text[:4096]
+            updated = True
+
+        if caption is not None:
+            message.FCaption = caption[:4096]
+            updated = True
+
+        if edit_date is not None:
+            message.FDateEdited = edit_date
+            updated = True
+
+        if updated:
+            await session.flush()
+            await session.refresh(message)
+            db_logger.debug(f"✅ Updated message {message_id}")
+
+        return message
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def create_or_update_message(
+        session: AsyncSession,
+        *,
+        message_id: int,
+        chat_id: int,
+        user_id: int | None = None,
+        message_type: MessageType,
+        text: str | None = None,
+        caption: str | None = None,
+        source: MessageSource = MessageSource.BOT,
+        reply_to_message_id: int | None = None,
+        lifetime_seconds: int | None = None,
+        expires_at: datetime | None = None,
+        command: str | None = None,
+        command_args: str | None = None,
+        category: str | None = None,
+        content_type: enums.ContentType = enums.ContentType.TEXT,
+        file_id: str | None = None,
+        file_unique_id: str | None = None,
+        file_size: int | None = None,
+        mime_type: str | None = None,
+        is_forwarded: bool = False,
+        is_reply: bool = False,
+        edit_date: datetime | None = None,
+    ) -> tuple[ChatMessageModel, bool]:
+        """
+        Создание или обновление сообщения (UPSERT).
+
+        Returns:
+            tuple[ChatMessageModel, bool]: (сообщение, created)
+        """
+        # Проверяем существование
+        existing = await MessageRepository.get_message_by_id(session, message_id)
+
+        if existing:
+            # Обновляем существующее
+            updated = False
+            if text is not None:
+                existing.FText = text[:4096]
+                updated = True
+            if caption is not None:
+                existing.FCaption = caption[:4096]
+                updated = True
+            if edit_date is not None:
+                existing.FDateEdited = edit_date
+                updated = True
+
+            if updated:
+                await session.flush()
+                await session.refresh(existing)
+                db_logger.debug(f"✅ Updated existing message {message_id}")
+
+            return existing, False
+
+        # Создаем новое
+        message = await MessageRepository.create_message(
+            session=session,
+            message_id=message_id,
+            chat_id=chat_id,
+            user_id=user_id,
+            message_type=message_type,
+            text=text,
+            caption=caption,
+            source=source,
+            reply_to_message_id=reply_to_message_id,
+            lifetime_seconds=lifetime_seconds,
+            expires_at=expires_at,
+            command=command,
+            command_args=command_args,
+            category=category,
+            content_type=content_type,
+            file_id=file_id,
+            file_unique_id=file_unique_id,
+            file_size=file_size,
+            mime_type=mime_type,
+            is_forwarded=is_forwarded,
+            is_reply=is_reply,
+        )
+
+        return message, True
 
     # ==================== ОСНОВНЫЕ МЕТОДЫ ====================
 
@@ -29,7 +274,39 @@ class MessageRepository:
         """
         stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
         result = await session.execute(stmt)
-        return cast("ChatMessageModel | None", result.scalar_one_or_none())
+        result_scalar = result.scalar_one_or_none()
+        if result_scalar is not None and not isinstance(result_scalar, AvanpostDirSysDataTypeModel):
+            return None
+        return result_scalar
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_messages_by_ids(
+        session: AsyncSession,
+        message_ids: list[int],
+        include_deleted: bool = False,
+    ) -> list[ChatMessageModel]:
+        """
+        Получение сообщений по списку ID.
+
+        Args:
+            session: Сессия БД
+            message_ids: Список ID сообщений
+            include_deleted: Включать удаленные сообщения
+
+        Returns:
+            list[ChatMessageModel]: Список сообщений
+        """
+        if not message_ids:
+            return []
+
+        stmt = select(ChatMessageModel).where(ChatMessageModel.FID.in_(message_ids))
+
+        if not include_deleted:
+            stmt = stmt.where(ChatMessageModel.FFlagDeleted.is_(False))
+
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -58,7 +335,7 @@ class MessageRepository:
         stmt = stmt.limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -106,7 +383,7 @@ class MessageRepository:
             stmt = stmt.limit(limit)
 
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     # ==================== СТАТИСТИКА ====================
 
@@ -237,7 +514,7 @@ class MessageRepository:
         stmt = stmt.limit(limit)
 
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     # ==================== УДАЛЕНИЕ СООБЩЕНИЙ ====================
 
@@ -313,6 +590,33 @@ class MessageRepository:
         await session.commit()
 
         return result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def delete_messages_by_ids(
+        session: AsyncSession,
+        message_ids: list[int],
+        deleted_by_type: str = "error_cleanup",
+        deleted_by_message_id: int | None = None,
+    ) -> int:
+        """
+        Мягкое удаление сообщений по списку ID (аналог mark_messages_as_deleted).
+
+        Args:
+            session: Сессия БД
+            message_ids: Список ID сообщений
+            deleted_by_type: Тип удаления
+            deleted_by_message_id: ID сообщения-инициатора
+
+        Returns:
+            int: Количество удаленных сообщений
+        """
+        return await MessageRepository.mark_messages_as_deleted(
+            session=session,
+            message_ids=message_ids,
+            deleted_by_type=deleted_by_type,
+            deleted_by_message_id=deleted_by_message_id,
+        )
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -404,7 +708,7 @@ class MessageRepository:
         stmt = stmt.limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -438,7 +742,7 @@ class MessageRepository:
         stmt = stmt.limit(limit).offset(offset)
 
         result = await session.execute(stmt)
-        return cast("list[ChatMessageModel]", list(result.scalars().all()))
+        return list(result.scalars().all())
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -460,7 +764,8 @@ class MessageRepository:
             .limit(1)
         )
         result = await session.execute(stmt)
-        return cast("ChatMessageModel | None", result.scalar_one_or_none())
+        scalar: ChatMessageModel | None = result.scalar_one_or_none()
+        return scalar
 
     @staticmethod
     @log_exceptions(db_logger)

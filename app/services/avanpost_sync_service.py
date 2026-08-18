@@ -3,73 +3,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypeVar
 
-from sqlalchemy import and_, delete, select
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import db_manager
-from ..db.repositories import AvanpostRepository, SystemRepository
+from ..db.repositories import AvanpostRepository, GenericRepository, SystemRepository, UserRepository
 from ..logger import app_logger
-from ..models import (
-    AvanpostContactLangModel,
-    AvanpostContactLinkModel,
-    AvanpostContactModel,
-    AvanpostContactMsgModel,
-    AvanpostContactMsgProcessModel,
-    AvanpostDirContactGroupModel,
-    AvanpostDirContactLinkTypeModel,
-    AvanpostDirContactMsgDirectionTypeModel,
-    AvanpostDirContactMsgProcessTypeModel,
-    AvanpostDirContactMsgTypeModel,
-    AvanpostDirFileTypeModel,
-    AvanpostDirLanguageModel,
-    AvanpostDirOperatorModel,
-    AvanpostDirOwnerModel,
-    AvanpostDirOwnerMotorCadeModel,
-    AvanpostDirScenarioActionLangModel,
-    AvanpostDirScenarioActionModel,
-    AvanpostDirScenarioActionTypeModel,
-    AvanpostDirScenarioActionValueModel,
-    AvanpostDirScenarioActionValueTypeModel,
-    AvanpostDirScenarioCustomModel,
-    AvanpostDirScenarioGroupItemLangModel,
-    AvanpostDirScenarioGroupItemLinkScenarioGroupModel,
-    AvanpostDirScenarioGroupItemLinkScenarioInstructionModel,
-    AvanpostDirScenarioGroupItemLinkScenarioModel,
-    AvanpostDirScenarioGroupItemModel,
-    AvanpostDirScenarioGroupItemTypeModel,
-    AvanpostDirScenarioGroupModel,
-    AvanpostDirScenarioInstructionFileModel,
-    AvanpostDirScenarioInstructionLangModel,
-    AvanpostDirScenarioInstructionModel,
-    AvanpostDirScenarioModel,
-    AvanpostDirScenarioTypeModel,
-    AvanpostDirSysDataTypeModel,
-    AvanpostDirUserContactRoleTypeModel,
-    AvanpostDirUserLinkContactMsgControlProcessTypeModel,
-    AvanpostDirUserStatusTypeModel,
-    AvanpostFileModel,
-    AvanpostLinkContactMsgFileModel,
-    AvanpostLinkMsgFileModel,
-    AvanpostMsgModel,
-    AvanpostUserChatLangModel,
-    AvanpostUserChatModel,
-    AvanpostUserLinkChatContactMsgModel,
-    AvanpostUserLinkContactModel,
-    AvanpostUserLinkContactMsgControlModel,
-    AvanpostUserMissionItemLangModel,
-    AvanpostUserMissionItemModel,
-    AvanpostUserMissionLangModel,
-    AvanpostUserMissionModel,
-    AvanpostUserModel,
-    AvanpostUserOrderLangModel,
-    AvanpostUserOrderLinkMissionModel,
-    AvanpostUserOrderModel,
-    AvanpostUserStatusModel,
-    AvanpostUserVehicleModel,
-    datetime_now,
-)
+from ..models import datetime_now
 
 ModelType = TypeVar("ModelType")
 
@@ -249,7 +189,7 @@ class SyncStatistics:
                     f"⚠️ {title}: Received {self.total_received} records from Avanpost, "
                     f"but no changes detected (all data is up to date)"
                 )
-                # Вывод деталей по таблично
+                # Вывод деталей по таблицам только если есть полученные данные
                 if self.table_stats:
                     app_logger.debug("📊 Received data by table:")
                     for table_name, stats in self.table_stats.items():
@@ -259,42 +199,76 @@ class SyncStatistics:
             else:
                 app_logger.info(f"✅ {title}: No changes detected (all data is up to date)")
             return
+
+        # ============================================================
+        # ЕСЛИ ЕСТЬ ИЗМЕНЕНИЯ ИЛИ ОШИБКИ - ВЫВОДИМ ПОЛНЫЙ ОТЧЕТ
+        # ============================================================
+
         duration = None
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
 
-        # Определение множества всех таблиц
+        # Определение множества всех таблиц с изменениями или ошибками
         all_tables = sorted(
             set(self.table_stats.keys())
             | set(self.tables_with_inserts)
             | set(self.tables_with_updates)
             | set(self.tables_with_deletes)
             | set(self.tables_with_errors)
-            | set(self.tables_with_unchanged)
         )
 
-        # Вычисление максимальной длины имени таблицы для динамического выравнивания
-        max_table_len = 45
+        # ФИЛЬТРУЕМ ТОЛЬКО ТАБЛИЦЫ С ИЗМЕНЕНИЯМИ ИЛИ ОШИБКАМИ
+        filtered_tables = []
         for table in all_tables:
+            stats = self.table_stats.get(table, {})
+            # Показываем только таблицы с изменениями или ошибками
+            if (
+                stats.get("inserted", 0) > 0
+                or stats.get("updated", 0) > 0
+                or stats.get("deleted", 0) > 0
+                or stats.get("errors", 0) > 0
+            ):
+                filtered_tables.append(table)
+
+        # ЕСЛИ НЕТ ТАБЛИЦ С ИЗМЕНЕНИЯМИ - ВЫХОДИМ
+        if not filtered_tables:
+            if has_received_data:
+                app_logger.info(f"✅ {title}: Received {self.total_received} records but no changes detected")
+            else:
+                app_logger.info(f"✅ {title}: No changes detected")
+            return
+
+        # Вычисление максимальной длины имени таблицы
+        max_table_len = 45
+        for table in filtered_tables:
             if len(table) > max_table_len:
                 max_table_len = len(table)
-        # Ограничение разумным пределом
         if max_table_len > 80:
             max_table_len = 80
 
         # Ширина колонок с цифрами - 8 символов
-        # Колонки: Recv(8) + DelRecv(8) + Ins(8) + Upd(8) + Del(8) + Err(8) + UncUps(8) + SkipDel(8) + Status(10)
         separator_len = max_table_len + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 10 + 18
 
         print("\n📋 SYNC STATISTICS:")
         print("-" * separator_len)
 
         # Заголовок
-        header = f"{'Table':<{max_table_len}} {'Recv':>8} {'DelRecv':>8} {'Ins':>8} {'Upd':>8} {'Del':>8} {'Err':>8} {'UncUps':>8} {'SkipDel':>8} {'  Status':<10}"
+        header = (
+            f"{'Table':<{max_table_len}} "
+            f"{'Recv':>8} "
+            f"{'DelRecv':>8} "
+            f"{'Ins':>8} "
+            f"{'Upd':>8} "
+            f"{'Del':>8} "
+            f"{'Err':>8} "
+            f"{'UncUps':>8} "
+            f"{'SkipDel':>8} "
+            f"{'  Status':<10}"
+        )
         print(header)
         print("-" * separator_len)
 
-        # Сбор итоговых сумм для SUMMARY строки
+        # Сбор итоговых сумм
         total_received_upsert = 0
         total_received_delete = 0
         total_inserted = 0
@@ -304,9 +278,8 @@ class SyncStatistics:
         total_unchanged = 0
         total_skipped_upsert = 0
         total_skipped_delete = 0
-        has_any_data = False
 
-        for table in all_tables:
+        for table in filtered_tables:
             stats = self.table_stats.get(table, {})
             received_upsert = stats.get("received_upsert", 0)
             received_delete = stats.get("received_delete", 0)
@@ -332,52 +305,51 @@ class SyncStatistics:
             total_skipped_upsert += skipped_upsert
             total_skipped_delete += skipped_delete
 
-            # Отображение только таблиц с изменениями или ошибками
-            if (
-                inserted == 0
-                and updated == 0
-                and deleted == 0
-                and errors == 0
-                and unchanged == 0
-                and skipped_upsert == 0
-                and skipped_delete == 0
-                and received == 0
-                and received_delete == 0
-            ):
-                continue
-
-            has_any_data = True
-
-            # Статусы с иконками (выравнивание по ЛЕВОМУ краю)
+            # Статусы с иконками
             if errors > 0:
                 status = "  ❌ ERROR"
             elif inserted > 0 or updated > 0 or deleted > 0:
                 status = "  ✅ OK"
-            elif unchanged > 0 or skipped_upsert > 0 or skipped_delete > 0:
-                status = "  ⏭️ SKIP"
             else:
-                status = "    -"
+                continue  # Пропускаем таблицы без изменений (хотя мы их уже отфильтровали)
 
             # Строка таблицы - UncUps = unchanged + skipped_upsert
             unc_ups = unchanged + skipped_upsert
 
             print(
-                f"{table:<{max_table_len}} {received:>8} {received_delete:>8} {inserted:>8} {updated:>8} {deleted:>8} {errors:>8} {unc_ups:>8} {skipped_delete:>8} {status:<10}"
+                f"{table:<{max_table_len}} "
+                f"{received:>8} "
+                f"{received_delete:>8} "
+                f"{inserted:>8} "
+                f"{updated:>8} "
+                f"{deleted:>8} "
+                f"{errors:>8} "
+                f"{unc_ups:>8} "
+                f"{skipped_delete:>8} "
+                f"{status:<10}"
             )
 
         # Итоговая строка SUMMARY
-        if has_any_data:
-            print("-" * separator_len)
-            status_text = " ⚠️ ERRORS" if total_errors > 0 else "  ✅ DONE"
-            duration_str = f"{duration:.2f}s" if duration else "N/A"
-            summary_label = f"📊 SUMMARY (Tables: {len(all_tables)}, Duration: {duration_str})"
-            total_received = total_received_upsert
-            total_unc_ups = total_unchanged + total_skipped_upsert
+        print("-" * separator_len)
+        status_text = " ⚠️ ERRORS" if total_errors > 0 else "  ✅ DONE"
+        duration_str = f"{duration:.2f}s" if duration else "N/A"
+        summary_label = f"📊 SUMMARY (Tables: {len(filtered_tables)}, Duration: {duration_str})"
+        total_received = total_received_upsert
+        total_unc_ups = total_unchanged + total_skipped_upsert
 
-            print(
-                f"{summary_label:<{max_table_len - 1}} {total_received:>8} {total_received_delete:>8} {total_inserted:>8} {total_updated:>8} {total_deleted:>8} {total_errors:>8} {total_unc_ups:>8} {total_skipped_delete:>8} {status_text:<10}"
-            )
-            print("-" * separator_len)
+        print(
+            f"{summary_label:<{max_table_len - 1}} "
+            f"{total_received:>8} "
+            f"{total_received_delete:>8} "
+            f"{total_inserted:>8} "
+            f"{total_updated:>8} "
+            f"{total_deleted:>8} "
+            f"{total_errors:>8} "
+            f"{total_unc_ups:>8} "
+            f"{total_skipped_delete:>8} "
+            f"{status_text:<10}"
+        )
+        print("-" * separator_len)
 
         # Вывод ошибок
         if self.tables_with_errors:
@@ -391,77 +363,6 @@ class SyncStatistics:
 
 class AvanpostSyncService:
     """Сервис синхронизации данных Avanpost."""
-
-    # Маппинг типа данных -> модель SQLAlchemy
-    MODEL_MAPPING: dict[int, Any] = {
-        # Базовые справочники (ID 1-20)
-        1: AvanpostDirLanguageModel,
-        2: AvanpostDirContactGroupModel,
-        3: AvanpostDirContactLinkTypeModel,
-        4: AvanpostDirOperatorModel,
-        5: AvanpostDirOwnerModel,
-        6: AvanpostDirOwnerMotorCadeModel,
-        7: AvanpostDirFileTypeModel,
-        8: AvanpostDirContactMsgDirectionTypeModel,
-        9: AvanpostDirContactMsgTypeModel,
-        10: AvanpostDirContactMsgProcessTypeModel,
-        11: AvanpostDirScenarioTypeModel,
-        12: AvanpostDirScenarioGroupItemTypeModel,
-        13: AvanpostDirUserStatusTypeModel,
-        14: AvanpostDirUserContactRoleTypeModel,
-        15: AvanpostDirUserLinkContactMsgControlProcessTypeModel,
-        16: AvanpostDirScenarioActionTypeModel,
-        17: AvanpostDirScenarioActionValueTypeModel,
-        # Сценарии действий (ID 101-120)
-        101: AvanpostDirScenarioModel,
-        102: AvanpostDirScenarioActionModel,
-        103: AvanpostDirScenarioActionLangModel,
-        104: AvanpostDirScenarioActionValueModel,
-        105: AvanpostDirScenarioInstructionModel,
-        106: AvanpostDirScenarioInstructionLangModel,
-        107: AvanpostDirScenarioCustomModel,
-        108: AvanpostDirScenarioGroupModel,
-        # Меню действий (ID 201-220)
-        201: AvanpostDirScenarioGroupItemModel,
-        202: AvanpostDirScenarioGroupItemLangModel,
-        203: AvanpostDirScenarioGroupItemLinkScenarioModel,
-        204: AvanpostDirScenarioGroupItemLinkScenarioGroupModel,
-        205: AvanpostDirScenarioGroupItemLinkScenarioInstructionModel,
-        # Данные (ID 301-320)
-        301: AvanpostContactModel,
-        302: AvanpostContactLangModel,
-        303: AvanpostContactLinkModel,
-        # Данные с пользователями (ID 401-420)
-        401: AvanpostUserModel,
-        402: AvanpostUserChatModel,
-        403: AvanpostUserChatLangModel,
-        # Оперативная синхронизация (ID 501-520)
-        501: AvanpostMsgModel,
-        502: AvanpostContactMsgModel,
-        503: AvanpostContactMsgProcessModel,
-        504: AvanpostUserStatusModel,
-        505: AvanpostUserLinkContactModel,
-        506: AvanpostUserMissionModel,
-        507: AvanpostUserMissionLangModel,
-        508: AvanpostUserMissionItemModel,
-        509: AvanpostUserMissionItemLangModel,
-        510: AvanpostUserOrderModel,
-        511: AvanpostUserOrderLangModel,
-        512: AvanpostUserOrderLinkMissionModel,
-        513: AvanpostUserVehicleModel,
-        514: AvanpostUserLinkChatContactMsgModel,
-        515: AvanpostUserLinkContactMsgControlModel,
-        # Отложенная синхронизация (ID 601-620)
-        601: AvanpostFileModel,
-        602: AvanpostLinkMsgFileModel,
-        603: AvanpostLinkContactMsgFileModel,
-        604: AvanpostDirScenarioInstructionFileModel,
-    }
-
-    # Маппинг типа данных -> имя таблицы в main
-    DATA_TYPE_MAPPING: dict[int, str] = {
-        data_type_id: model.__tablename__ for data_type_id, model in MODEL_MAPPING.items()
-    }
 
     def __init__(self) -> None:
         self._initialized: bool = False
@@ -479,26 +380,11 @@ class AvanpostSyncService:
         self._fk_cache: dict[str, set[Any]] = {}
         self._model_columns_cache: dict[Any, set[str]] = {}
 
-        # Типы данных для синхронизации
-        self.base_data_types: list[int] = (
-            list(range(1, 18)) + list(range(101, 109)) + list(range(201, 206)) + list(range(301, 304))
-        )
+        # Типы данных для синхронизации - импортируем из models
+        from ..models.avanpost import AVANPOST_BASE_DATA_TYPES, AVANPOST_USER_DATA_TYPES
 
-        self.user_data_types: list[int] = [
-            401,  # Пользователи
-            402,  # Чаты
-            403,  # Переводы чатов
-            504,  # Статусы пользователей
-            505,  # Связи пользователей с контактами
-            506,  # Задания
-            507,  # Переводы заданий
-            508,  # Пункты заданий
-            509,  # Переводы пунктов
-            510,  # Заказы
-            511,  # Переводы заказов
-            512,  # Cвязи заказов с заданиями
-            513,  # Транспорт
-        ]
+        self.base_data_types = AVANPOST_BASE_DATA_TYPES
+        self.user_data_types = AVANPOST_USER_DATA_TYPES
 
     @property
     def is_initialized(self) -> bool:
@@ -515,37 +401,26 @@ class AvanpostSyncService:
 
         if session is None:
             async with db_manager.get_session() as sess:
-                await self._load_data_types(sess)
+                self._data_type_cache = await SystemRepository.get_data_types_dict(sess)
         else:
-            await self._load_data_types(session)
+            self._data_type_cache = await SystemRepository.get_data_types_dict(session)
 
         self._initialized = True
         app_logger.info(f"✅ AvanpostSyncService initialized with {len(self._data_type_cache)} data types")
 
-    async def _load_data_types(self, session: AsyncSession) -> None:
-        """Загрузка типов данных в кеш"""
-        try:
-            stmt = select(AvanpostDirSysDataTypeModel)
-            result = await session.execute(stmt)
-            records = result.scalars().all()
+    @staticmethod
+    def _get_model_by_data_type(data_type_id: int) -> Any:
+        """Получение модели по типу данных."""
+        from ..models.avanpost import get_avanpost_model
 
-            for record in records:
-                self._data_type_cache[record.FID] = {
-                    "name": record.FName,
-                    "table": record.FTableName,
-                    "user_related": record.FUserRelated,
-                    "deferred_sync": record.FDeferredSync,
-                }
+        return get_avanpost_model(data_type_id)
 
-            app_logger.debug(f"📊 Loaded {len(records)} data types into cache")
+    @staticmethod
+    def _get_table_name(data_type_id: int) -> str | None:
+        """Получение имени таблицы по типу данных."""
+        from ..models.avanpost import get_avanpost_table_name
 
-        except Exception as e:
-            app_logger.error(f"❌ Failed to load data types: {e}")
-            raise
-
-    def _get_model_by_data_type(self, data_type_id: int) -> Any:
-        """Получение модели по типу данных"""
-        return self.MODEL_MAPPING.get(data_type_id)
+        return get_avanpost_table_name(data_type_id)
 
     def _get_model_columns(self, model: Any) -> set[str]:
         """Получение списка колонок модели"""
@@ -595,328 +470,6 @@ class AvanpostSyncService:
                 await SystemRepository.update_sync_times_bulk(session, sync_times)
             else:
                 await SystemRepository.update_user_sync_times_bulk(session, user_id, sync_times)
-
-    @staticmethod
-    async def delete_records_bulk(
-        session: AsyncSession,
-        model: Any,
-        records: list[dict[str, Any]] | dict[str, Any],
-        primary_keys: list[str],
-    ) -> int:
-        """Массовое удаление записей по первичному ключу."""
-        if not records:
-            return 0
-
-        if isinstance(records, dict):
-            records_list: list[dict[str, Any]] = [records]
-        elif isinstance(records, list):
-            records_list = records
-        else:
-            return 0
-
-        delete_conditions: list[Any] = []
-        for record in records_list:
-            if not isinstance(record, dict):
-                continue
-            if all(pk in record for pk in primary_keys):
-                if len(primary_keys) == 1:
-                    delete_conditions.append(record[primary_keys[0]])
-                else:
-                    delete_conditions.append(tuple(record[pk] for pk in primary_keys))
-            else:
-                app_logger.warning(f"⚠️ Record missing primary key fields: {record}")
-
-        if not delete_conditions:
-            return 0
-
-        stmt = delete(model)
-        if len(primary_keys) == 1:
-            pk_col = getattr(model, primary_keys[0])
-            stmt = stmt.where(pk_col.in_(delete_conditions))
-        else:
-            from sqlalchemy import or_
-
-            conditions = []
-            for pk_tuple in delete_conditions:
-                cond = and_(*[getattr(model, pk) == value for pk, value in zip(primary_keys, pk_tuple, strict=False)])
-                conditions.append(cond)
-            stmt = stmt.where(or_(*conditions))
-
-        result = await session.execute(stmt)
-        rowcount_raw = result.rowcount if hasattr(result, "rowcount") else 0
-        rowcount: int = int(rowcount_raw) if rowcount_raw is not None else 0
-        return rowcount
-
-    async def save_data_bulk(
-        self,
-        session: AsyncSession,
-        model: Any,
-        records: list[dict[str, Any]] | dict[str, Any],
-        model_columns: set[str],
-        force_delete: bool = False,
-    ) -> tuple[int, int, int, int, int]:
-        """
-        Массовое сохранение данных с использованием UPSERT.
-
-        Returns:
-            tuple[int, int, int, int, int]: (inserted, updated, unchanged, skipped_upsert, skipped_delete)
-            - inserted: реально вставлены (новые записи)
-            - updated: реально обновлены (данные изменились)
-            - unchanged: получены, но данные не изменились (пропущены)
-            - skipped_upsert: не вставлены/не обновлены из-за ошибок
-            - skipped_delete: не найдены для удаления
-        """
-        if not records:
-            return 0, 0, 0, 0, 0
-
-        if isinstance(records, dict):
-            records_list = [records]
-        elif isinstance(records, list):
-            records_list = records
-        else:
-            app_logger.warning(f"⚠️ Unexpected records type: {type(records)}")
-            return 0, 0, 0, 0, 0
-
-        # Удаление всех записей, если force_delete = True
-        if force_delete:
-            app_logger.debug(f"🗑️ Force delete all {len(records_list)} records from {model.__tablename__}")
-            primary_keys = [col.name for col in model.__table__.primary_key.columns]
-            if primary_keys:
-                delete_records = []
-                for rec in records_list:
-                    if isinstance(rec, dict) and "FID" in rec:
-                        delete_records.append({"FID": rec["FID"]})
-
-                if delete_records:
-                    deleted = await self.delete_records_bulk(session, model, delete_records, primary_keys)
-                    skipped_delete = len(delete_records) - deleted
-                    app_logger.debug(
-                        f"🗑️ Deleted {deleted} records from {model.__tablename__} (skipped_delete: {skipped_delete})"
-                    )
-                    return 0, 0, 0, 0, skipped_delete
-            return 0, 0, 0, 0, len(records_list)
-
-        # Разделение на DELETE и UPSERT
-        delete_records = []
-        upsert_records = []
-
-        for rec in records_list:
-            if not isinstance(rec, dict):
-                continue
-
-            flag_expire = rec.get("FlagExpire")
-            rec_keys = set(rec.keys())
-            data_keys = rec_keys - {"FlagExpire", "SyncTime"}
-            is_delete_signal = data_keys == {"FID"}
-
-            if flag_expire == 1 or flag_expire is True or is_delete_signal:
-                delete_records.append(rec)
-            else:
-                clean_record = {}
-                for col in model_columns:
-                    clean_record[col] = rec.get(col)
-                if clean_record:
-                    upsert_records.append(clean_record)
-
-        app_logger.debug(f"📊 {model.__tablename__}: DELETE={len(delete_records)}, UPSERT={len(upsert_records)}")
-
-        total_skipped_delete = 0
-        total_inserted = 0
-        total_updated = 0
-        total_unchanged = 0
-        total_skipped_upsert = 0
-
-        # Обработка DELETE
-        if delete_records:
-            primary_keys = [col.name for col in model.__table__.primary_key.columns]
-            if primary_keys:
-                deleted = await self.delete_records_bulk(session, model, delete_records, primary_keys)
-                skipped_delete = len(delete_records) - deleted
-                total_skipped_delete = skipped_delete
-                app_logger.debug(
-                    f"🗑️ Deleted {deleted} records from {model.__tablename__} (skipped_delete: {skipped_delete})"
-                )
-            else:
-                app_logger.warning(f"⚠️ No primary key for {model.__tablename__}, cannot delete")
-                total_skipped_delete = len(delete_records)
-
-        # Обработка UPSERT
-        if upsert_records:
-            app_logger.debug(f"💾 Processing {len(upsert_records)} records to {model.__tablename__}")
-
-            table_name = model.__tablename__
-            if table_name == "TAvanpostContactsLinks":
-                for rec in upsert_records:
-                    if "FK_Operator" in rec:
-                        if hasattr(rec["FK_Operator"], "value"):
-                            rec["FK_Operator"] = rec["FK_Operator"].value
-                        elif hasattr(rec["FK_Operator"], "__int__"):
-                            try:
-                                rec["FK_Operator"] = int(rec["FK_Operator"])
-                            except (ValueError, TypeError):
-                                rec["FK_Operator"] = None
-
-            primary_keys = [col.name for col in model.__table__.primary_key.columns]
-            if not primary_keys:
-                app_logger.warning(f"⚠️ No primary key found for {model.__tablename__}, using all columns")
-                primary_keys = list(upsert_records[0].keys())
-
-            # Получение существующих записей для сравнения
-            existing_records = {}
-            existing_ids = set()
-            if len(primary_keys) == 1:
-                # Для простого ключа
-                pk_col = getattr(model, primary_keys[0])
-                pk_values = [rec.get(primary_keys[0]) for rec in upsert_records if rec.get(primary_keys[0]) is not None]
-
-                if pk_values:
-                    stmt = select(model).where(pk_col.in_(pk_values))
-                    result = await session.execute(stmt)
-                    db_records = result.scalars().all()
-                    for db_rec in db_records:
-                        pk_val = getattr(db_rec, primary_keys[0])
-                        existing_records[pk_val] = db_rec
-                existing_ids = set(existing_records.keys())
-            else:
-                # Создание словара с составным ключом для составного ключа
-                stmt = select(model)
-                result = await session.execute(stmt)
-                db_records = result.scalars().all()
-
-                # Индексирование по составному ключу
-                for db_rec in db_records:
-                    key = tuple(getattr(db_rec, pk) for pk in primary_keys)
-                    existing_records[key] = db_rec
-
-            # Разделение на INSERT, UPDATE и UNCHANGED
-            insert_records = []
-            update_records = []
-            unchanged_records = []
-
-            for rec in upsert_records:
-                if len(primary_keys) == 1:
-                    # === ПРОСТОЙ КЛЮЧ ===
-                    pk_val = rec.get(primary_keys[0])
-                    if pk_val is not None and pk_val in existing_ids:
-                        db_rec = existing_records.get(pk_val)
-                        if db_rec:
-                            has_changes = False
-
-                            for col in model_columns:
-                                if col in primary_keys:
-                                    continue
-                                new_val = rec.get(col)
-                                old_val = getattr(db_rec, col, None)
-
-                                # Нормализация для сравнения
-                                if isinstance(new_val, str) and isinstance(old_val, str):
-                                    new_val = new_val.strip()
-                                    old_val = old_val.strip()
-                                elif isinstance(new_val, int) and isinstance(old_val, int):
-                                    pass
-                                elif new_val is None and old_val is None:
-                                    continue
-
-                                if new_val != old_val:
-                                    has_changes = True
-                                    break
-
-                            if has_changes:
-                                update_records.append(rec)
-                            else:
-                                unchanged_records.append(rec)
-                        else:
-                            insert_records.append(rec)
-                    else:
-                        insert_records.append(rec)
-                else:
-                    # === СОСТАВНОЙ КЛЮЧ ===
-                    # Создание ключа из всех полей primary key
-                    pk_tuple = tuple(rec.get(pk) for pk in primary_keys)
-
-                    # Проверка, есть ли запись в existing_records
-                    db_rec = existing_records.get(pk_tuple)
-
-                    if db_rec:
-                        has_changes = False
-
-                        for col in model_columns:
-                            if col in primary_keys:
-                                continue
-                            new_val = rec.get(col)
-                            old_val = getattr(db_rec, col, None)
-
-                            # Нормализация для сравнения
-                            if isinstance(new_val, str) and isinstance(old_val, str):
-                                new_val = new_val.strip()
-                                old_val = old_val.strip()
-                            elif isinstance(new_val, int) and isinstance(old_val, int):
-                                pass
-                            elif new_val is None and old_val is None:
-                                continue
-
-                            if new_val != old_val:
-                                has_changes = True
-                                break
-
-                        if has_changes:
-                            update_records.append(rec)
-                        else:
-                            unchanged_records.append(rec)
-                    else:
-                        insert_records.append(rec)
-
-            app_logger.debug(
-                f"📊 {table_name}: INSERT={len(insert_records)}, UPDATE={len(update_records)}, UNCHANGED={len(unchanged_records)}"
-            )
-
-            # Выполнение INSERT для новых записей
-            if insert_records:
-                batch_size = 1000
-                for i in range(0, len(insert_records), batch_size):
-                    batch = insert_records[i : i + batch_size]
-                    try:
-                        stmt = insert(model).values(batch)
-                        if len(primary_keys) == 1:
-                            stmt = stmt.on_conflict_do_nothing(index_elements=primary_keys)
-                        await session.execute(stmt)
-                        total_inserted += len(batch)
-                    except Exception as e:
-                        app_logger.warning(f"⚠️ INSERT failed for batch: {e}")
-                        total_skipped_upsert += len(batch)
-                app_logger.debug(f"✅ INSERT {len(insert_records)} new records to {table_name}")
-
-            # Выполнение UPDATE для изменившихся записей
-            if update_records:
-                batch_size = 1000
-                for i in range(0, len(update_records), batch_size):
-                    batch = update_records[i : i + batch_size]
-
-                    stmt = insert(model).values(batch)
-                    update_fields = [col for col in batch[0] if col not in primary_keys]
-
-                    if update_fields:
-                        stmt = stmt.on_conflict_do_update(
-                            index_elements=primary_keys,
-                            set_={col: getattr(stmt.excluded, col) for col in update_fields},
-                        )
-                    else:
-                        stmt = stmt.on_conflict_do_nothing()
-
-                    try:
-                        await session.execute(stmt)
-                        total_updated += len(batch)
-                    except Exception as e:
-                        app_logger.warning(f"⚠️ UPDATE failed for batch: {e}")
-                        total_skipped_upsert += len(batch)
-                app_logger.debug(f"🔄 UPDATE {len(update_records)} existing records in {table_name}")
-
-            # Записи без изменений - считаем пропущенными
-            if unchanged_records:
-                total_unchanged = len(unchanged_records)
-                app_logger.debug(f"⏭️ UNCHANGED {len(unchanged_records)} records in {table_name} (no data changes)")
-
-        return total_inserted, total_updated, total_unchanged, total_skipped_upsert, total_skipped_delete
 
     # ==================== СИНХРОНИЗАЦИЯ БАЗОВЫХ ДАННЫХ ====================
 
@@ -987,7 +540,6 @@ class AvanpostSyncService:
             app_logger.debug(f"📊 Total collected: {len(all_data_items)} items")
 
             # Обновление времени для всех запрошенных типов
-
             current_time = datetime_now()
             sync_times: dict[int, datetime] = {}
 
@@ -1007,10 +559,10 @@ class AvanpostSyncService:
                         records = data_item.get("Data", [])
 
                         if data_type_raw is not None:
-                            data_type_id = data_type_raw
-                            model = self._get_model_by_data_type(data_type_id)
+                            data_type_id_val = data_type_raw
+                            model = self._get_model_by_data_type(data_type_id_val)
                             model_name = (model.__name__ if model else "UNKNOWN") or "UNKNOWN"
-                            table_name = self.DATA_TYPE_MAPPING.get(data_type_id, "UNKNOWN")
+                            table_name = self._get_table_name(data_type_id_val) or "UNKNOWN"
                         else:
                             model_name = "UNKNOWN"
                             table_name = "UNKNOWN"
@@ -1044,22 +596,27 @@ class AvanpostSyncService:
                         app_logger.warning("⚠️ DataTypeId is None")
                         continue
 
-                    data_type_id = data_type_raw
-                    if data_type_id not in self.base_data_types:
-                        app_logger.warning(f"⚠️ Skipping {data_type_id} (not in base_data_types)")
+                    if not isinstance(data_type_raw, int):
+                        app_logger.warning(f"⚠️ DataTypeId is not int: {type(data_type_raw)}")
+                        continue
+
+                    current_dt_id: int = data_type_raw
+
+                    if current_dt_id not in self.base_data_types:
+                        app_logger.warning(f"⚠️ Skipping {current_dt_id} (not in base_data_types)")
                         continue
 
                     records = data_item.get("Data")
                     if not records:
                         continue
 
-                    table_name = self.DATA_TYPE_MAPPING.get(data_type_id) or "UNKNOWN"
+                    table_name = self._get_table_name(current_dt_id) or "UNKNOWN"
                     if table_name == "UNKNOWN":
-                        app_logger.warning(f"⚠️ No table mapping for DataTypeId {data_type_id}")
+                        app_logger.warning(f"⚠️ No table mapping for DataTypeId {current_dt_id}")
                         continue
 
                     flag_expire = data_item.get("FlagExpire")
-                    data_type_for_table[table_name] = data_type_id
+                    data_type_for_table[table_name] = current_dt_id
 
                     if flag_expire == 1 or flag_expire is True:
                         if table_name not in delete_records_by_table:
@@ -1098,43 +655,49 @@ class AvanpostSyncService:
                 async with db_manager.get_session() as session:
                     for table_name in delete_order:
                         records = delete_records_by_table[table_name]
-                        data_type_id = data_type_for_table.get(table_name)
+                        dt_id_raw = data_type_for_table.get(table_name)
 
-                        if data_type_id is None:
+                        if dt_id_raw is None:
                             app_logger.warning(f"⚠️ No data type ID found for table {table_name}, skipping")
                             continue
 
                         if not records:
                             continue
 
-                        model = self._get_model_by_data_type(data_type_id)
+                        dt_id_val_delete: int = dt_id_raw
+                        model = self._get_model_by_data_type(dt_id_val_delete)
                         if not model:
-                            app_logger.warning(f"⚠️ No model found for DataTypeId {data_type_id}")
+                            app_logger.warning(f"⚠️ No model found for DataTypeId {dt_id_val_delete}")
                             continue
 
                         model_columns = self._get_model_columns(model)
 
                         try:
-                            inserted, updated, unchanged, skipped_upsert, skipped_delete = await self.save_data_bulk(
-                                session,
-                                model,
-                                records,
-                                model_columns,
+                            result = await GenericRepository.save_data_bulk(
+                                session=session,
+                                model=model,
+                                records=records,
+                                model_columns=model_columns,
                                 force_delete=True,
                             )
                             stats.processed_data_types += 1
-                            if inserted > 0:
-                                stats.add_insert(table_name, inserted)
-                            if updated > 0:
-                                stats.add_update(table_name, updated)
-                            if unchanged > 0:
-                                stats.add_unchanged(table_name, unchanged)
-                            if skipped_upsert > 0:
-                                stats.add_skip_upsert(table_name, skipped_upsert)
-                            if skipped_delete > 0:
-                                stats.add_skip_delete(table_name, skipped_delete)
+                            if result["inserted"] > 0:
+                                stats.add_insert(table_name, result["inserted"])
+                            if result["updated"] > 0:
+                                stats.add_update(table_name, result["updated"])
+                            if result["unchanged"] > 0:
+                                stats.add_unchanged(table_name, result["unchanged"])
+                            if result["skipped_upsert"] > 0:
+                                stats.add_skip_upsert(table_name, result["skipped_upsert"])
+                            if result["skipped_delete"] > 0:
+                                stats.add_skip_delete(table_name, result["skipped_delete"])
                             app_logger.debug(
-                                f"🗑️ DELETE result for {table_name}: inserted={inserted}, updated={updated}, unchanged={unchanged}, skipped_upsert={skipped_upsert}, skipped_delete={skipped_delete}"
+                                f"🗑️ DELETE result for {table_name}: "
+                                f"inserted={result['inserted']}, "
+                                f"updated={result['updated']}, "
+                                f"unchanged={result['unchanged']}, "
+                                f"skipped_upsert={result['skipped_upsert']}, "
+                                f"skipped_delete={result['skipped_delete']}"
                             )
                         except Exception as e:
                             stats.add_error(table_name, str(e))
@@ -1145,18 +708,19 @@ class AvanpostSyncService:
                 async with db_manager.get_session() as session:
                     for table_name in upsert_order:
                         records = upsert_records_by_table[table_name]
-                        data_type_id = data_type_for_table.get(table_name)
+                        dt_id_raw = data_type_for_table.get(table_name)
 
-                        if data_type_id is None:
+                        if dt_id_raw is None:
                             app_logger.warning(f"⚠️ No data type ID found for table {table_name}, skipping")
                             continue
 
                         if not records:
                             continue
 
-                        model = self._get_model_by_data_type(data_type_id)
+                        dt_id_val_upsert: int = dt_id_raw
+                        model = self._get_model_by_data_type(dt_id_val_upsert)
                         if not model:
-                            app_logger.warning(f"⚠️ No model found for DataTypeId {data_type_id}")
+                            app_logger.warning(f"⚠️ No model found for DataTypeId {dt_id_val_upsert}")
                             continue
 
                         # Фильтр записей с NULL в обязательных полях
@@ -1184,29 +748,33 @@ class AvanpostSyncService:
 
                         model_columns = self._get_model_columns(model)
 
-                        # Вызов save_data_bulk
                         try:
-                            inserted, updated, unchanged, skipped_upsert, skipped_delete = await self.save_data_bulk(
-                                session,
-                                model,
-                                filtered_records,
-                                model_columns,
+                            result = await GenericRepository.save_data_bulk(
+                                session=session,
+                                model=model,
+                                records=filtered_records,
+                                model_columns=model_columns,
                                 force_delete=False,
                             )
                             stats.processed_data_types += 1
-                            if inserted > 0:
-                                stats.add_insert(table_name, inserted)
-                            if updated > 0:
-                                stats.add_update(table_name, updated)
-                            if unchanged > 0:
-                                stats.add_unchanged(table_name, unchanged)
-                            if skipped_upsert > 0:
-                                stats.add_skip_upsert(table_name, skipped_upsert)
-                            if skipped_delete > 0:
-                                stats.add_skip_delete(table_name, skipped_delete)
+                            if result["inserted"] > 0:
+                                stats.add_insert(table_name, result["inserted"])
+                            if result["updated"] > 0:
+                                stats.add_update(table_name, result["updated"])
+                            if result["unchanged"] > 0:
+                                stats.add_unchanged(table_name, result["unchanged"])
+                            if result["skipped_upsert"] > 0:
+                                stats.add_skip_upsert(table_name, result["skipped_upsert"])
+                            if result["skipped_delete"] > 0:
+                                stats.add_skip_delete(table_name, result["skipped_delete"])
 
                             app_logger.debug(
-                                f"✅ UPSERT result for {table_name}: inserted={inserted}, updated={updated}, unchanged={unchanged}, skipped_upsert={skipped_upsert}, skipped_delete={skipped_delete}"
+                                f"✅ UPSERT result for {table_name}: "
+                                f"inserted={result['inserted']}, "
+                                f"updated={result['updated']}, "
+                                f"unchanged={result['unchanged']}, "
+                                f"skipped_upsert={result['skipped_upsert']}, "
+                                f"skipped_delete={result['skipped_delete']}"
                             )
                         except Exception as e:
                             stats.add_error(table_name, str(e))
@@ -1218,7 +786,6 @@ class AvanpostSyncService:
                 app_logger.debug("ℹ️ No data received from procedure")
 
             # Обновление времени для всех запрошенных типов
-
             if sync_times:
                 await self._update_sync_times(sync_times)
                 app_logger.info(f"✅ Updated sync times for {len(sync_times)} data types (all requested)")
@@ -1292,9 +859,9 @@ class AvanpostSyncService:
                 all_requested_types.update(chunk)
 
                 chunk_min_time = None
-                for dt_id in chunk:
-                    if dt_id in last_sync_by_type:
-                        sync_time = last_sync_by_type[dt_id]
+                for dt_id_chunk in chunk:
+                    if dt_id_chunk in last_sync_by_type:
+                        sync_time = last_sync_by_type[dt_id_chunk]
                         if chunk_min_time is None or sync_time < chunk_min_time:
                             chunk_min_time = sync_time
 
@@ -1324,7 +891,14 @@ class AvanpostSyncService:
                         if valid_items:
                             app_logger.debug(f"📊 Chunk {idx + 1}: received {len(valid_items)} valid data type groups")
                             for item in valid_items:
-                                dt_id = item.get("DataTypeId")
+                                dt_id_raw = item.get("DataTypeId")
+                                if dt_id_raw is None:
+                                    app_logger.warning("⚠️ DataTypeId is None")
+                                    continue
+                                if not isinstance(dt_id_raw, int):
+                                    app_logger.warning(f"⚠️ DataTypeId is not int: {type(dt_id_raw)}")
+                                    continue
+                                dt_id: int = dt_id_raw
                                 records = item.get("Data", [])
                                 records_count = len(records) if isinstance(records, list) else 1 if records else 0
                                 app_logger.debug(f"  └─ DataTypeId {dt_id}: {records_count} records")
@@ -1359,10 +933,10 @@ class AvanpostSyncService:
                         records = data_item.get("Data", [])
 
                         if data_type_raw is not None:
-                            data_type_id = data_type_raw
-                            model = self._get_model_by_data_type(data_type_id)
+                            data_type_id_val = data_type_raw
+                            model = self._get_model_by_data_type(data_type_id_val)
                             model_name = (model.__name__ if model else "UNKNOWN") or "UNKNOWN"
-                            table_name = self.DATA_TYPE_MAPPING.get(data_type_id, "UNKNOWN")
+                            table_name = self._get_table_name(data_type_id_val) or "UNKNOWN"
                         else:
                             model_name = "UNKNOWN"
                             table_name = "UNKNOWN"
@@ -1380,7 +954,6 @@ class AvanpostSyncService:
                     app_logger.debug("=" * 80)
 
                 # Деление на DELETE и UPSERT
-                # FlagExpire на уровне DataTypeId - ЕДИНСТВЕННЫЙ сигнал на удаление
                 delete_records_by_table: dict[str, list[dict[str, Any]]] = {}
                 upsert_records_by_table: dict[str, list[dict[str, Any]]] = {}
                 delete_order: list[str] = []
@@ -1397,26 +970,30 @@ class AvanpostSyncService:
                         app_logger.warning("⚠️ DataTypeId is None")
                         continue
 
-                    data_type_id = data_type_raw
-                    if data_type_id not in self.user_data_types:
-                        app_logger.warning(f"⚠️ Skipping {data_type_id} (not in user_data_types)")
+                    # Проверка и приведение типа
+                    if not isinstance(data_type_raw, int):
+                        app_logger.warning(f"⚠️ DataTypeId is not int: {type(data_type_raw)}")
+                        continue
+
+                    current_dt_id: int = data_type_raw
+
+                    if current_dt_id not in self.user_data_types:
+                        app_logger.warning(f"⚠️ Skipping {current_dt_id} (not in user_data_types)")
                         continue
 
                     records = data_item.get("Data")
                     if not records:
                         continue
 
-                    table_name = self.DATA_TYPE_MAPPING.get(data_type_id) or "UNKNOWN"
+                    table_name = self._get_table_name(current_dt_id) or "UNKNOWN"
                     if table_name == "UNKNOWN":
-                        app_logger.warning(f"⚠️ No table mapping for DataTypeId {data_type_id}")
+                        app_logger.warning(f"⚠️ No table mapping for DataTypeId {current_dt_id}")
                         continue
 
-                    # ЕДИНСТВЕННЫЙ сигнал на удаление - FlagExpire на уровне DataTypeId
                     flag_expire = data_item.get("FlagExpire", False)
-                    data_type_for_table[table_name] = data_type_id
+                    data_type_for_table[table_name] = current_dt_id
 
                     if flag_expire == 1 or flag_expire is True:
-                        # ВСЕ записи этого типа идут на УДАЛЕНИЕ
                         if table_name not in delete_records_by_table:
                             delete_records_by_table[table_name] = []
                             delete_order.append(table_name)
@@ -1453,12 +1030,13 @@ class AvanpostSyncService:
                 # Удаление (DELETE)
                 for table_name in delete_order:
                     records = delete_records_by_table[table_name]
-                    data_type_id = data_type_for_table.get(table_name)
+                    dt_id_raw = data_type_for_table.get(table_name)
 
-                    if data_type_id is None or not records:
+                    if dt_id_raw is None or not records:
                         continue
 
-                    model = self._get_model_by_data_type(data_type_id)
+                    dt_id_val_user_delete: int = dt_id_raw
+                    model = self._get_model_by_data_type(dt_id_val_user_delete)
                     if not model:
                         continue
 
@@ -1466,26 +1044,31 @@ class AvanpostSyncService:
 
                     async with db_manager.get_session() as session:
                         try:
-                            inserted, updated, unchanged, skipped_upsert, skipped_delete = await self.save_data_bulk(
-                                session,
-                                model,
-                                records,
-                                model_columns,
+                            result = await GenericRepository.save_data_bulk(
+                                session=session,
+                                model=model,
+                                records=records,
+                                model_columns=model_columns,
                                 force_delete=True,
                             )
                             stats.processed_data_types += 1
-                            if inserted > 0:
-                                stats.add_insert(table_name, inserted)
-                            if updated > 0:
-                                stats.add_update(table_name, updated)
-                            if unchanged > 0:
-                                stats.add_unchanged(table_name, unchanged)
-                            if skipped_upsert > 0:
-                                stats.add_skip_upsert(table_name, skipped_upsert)
-                            if skipped_delete > 0:
-                                stats.add_skip_delete(table_name, skipped_delete)
+                            if result["inserted"] > 0:
+                                stats.add_insert(table_name, result["inserted"])
+                            if result["updated"] > 0:
+                                stats.add_update(table_name, result["updated"])
+                            if result["unchanged"] > 0:
+                                stats.add_unchanged(table_name, result["unchanged"])
+                            if result["skipped_upsert"] > 0:
+                                stats.add_skip_upsert(table_name, result["skipped_upsert"])
+                            if result["skipped_delete"] > 0:
+                                stats.add_skip_delete(table_name, result["skipped_delete"])
                             app_logger.debug(
-                                f"🗑️ DELETE result for {table_name}: inserted={inserted}, updated={updated}, unchanged={unchanged}, skipped_upsert={skipped_upsert}, skipped_delete={skipped_delete}"
+                                f"🗑️ DELETE result for {table_name}: "
+                                f"inserted={result['inserted']}, "
+                                f"updated={result['updated']}, "
+                                f"unchanged={result['unchanged']}, "
+                                f"skipped_upsert={result['skipped_upsert']}, "
+                                f"skipped_delete={result['skipped_delete']}"
                             )
                             await session.commit()
                         except Exception as e:
@@ -1496,12 +1079,13 @@ class AvanpostSyncService:
                 # Вставка/обновление (UPSERT)
                 for table_name in upsert_order:
                     records = upsert_records_by_table[table_name]
-                    data_type_id = data_type_for_table.get(table_name)
+                    dt_id_raw = data_type_for_table.get(table_name)
 
-                    if data_type_id is None or not records:
+                    if dt_id_raw is None or not records:
                         continue
 
-                    model = self._get_model_by_data_type(data_type_id)
+                    dt_id_val_user_upsert: int = dt_id_raw
+                    model = self._get_model_by_data_type(dt_id_val_user_upsert)
                     if not model:
                         continue
 
@@ -1533,27 +1117,32 @@ class AvanpostSyncService:
                             if not filtered_records:
                                 continue
 
-                            inserted, updated, unchanged, skipped_upsert, skipped_delete = await self.save_data_bulk(
-                                session,
-                                model,
-                                filtered_records,
-                                model_columns,
+                            result = await GenericRepository.save_data_bulk(
+                                session=session,
+                                model=model,
+                                records=filtered_records,
+                                model_columns=model_columns,
                                 force_delete=False,
                             )
                             stats.processed_data_types += 1
-                            if inserted > 0:
-                                stats.add_insert(table_name, inserted)
-                            if updated > 0:
-                                stats.add_update(table_name, updated)
-                            if unchanged > 0:
-                                stats.add_unchanged(table_name, unchanged)
-                            if skipped_upsert > 0:
-                                stats.add_skip_upsert(table_name, skipped_upsert)
-                            if skipped_delete > 0:
-                                stats.add_skip_delete(table_name, skipped_delete)
+                            if result["inserted"] > 0:
+                                stats.add_insert(table_name, result["inserted"])
+                            if result["updated"] > 0:
+                                stats.add_update(table_name, result["updated"])
+                            if result["unchanged"] > 0:
+                                stats.add_unchanged(table_name, result["unchanged"])
+                            if result["skipped_upsert"] > 0:
+                                stats.add_skip_upsert(table_name, result["skipped_upsert"])
+                            if result["skipped_delete"] > 0:
+                                stats.add_skip_delete(table_name, result["skipped_delete"])
 
                             app_logger.debug(
-                                f"✅ UPSERT result for {table_name}: inserted={inserted}, updated={updated}, unchanged={unchanged}, skipped_upsert={skipped_upsert}, skipped_delete={skipped_delete}"
+                                f"✅ UPSERT result for {table_name}: "
+                                f"inserted={result['inserted']}, "
+                                f"updated={result['updated']}, "
+                                f"unchanged={result['unchanged']}, "
+                                f"skipped_upsert={result['skipped_upsert']}, "
+                                f"skipped_delete={result['skipped_delete']}"
                             )
                             await session.commit()
                         except Exception as e:
@@ -1606,8 +1195,7 @@ class AvanpostSyncService:
         app_logger.info("🔄 Starting all users synchronization...")
 
         async with db_manager.get_session() as session:
-            result = await session.execute(select(AvanpostUserModel))
-            users = result.scalars().all()
+            users = await UserRepository.get_all_avanpost_users(session)
 
             app_logger.info(f"👥 Found {len(users)} users to sync")
 

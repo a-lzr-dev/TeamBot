@@ -28,7 +28,8 @@ class ChatRepository:
     """Репозиторий для работы с чатами (независимый)"""
 
     @staticmethod
-    def _parse_chat_type(chat_type: str | ChatType) -> ChatType:
+    @log_exceptions(db_logger)
+    async def _parse_chat_type(chat_type: str | ChatType) -> ChatType:
         """Безопасное преобразование chat_type в ChatType"""
         if isinstance(chat_type, ChatType):
             return chat_type
@@ -57,7 +58,8 @@ class ChatRepository:
         return ChatType.PRIVATE
 
     @staticmethod
-    def _parse_member_status(status: str | ChatMemberStatus) -> ChatMemberStatus:
+    @log_exceptions(db_logger)
+    async def _parse_member_status(status: str | ChatMemberStatus) -> ChatMemberStatus:
         """Безопасное преобразование status в ChatMemberStatus"""
         if isinstance(status, ChatMemberStatus):
             return status
@@ -92,7 +94,7 @@ class ChatRepository:
         session: AsyncSession, *, chat_id: int, chat_type: str, title: str | None = None, is_active: bool = True
     ) -> ChatModel:
         """Сохранение информации о чате"""
-        chat_type_enum = ChatRepository._parse_chat_type(chat_type)
+        chat_type_enum = await ChatRepository._parse_chat_type(chat_type)
 
         chat = ChatModel(FID=chat_id, FTitle=title, FType=chat_type_enum, FFlagActive=is_active)
 
@@ -106,7 +108,7 @@ class ChatRepository:
         session: AsyncSession, *, user_id: int, chat_id: int, status: str, is_active: bool = True
     ) -> ChatMemberModel:
         """Сохранение информации об участнике чата"""
-        status_enum = ChatRepository._parse_member_status(status)
+        status_enum: ChatMemberStatus = await ChatRepository._parse_member_status(status)
 
         member = await ChatRepository.get_chat_member_by_keys(session, user_id=user_id, chat_id=chat_id)
         if member:
@@ -130,7 +132,7 @@ class ChatRepository:
             .where(
                 ChatMemberModel.FK_User == user_id,
                 ChatMemberModel.FK_Chat == chat_id,
-                ChatMemberModel.FFlagActive,
+                ChatMemberModel.FFlagActive.is_(True),
             )
             .values(FFlagActive=False, FStatus=ChatMemberStatus.LEFT)
         )
@@ -203,14 +205,217 @@ class ChatRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def mark_message_deleted(
+    async def get_active_member_ids(
+        session: AsyncSession,
+        chat_id: int,
+    ) -> set[int]:
+        """
+        Получение ID активных участников чата.
+
+        Args:
+            session: Сессия БД
+            chat_id: ID чата
+
+        Returns:
+            set[int]: Множество ID активных участников
+        """
+        stmt = select(ChatMemberModel.FK_User).where(
+            ChatMemberModel.FK_Chat == chat_id,
+            ChatMemberModel.FFlagActive.is_(True),
+        )
+        result = await session.execute(stmt)
+        return {row[0] for row in result.all()}
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def deactivate_missing_members(
+        session: AsyncSession,
+        chat_id: int,
+        active_user_ids: set[int],
+    ) -> int:
+        """
+        Деактивация участников чата, которых нет в списке активных.
+
+        Args:
+            session: Сессия БД
+            chat_id: ID чата
+            active_user_ids: Множество ID активных пользователей
+
+        Returns:
+            int: Количество деактивированных участников
+        """
+        if not active_user_ids:
+            # Если список пуст - деактивируем всех
+            stmt = (
+                update(ChatMemberModel)
+                .where(
+                    ChatMemberModel.FK_Chat == chat_id,
+                    ChatMemberModel.FFlagActive.is_(True),
+                )
+                .values(
+                    FFlagActive=False,
+                    FStatus=ChatMemberStatus.LEFT,
+                )
+            )
+        else:
+            stmt = (
+                update(ChatMemberModel)
+                .where(
+                    ChatMemberModel.FK_Chat == chat_id,
+                    ChatMemberModel.FFlagActive.is_(True),
+                    ChatMemberModel.FK_User.not_in(active_user_ids),
+                )
+                .values(
+                    FFlagActive=False,
+                    FStatus=ChatMemberStatus.LEFT,
+                )
+            )
+
+        result = await session.execute(stmt)
+        await session.flush()
+
+        deleted = result.rowcount if hasattr(result, "rowcount") else 0
+        if deleted > 0:
+            db_logger.debug(f"🗑️ Deactivated {deleted} members in chat {chat_id}")
+
+        return deleted
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def update_members_status(
+        session: AsyncSession,
+        chat_id: int,
+        user_ids: list[int],
+        status: ChatMemberStatus,
+    ) -> int:
+        """
+        Массовое обновление статуса участников.
+
+        Args:
+            session: Сессия БД
+            chat_id: ID чата
+            user_ids: Список ID пользователей
+            status: Новый статус
+
+        Returns:
+            int: Количество обновленных участников
+        """
+        if not user_ids:
+            return 0
+
+        stmt = (
+            update(ChatMemberModel)
+            .where(
+                ChatMemberModel.FK_Chat == chat_id,
+                ChatMemberModel.FK_User.in_(user_ids),
+                ChatMemberModel.FFlagActive.is_(True),
+            )
+            .values(
+                FStatus=status,
+                FDateUpdated=datetime_now(),
+            )
+        )
+
+        result = await session.execute(stmt)
+        await session.flush()
+
+        updated = result.rowcount if hasattr(result, "rowcount") else 0
+        if updated > 0:
+            db_logger.debug(f"🔄 Updated {updated} members status to {status.value} in chat {chat_id}")
+
+        return updated
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def deactivate_missing_chats(
+        session: AsyncSession,
+        active_chat_ids: set[int],
+    ) -> int:
+        """
+        Деактивация чатов, которых нет в списке активных.
+
+        Args:
+            session: Сессия БД
+            active_chat_ids: Множество ID активных чатов
+
+        Returns:
+            int: Количество деактивированных чатов
+        """
+        if not active_chat_ids:
+            # Если список пуст - деактивируем все чаты
+            stmt = update(ChatModel).where(ChatModel.FFlagActive.is_(True)).values(FFlagActive=False)
+        else:
+            stmt = (
+                update(ChatModel)
+                .where(
+                    ChatModel.FFlagActive.is_(True),
+                    ChatModel.FID.not_in(active_chat_ids),
+                )
+                .values(FFlagActive=False)
+            )
+
+        result = await session.execute(stmt)
+        await session.flush()
+
+        deleted = result.rowcount if hasattr(result, "rowcount") else 0
+        if deleted > 0:
+            db_logger.debug(f"🗑️ Deactivated {deleted} chats")
+
+        return deleted
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def update_sync_time(
+        session: AsyncSession,
+        chat_id: int,
+    ) -> None:
+        """
+        Обновление времени синхронизации чата.
+
+        Args:
+            session: Сессия БД
+            chat_id: ID чата
+        """
+        stmt = update(ChatModel).where(ChatModel.FID == chat_id).values(FDateSynced=datetime_now())
+        await session.execute(stmt)
+        await session.flush()
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def update_member_sync_time(
+        session: AsyncSession,
+        user_id: int,
+        chat_id: int,
+    ) -> None:
+        """
+        Обновление времени синхронизации участника.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+            chat_id: ID чата
+        """
+        stmt = (
+            update(ChatMemberModel)
+            .where(
+                ChatMemberModel.FK_User == user_id,
+                ChatMemberModel.FK_Chat == chat_id,
+            )
+            .values(FDateUpdated=datetime_now())
+        )
+        await session.execute(stmt)
+        await session.flush()
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def deactivate_missing_chat_message(
         session: AsyncSession,
         message_id: int,
         chat_id: int | None = None,
         deleted_by_message_id: int | None = None,
         deleted_by_type: str = "system",
     ) -> bool:
-        """Отметить сообщение как удаленное"""
+        """Деактивация сообщения в чате"""
         try:
             query = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
             if chat_id is not None:
@@ -277,7 +482,7 @@ class ChatRepository:
         query = select(
             func.count(ChatMessageModel.FID).label("total_deleted"),
             func.date(ChatMessageModel.FDateDeleted).label("deleted_date"),
-        ).where(ChatMessageModel.FFlagDeleted)
+        ).where(ChatMessageModel.FFlagDeleted.is_(True))
 
         if chat_id is not None:
             query = query.where(ChatMessageModel.FK_Chat == chat_id)
@@ -295,8 +500,15 @@ class ChatRepository:
         total = 0
         by_day = {}
         for row in rows:
-            total += row.total_deleted or 0
-            by_day[str(row.deleted_date)] = row.total_deleted or 0
+            # Используем индексы для доступа к значениям
+            total_deleted = row[0]  # Первая колонка - total_deleted
+            deleted_date = row[1]  # Вторая колонка - deleted_date
+
+            if total_deleted is not None:
+                total += int(total_deleted)
+
+            if deleted_date:
+                by_day[str(deleted_date)] = int(total_deleted) if total_deleted is not None else 0
 
         return {
             "total": total,
@@ -310,7 +522,7 @@ class ChatRepository:
     ) -> list[dict[str, Any]]:
         """Получение удаленных сообщений с информацией об инициаторе удаления"""
         query = select(ChatMessageModel, ChatMessageModel.FK_DeletedByMessage.label("initiator_message_id")).where(
-            ChatMessageModel.FFlagDeleted
+            ChatMessageModel.FFlagDeleted.is_(True)
         )
 
         if chat_id is not None:
@@ -347,7 +559,7 @@ class ChatRepository:
     ) -> dict[str, Any]:
         """Статистика удалений по типу инициатора"""
         query = select(ChatMessageModel.FDeletedByType, func.count(ChatMessageModel.FID).label("count")).where(
-            ChatMessageModel.FFlagDeleted
+            ChatMessageModel.FFlagDeleted.is_(True)
         )
 
         if chat_id is not None:
@@ -365,9 +577,12 @@ class ChatRepository:
         by_type: dict[str, int] = {}
         total = 0
         for row in rows:
-            key = row.FDeletedByType or "unknown"
-            count = row.count or 0
-            by_type[key] = count
+            # Используем индексы для доступа к значениям
+            deleted_by_type = row[0] or "unknown"
+            count_value = row[1]
+
+            count = int(count_value) if count_value is not None else 0
+            by_type[deleted_by_type] = count
             total += count
 
         stats = {
@@ -383,7 +598,9 @@ class ChatRepository:
     async def restore_deleted_message(session: AsyncSession, message_id: int, chat_id: int | None = None) -> bool:
         """Восстановление удаленного сообщения"""
         try:
-            query = select(ChatMessageModel).where(ChatMessageModel.FID == message_id, ChatMessageModel.FFlagDeleted)
+            query = select(ChatMessageModel).where(
+                ChatMessageModel.FID == message_id, ChatMessageModel.FFlagDeleted.is_(True)
+            )
             if chat_id is not None:
                 query = query.where(ChatMessageModel.FK_Chat == chat_id)
 

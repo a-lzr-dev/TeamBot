@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ...exceptions import log_exceptions
 from ...logger import db_logger
@@ -81,7 +82,8 @@ class AutomationRequestRepository:
         """
         stmt = select(UserRequestAutomationModel).where(UserRequestAutomationModel.FID == request_id)
         result = await session.execute(stmt)
-        return result.scalar_one_or_none()  # type: ignore[no-any-return]
+        model: UserRequestAutomationModel | None = result.scalar_one_or_none()
+        return model
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -125,6 +127,7 @@ class AutomationRequestRepository:
         user_id: int | None = None,
         limit: int = 100,
         offset: int = 0,
+        load_user: bool = True,
     ) -> list[UserRequestAutomationModel]:
         """
         Получение всех заявок с фильтрацией.
@@ -136,11 +139,15 @@ class AutomationRequestRepository:
             user_id: Фильтр по пользователю
             limit: Лимит записей
             offset: Смещение
+            load_user: Подгружать имя пользователя (eager loading).
 
         Returns:
             list[UserRequestAutomationModel]: Список заявок
         """
         stmt = select(UserRequestAutomationModel)
+
+        if load_user:
+            stmt = stmt.options(selectinload(UserRequestAutomationModel.user))
 
         if status is not None:
             stmt = stmt.where(UserRequestAutomationModel.FStatus == status)
@@ -361,6 +368,19 @@ class AutomationRequestRepository:
         result = await session.execute(stmt)
         stats = result.first()
 
+        # ИСПРАВЛЕНО: проверка на None
+        if stats is None:
+            return {
+                "total": 0,
+                "new": 0,
+                "in_progress": 0,
+                "completed": 0,
+                "cancelled": 0,
+                "rejected": 0,
+                "by_priority": {},
+                "completion_rate": 0,
+            }
+
         # Статистика по приоритетам
         priority_stmt = select(
             UserRequestAutomationModel.FPriority,
@@ -374,15 +394,23 @@ class AutomationRequestRepository:
         priority_result = await session.execute(priority_stmt)
         by_priority = {row.FPriority.value: row.count for row in priority_result.all()}
 
+        # Безопасное получение значений с преобразованием в int
+        total = int(stats.total) if stats.total is not None else 0
+        new = int(stats.new) if stats.new is not None else 0
+        in_progress = int(stats.in_progress) if stats.in_progress is not None else 0
+        completed = int(stats.completed) if stats.completed is not None else 0
+        cancelled = int(stats.cancelled) if stats.cancelled is not None else 0
+        rejected = int(stats.rejected) if stats.rejected is not None else 0
+
         return {
-            "total": stats.total or 0,
-            "new": stats.new or 0,
-            "in_progress": stats.in_progress or 0,
-            "completed": stats.completed or 0,
-            "cancelled": stats.cancelled or 0,
-            "rejected": stats.rejected or 0,
+            "total": total,
+            "new": new,
+            "in_progress": in_progress,
+            "completed": completed,
+            "cancelled": cancelled,
+            "rejected": rejected,
             "by_priority": by_priority,
-            "completion_rate": (stats.completed / stats.total * 100) if stats.total else 0,
+            "completion_rate": (completed / total * 100) if total > 0 else 0,
         }
 
     @staticmethod

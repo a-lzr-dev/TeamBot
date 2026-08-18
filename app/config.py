@@ -3,6 +3,7 @@ import secrets
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,7 +38,8 @@ class Settings(BaseSettings):
 
     # ============ AVANPOST SYNC ============
 
-    # Автоматическая синхронизация данных Avanpost при старте приложения
+    # Автоматические действия при старте приложения
+    AVANPOST_AUTO_ADD_USERS_ON_START: list[int] = Field(default_factory=lambda: [])
     AVANPOST_AUTO_SYNC_ON_START: bool = True
 
     # Принудительная полная синхронизация (игнорировать кеш)
@@ -114,10 +116,10 @@ class Settings(BaseSettings):
     # Rate Limiting
     API_RATE_LIMIT: int = 100
     API_RATE_PERIOD: int = 60
-    TG_RATE_LIMIT: int = 10
-    TG_COMMAND_LIMIT: int = 5
-    TG_RATE_PERIOD: int = 60
-    TG_COMMAND_PERIOD: int = 10
+    BOT_RATE_LIMIT: int = 10
+    BOT_COMMAND_LIMIT: int = 5
+    BOT_RATE_PERIOD: int = 60
+    BOT_COMMAND_PERIOD: int = 10
 
     # ============ ШИФРОВАНИЕ ============
 
@@ -282,8 +284,43 @@ class Settings(BaseSettings):
                 if v.startswith("[") and v.endswith("]"):
                     result = ast.literal_eval(v)
                     if isinstance(result, list):
-                        return [int(x) for x in result]
+                        parsed_result: list[int] = [int(x) for x in result]
+                        return parsed_result
                 # Если через запятую
+                elif "," in v:
+                    parts = v.split(",")
+                    result_list: list[int] = []
+                    for part in parts:
+                        part = part.strip()
+                        if part:
+                            try:
+                                result_list.append(int(part))
+                            except ValueError:
+                                continue
+                    return result_list
+                # Если просто число
+                try:
+                    return [int(v)]
+                except ValueError:
+                    return []
+            except (ValueError, SyntaxError):
+                return []
+        return []
+
+    @field_validator("AVANPOST_AUTO_ADD_USERS_ON_START", mode="before")
+    @classmethod
+    def parse_avanpost_users_list(cls, v: str | list[int] | None) -> list[int]:
+        """Парсинг списка пользователей Avanpost из строки в список"""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                if v.startswith("[") and v.endswith("]"):
+                    result: Any = ast.literal_eval(v)
+                    if isinstance(result, list):
+                        return [int(x) for x in result if isinstance(x, int | str)]
                 elif "," in v:
                     parts = v.split(",")
                     result = []
@@ -295,14 +332,8 @@ class Settings(BaseSettings):
                             except ValueError:
                                 continue
                     return result  # type: ignore[no-any-return]
-                # Если просто число
-                try:
-                    return [int(v)]
-                except ValueError:
-                    return []
             except (ValueError, SyntaxError):
                 return []
-        # Эта ветка никогда не должна достигаться, но mypy требует возврата
         return []
 
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")

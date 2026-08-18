@@ -1,7 +1,7 @@
 from .api import APILoggingMiddleware as APILoggingMiddleware
 from .api import APIRateLimitMiddleware as APIRateLimitMiddleware
 from .api import AuthMiddleware, ExceptionHandlerMiddleware, MetricsMiddleware
-from .tg import (
+from .bot import (
     ChatActivityMiddleware,
     DatabaseMiddleware,
     ErrorHandlerMiddleware,
@@ -11,8 +11,12 @@ from .tg import (
     get_user,
     get_user_id,
 )
-from .tg import LoggingMiddleware as TGLoggingMiddleware
-from .tg import RateLimitMiddleware as TGRateLimitMiddleware
+from .bot import (
+    LoggingMiddleware as TGLoggingMiddleware,
+)
+from .bot import (
+    RateLimitMiddleware as TGRateLimitMiddleware,
+)
 
 __all__ = [
     # API Middleware

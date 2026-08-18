@@ -1,7 +1,7 @@
 # ============================================================
 # TeamBot Run Script
 # ============================================================
-# Использование: ./run.sh [--mode full|api|tg|dev]
+# Использование: ./run.sh [--mode full|api|bot|dev]
 # ============================================================
 
 set -e
@@ -328,7 +328,7 @@ main() {
                 echo "Использование: $0 [OPTIONS]"
                 echo ""
                 echo "Опции:"
-                echo "  --mode MODE     Режим запуска (full|api|tg|dev)"
+                echo "  --mode MODE     Режим запуска (full|api|bot|dev)"
                 echo "  --host HOST     Хост для API"
                 echo "  --port PORT     Порт для API"
                 echo "  --debug         Включить режим отладки"

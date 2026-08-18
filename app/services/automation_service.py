@@ -1,5 +1,3 @@
-# app/services/automation_service.py
-
 import asyncio
 import contextlib
 import sys
@@ -11,6 +9,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ..bot.dependencies import get_bot_manager
 from ..config import settings
 from ..db import AutomationRequestRepository, UserRepository, db_manager
 from ..exceptions import log_exceptions
@@ -537,10 +536,6 @@ class AutomationService:
                     session=new_session,
                 )
 
-        from sqlalchemy import select
-
-        from ..models import UserRequestAutomationModel
-
         # Преобразование статуса
         status_enum = None
         if status:
@@ -557,22 +552,14 @@ class AutomationService:
             except ValueError as priority_error:
                 app_logger.warning(f"⚠️ Invalid priority: {priority}, error: {priority_error}")
 
-        stmt = select(UserRequestAutomationModel).options(selectinload(UserRequestAutomationModel.user))
-
-        if user_id:
-            stmt = stmt.where(UserRequestAutomationModel.FK_User == user_id)
-
-        if status_enum:
-            stmt = stmt.where(UserRequestAutomationModel.FStatus == status_enum)
-
-        if priority_enum:
-            stmt = stmt.where(UserRequestAutomationModel.FPriority == priority_enum)
-
-        stmt = stmt.order_by(UserRequestAutomationModel.FCreatedAt.desc())
-        stmt = stmt.limit(limit).offset(offset)
-
-        result = await session.execute(stmt)
-        requests = result.scalars().all()
+        requests = await AutomationRequestRepository.get_all(
+            session=session,
+            status=status_enum,
+            priority=priority_enum,
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
 
         return [self._format_request(req) for req in requests]
 
@@ -916,8 +903,6 @@ class AutomationService:
             request: Модель заявки
         """
         try:
-            from ..tg import tg_manager
-
             # Получаем настройки для уведомлений
             chats = settings.automation_get_notification_chats
             topic_id = settings.automation_get_notification_topic
@@ -969,7 +954,8 @@ class AutomationService:
                 else:
                     app_logger.info(f"📨 Sending automation notification to chat {chat_id}")
 
-                send_result = await tg_manager.send_message(**send_kwargs)
+                bot_manager = get_bot_manager()
+                send_result = await bot_manager.send_message(**send_kwargs)
 
                 if send_result.get("success"):
                     app_logger.info(f"✅ Request notification sent to chat {chat_id}")

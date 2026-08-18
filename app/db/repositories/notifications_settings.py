@@ -26,7 +26,8 @@ class NotificationSettingsRepository:
         """
         stmt = select(ChatNotificationSettingsModel).where(ChatNotificationSettingsModel.FK_Chat == chat_id)
         result = await session.execute(stmt)
-        return result.scalar_one_or_none()  # type: ignore[no-any-return]
+        model: ChatNotificationSettingsModel | None = result.scalar_one_or_none()
+        return model
 
     @staticmethod
     @log_exceptions(db_logger)

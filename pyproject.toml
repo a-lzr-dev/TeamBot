@@ -4,17 +4,23 @@ version = "0.1.0"
 description = "TeamBot"
 requires-python = ">=3.14"
 dependencies = [
+    "aioodbc>=0.5.0",
     "aiogram>=3.30.0",
     "asyncpg>=0.31.0",
+    "cryptography>=50.0.0",
     "fastapi>=0.141.1",
     "psycopg2-binary>=2.9.12",
     "pydantic-settings>=2.15.0",
     "pyodbc>=5.3.0",
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.3",
     "python-multipart>=0.0.32",
-    "sqlalchemy>=2.0.51",
+    "sqlalchemy>=2.0.52",
     "telethon>=1.44.0",
-    "uvicorn>=0.52.1",
+    "uvicorn>=0.52.2",
+    "myapplication>=0.1.0",
+    "the-new-hotness>=1.4.1",
+    "mypy>=2.3.1",
+    "bcrypt>=5.0.0",
 ]
 
 # ========== КОНФИГУРАЦИЯ RUFF ==========
@@ -65,14 +71,17 @@ ignore_missing_imports = false
 
 [[tool.mypy.overrides]]
 module = [
-    "aiogram.*",
-    "pyodbc.*",
-    "telethon.*",
-]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "asyncpg.*",
+    "pythoncom",
+    "win32com",
+    "win32com.client",
+    "comtypes",
+    "comtypes.client",
+    "telethon",
+    "telethon.errors",
+    "telethon.events",
+    "telethon.events.common",
+    "telethon.tl.types",
+    "telethon.tl.functions.channels",
+    "telethon.tl.functions.messages",
 ]
 ignore_missing_imports = true

@@ -98,6 +98,32 @@ class UserRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
+    async def get_all_avanpost_users(
+        session: AsyncSession,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AvanpostUserModel]:
+        """
+        Получение всех пользователей Avanpost (TAvanpostUsers).
+
+        Args:
+            session: Сессия БД
+            limit: Лимит записей
+            offset: Смещение
+
+        Returns:
+            list[AvanpostUserModel]: Список пользователей Avanpost
+        """
+        stmt = select(AvanpostUserModel).order_by(AvanpostUserModel.FID).offset(offset)
+
+        if limit:
+            stmt = stmt.limit(limit)
+
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    @log_exceptions(db_logger)
     async def get_user_by_id(session: AsyncSession, user_id: int) -> UserModel | None:
         """Получение пользователя по FID"""
         if not user_id or user_id <= 0:
@@ -135,6 +161,23 @@ class UserRepository:
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
         return users
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_authorized_users_count(session: AsyncSession) -> int:
+        """
+        Получение количества авторизованных пользователей
+        (у которых есть связь с AvanpostUser).
+
+        Args:
+            session: Сессия БД
+
+        Returns:
+            int: Количество авторизованных пользователей
+        """
+        stmt = select(func.count()).select_from(AvanpostUserModel).where(AvanpostUserModel.FK_User.is_not(None))
+        result = await session.execute(stmt)
+        return result.scalar() or 0
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -238,8 +281,8 @@ class UserRepository:
         try:
             stmt = select(AvanpostUserModel).where(AvanpostUserModel.FK_User == telegram_user_id)
             result = await session.execute(stmt)
-            return result.scalar_one_or_none()  # type: ignore[no-any-return]
-
+            user: AvanpostUserModel | None = result.scalar_one_or_none()
+            return user
         except Exception as e:
             db_logger.error(f"❌ Failed to get Avanpost user by Telegram ID: {e}", exc_info=True)
             return None
@@ -362,30 +405,15 @@ class UserRepository:
     ) -> tuple[bool, AvanpostUserModel | None]:
         """
         Создание или обновление связи пользователя с Avanpost.
-        Сначала проверяет существование записи, если есть - обновляет, если нет - создает.
-
-        Args:
-            session: Сессия БД
-            telegram_user_id: ID пользователя в Telegram
-            avanpost_user_id: ID пользователя в Avanpost
-            fk_contact: ID контакта
-            fk_language: Код языка
-            fk_menugroup: ID группы меню
-            fk_owner: ID владельца
-            fk_motorcade: ID моторкада
-            fname: Имя
-            fphone: Телефон
-
-        Returns:
-            tuple[bool, AvanpostUserModel | None]: (успех, модель пользователя)
+        Сначала проверяет существование записи по FID, если есть - обновляет, если нет - создает.
         """
         if not avanpost_user_id or avanpost_user_id <= 0:
             db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
             return False, None
 
-        if not telegram_user_id or telegram_user_id <= 0:
-            db_logger.error(f"❌ Invalid telegram_user_id: {telegram_user_id}")
-            return False, None
+        #        if not telegram_user_id or telegram_user_id <= 0:
+        #            db_logger.error(f"❌ Invalid telegram_user_id: {telegram_user_id}")
+        #            return False, None
 
         try:
             # 1. Проверка существования пользователя в TUsers
@@ -394,11 +422,15 @@ class UserRepository:
                 db_logger.error(f"❌ User {telegram_user_id} not found")
                 return False, None
 
-            # 2. Проверка существования AvanpostUser
-            avanpost_user = await UserRepository.get_avanpost_user_by_telegram_id(session, telegram_user_id)
+            # 2. Проверка существования записи в TAvanpostUsers по FID (а не по FK_User!)
+            stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
+            result = await session.execute(stmt)
+            avanpost_user = result.scalar_one_or_none()
 
             if avanpost_user:
-                # Обновление существующей записи
+                # ОБНОВЛЕНИЕ существующей записи
+                db_logger.info(f"🔄 Updating existing AvanpostUser with FID={avanpost_user_id}")
+
                 if fk_contact is not None:
                     avanpost_user.FK_Contact = fk_contact
                 if fk_menugroup is not None:
@@ -414,33 +446,32 @@ class UserRepository:
                 if fphone:
                     avanpost_user.FPhone = fphone[:30]
 
-                # Всегда обновляем связь с Telegram
+                # ВСЕГДА обновляем связь с Telegram пользователем
                 avanpost_user.FK_User = telegram_user_id
 
                 await session.flush()
                 db_logger.info(f"✅ Updated AvanpostUser {avanpost_user.FID} for user {telegram_user_id}")
                 return True, avanpost_user
 
-            # 3. Создание нового AvanpostUser
-            new_user = await UserRepository.create_avanpost_user(
-                session=session,
-                avanpost_user_id=avanpost_user_id,
-                fk_contact=fk_contact,
-                fk_language=fk_language,
-                fk_menugroup=fk_menugroup,
-                fk_owner=fk_owner,
-                fk_motorcade=fk_motorcade,
-                fname=fname,
-                fphone=fphone,
-                telegram_user_id=telegram_user_id,
-            )
+            # 3. СОЗДАНИЕ нового AvanpostUser (если записи с таким FID нет)
+            db_logger.info(f"🆕 Creating new AvanpostUser with FID={avanpost_user_id}")
 
-            if new_user:
-                db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
-                return True, new_user
-            else:
-                db_logger.error(f"❌ Failed to create AvanpostUser {avanpost_user_id}")
-                return False, None
+            new_user = AvanpostUserModel(
+                FID=avanpost_user_id,
+                FK_User=telegram_user_id,
+                FK_Contact=fk_contact,
+                FK_MenuGroup=fk_menugroup,
+                FK_Owner=fk_owner,
+                FK_MotorCade=fk_motorcade,
+                FK_Language=fk_language[:2] if fk_language else "RU",
+                FName=fname[:50] if fname else None,
+                FPhone=fphone[:30] if fphone else None,
+            )
+            session.add(new_user)
+            await session.flush()
+
+            db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
+            return True, new_user
 
         except Exception as e:
             db_logger.error(f"❌ Failed to create/update AvanpostUser: {e}", exc_info=True)
@@ -457,7 +488,8 @@ class UserRepository:
 
         stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_user))
         result = await session.execute(stmt)
-        return result.scalar_one_or_none()  # type: ignore[no-any-return]
+        user: UserModel | None = result.scalar_one_or_none()
+        return user
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -495,6 +527,7 @@ class UserRepository:
         session: AsyncSession,
         telegram_user_id: int,
         avanpost_user_id: int,
+        telegram_user_required: bool = True,
         fk_contact: int | None = None,
         fk_language: str = "RU",
         fk_menugroup: int | None = None,
@@ -511,7 +544,7 @@ class UserRepository:
             db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
             return False, None
 
-        if not telegram_user_id or telegram_user_id <= 0:
+        if telegram_user_required and (not telegram_user_id or telegram_user_id <= 0):
             db_logger.error(f"❌ Invalid telegram_user_id: {telegram_user_id}")
             return False, None
 
@@ -576,7 +609,8 @@ class UserRepository:
 
         user = await UserRepository.get_user_with_avanpost(session, user_id)
         if user and user.avanpost_user:
-            return user.avanpost_user.FK_MenuGroup  # type: ignore[no-any-return]
+            group_id: int | None = user.avanpost_user.FK_MenuGroup
+            return group_id
 
         return None
 
@@ -666,13 +700,13 @@ class UserRepository:
         try:
             stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_user))
             result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
+            user: UserModel | None = result.scalar_one_or_none()
 
             if user:
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
 
-            return user  # type: ignore[no-any-return]
+            return user
 
         except Exception as e:
             db_logger.error(f"❌ Failed to get authenticated user: {e}")

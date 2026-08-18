@@ -5,10 +5,10 @@ import sys
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from ..bot.dependencies import get_bot_manager
 from ..config import settings
 from ..logger import app_logger
 from ..models import ErrorCategory, ErrorSeverity, ErrorStatus, MessageType, datetime_now
-from ..tg.dependencies import get_tg_manager
 from .error_service import error_service
 
 if TYPE_CHECKING:
@@ -231,8 +231,7 @@ class LogHandlerService:
 
         category_map = {
             "api": ErrorCategory.TASK_EXECUTION,
-            "tg": ErrorCategory.TASK_EXECUTION,
-            "telegram": ErrorCategory.TASK_EXECUTION,
+            "bot": ErrorCategory.TASK_EXECUTION,
             "db": ErrorCategory.SYSTEM,
             "database": ErrorCategory.SYSTEM,
             "admin": ErrorCategory.SYSTEM,
@@ -293,22 +292,22 @@ class LogHandlerService:
             lifetime_seconds = getattr(settings, "ERROR_MESSAGE_LIFETIME_SECONDS", 604800)
 
             try:
-                status = await asyncio.shield(get_tg_manager().get_status())
+                status = await asyncio.shield(get_bot_manager().get_status())
                 if not status.get("is_running", False):
-                    app_logger.warning("⚠️ Telegram manager not running, skipping notification")
+                    app_logger.warning("⚠️ Bot manager not running, skipping notification")
                     return
             except asyncio.CancelledError:
                 app_logger.debug("ℹ️ get_status cancelled during shutdown")
                 return
             except Exception as e:
-                app_logger.warning(f"⚠️ Failed to check tg_manager status: {e}")
+                app_logger.warning(f"⚠️ Failed to check bot_manager status: {e}")
                 return
 
             if self._shutting_down:
                 app_logger.debug("ℹ️ Shutdown detected, cancelling notification sending")
                 return
 
-            tg_manager = get_tg_manager()
+            bot_manager = get_bot_manager()
 
             # Подготавка параметров к отправке
             send_kwargs = {
@@ -328,7 +327,7 @@ class LogHandlerService:
                 app_logger.debug(f"📨 Sending notification to chat {chat_id} (no specific topic for source: {source})")
 
             try:
-                result = await asyncio.shield(tg_manager.send_message(**send_kwargs))
+                result = await asyncio.shield(bot_manager.send_message(**send_kwargs))
 
                 if result.get("success"):
                     self._notification_stats["sent_notifications"] += 1
@@ -478,6 +477,25 @@ class LogHandlerService:
         )
 
         app_logger.info("⛔ LogHandlerService shut down")
+
+    async def set_shutting_down(self, value: bool = True) -> None:
+        """
+        Установка флага завершения работы.
+
+        Args:
+            value: Значение флага
+        """
+        self._shutting_down = value
+        app_logger.debug(f"ℹ️ Shutting down flag set to {value}")
+
+    async def is_shutting_down(self) -> bool:
+        """
+        Проверка, завершается ли сервис.
+
+        Returns:
+            bool: True если сервис завершается
+        """
+        return self._shutting_down
 
     async def get_stats(self) -> dict[str, int]:
         """
