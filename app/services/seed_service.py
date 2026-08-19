@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db import db_manager
-from ..db.repositories import SystemRepository, UserRepository
+from ..db.repositories import DirLanguageRepository, SystemRepository, UserRepository
 from ..logger import app_logger as logger
 from ..models.avanpost import (
     AVANPOST_MODEL_MAPPING,
@@ -63,7 +63,21 @@ class AvanpostSeedService:
             else:
                 logger.info("ℹ️ No new data types to create")
 
-            # 3. Заполнение TAvanpostSysUpdates для всех типов данных
+            # 3. Добавление пользователей из настроек
+            try:
+                user_ids = getattr(settings, "AVANPOST_AUTO_ADD_USERS_ON_START", [])
+                if user_ids:
+                    logger.info(f"👤 Adding Avanpost users from settings: {user_ids}")
+                    result = await AvanpostSeedService.seed_avanpost_users(session)
+                    added = [uid for uid, was_added in result.items() if was_added]
+                    if added:
+                        logger.info(f"✅ Successfully added Avanpost users: {added}")
+                    else:
+                        logger.warning("⚠️ No Avanpost users were added successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed to add Avanpost users: {e}", exc_info=True)
+
+            # 4. Заполнение TAvanpostSysUpdates для всех типов данных
             all_types = list(AVANPOST_MODEL_MAPPING.keys())
 
             created_count = await SystemRepository.create_sync_records_bulk(
@@ -73,7 +87,7 @@ class AvanpostSeedService:
             )
             logger.info(f"✅ Inserted {created_count} records into TAvanpostSysUpdates")
 
-            # 4. Заполнение TAvanpostSysUsersUpdates для существующих пользователей
+            # 5. Заполнение TAvanpostSysUsersUpdates для существующих пользователей
             users = await UserRepository.get_all_avanpost_users(session)
 
             if users:
@@ -111,6 +125,7 @@ class AvanpostSeedService:
     async def seed_avanpost_users(session: AsyncSession) -> dict[int, bool]:
         """
         Добавление пользователей Avanpost из настроек.
+        Использует DirLanguageRepository для работы с языками.
 
         Args:
             session: Сессия БД
@@ -126,6 +141,18 @@ class AvanpostSeedService:
 
         logger.info(f"👤 Adding Avanpost users from settings: {user_ids}")
 
+        # 1. Проверка и создание языка 'RU'
+        try:
+            lang_ru = await DirLanguageRepository.ensure_language(
+                session=session,
+                language_id="RU",
+                is_default=True,
+            )
+            logger.debug(f"✅ Language 'RU' ready (default={lang_ru.FFlagDefault})")
+        except Exception as e:
+            logger.error(f"❌ Failed to ensure language 'RU': {e}")
+
+        # 2. Добавление пользователей
         result = {}
         for user_id in user_ids:
             try:
@@ -153,6 +180,7 @@ class AvanpostSeedService:
             except Exception as e:
                 logger.error(f"❌ Error adding Avanpost user {user_id}: {e}")
                 result[user_id] = False
+                await session.rollback()
 
         await session.flush()
 
@@ -160,7 +188,7 @@ class AvanpostSeedService:
         if added:
             logger.info(f"✅ Successfully added Avanpost users: {added}")
         else:
-            logger.debug("ℹ️ No new Avanpost users were added")
+            logger.warning("⚠️ No Avanpost users were added successfully")
 
         return result
 

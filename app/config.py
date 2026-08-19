@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     AVANPOST_SYNC_ASYNC: bool = True
 
     # Синхронизация пользовательских данных
-    AVANPOST_SYNC_USERS: bool = False
+    AVANPOST_SYNC_USERS: bool = True
 
     # Требовать успешную синхронизацию для старта приложения
     AVANPOST_SYNC_REQUIRED: bool = False

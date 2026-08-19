@@ -263,6 +263,30 @@ def get_mode_description(mode: str, tables: list[str] | None = None) -> str:
     return descriptions.get(mode, "unknown")
 
 
+def prompt_confirmation(message: str, force: bool = False) -> bool:
+    """
+    Запрос подтверждения с возможностью принудительного пропуска.
+
+    Args:
+        message: Сообщение для подтверждения
+        force: Пропустить подтверждение
+
+    Returns:
+        bool: True если подтверждено, False если отменено
+    """
+    if force:
+        return True
+
+    print(f"\n⚠️  {message}")
+    print("   Введите 'yes' для подтверждения или 'no' для отмены: ", end="")
+    try:
+        response = input().strip().lower()
+        return response == "yes"
+    except (EOFError, KeyboardInterrupt):
+        print("\n❌ Отменено")
+        return False
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="Clean TeamBot database (main)",
@@ -303,6 +327,12 @@ async def main():
     print("  🗄️  TeamBot Database Cleanup (main DB)")
     print("=" * 70)
 
+    # Если не указан ни один режим, показываем справку и выходим
+    if not any([args.show, args.drop_all, args.all_data, args.users, args.tables]):
+        print("\n⚠️  Не указан режим работы!")
+        parser.print_help()
+        return 1
+
     # Определение режима
     if args.show:
         mode = "show"
@@ -316,10 +346,6 @@ async def main():
         mode = "tables"
     else:
         mode = "all_data"
-        print("\n⚠️  Режим не указан, используется --all-data")
-        print("   Используйте --users для очистки только данных пользователей")
-        print("   Используйте --drop-all для удаления всех таблиц")
-        print("   Используйте --show для просмотра статистики\n")
 
     try:
         await db_manager.initialize_all()
@@ -380,12 +406,21 @@ async def main():
                 print("\n⚠️⚠️⚠️  ВНИМАНИЕ! БУДУТ УДАЛЕНЫ ВСЕ ТАБЛИЦЫ!")
                 print("   Это приведет к полной потере структуры БД!")
 
-            if not args.force and not args.dry_run:
-                print("\n   Введите 'yes' для подтверждения: ", end="")
-                confirm = input().strip().lower()
-                if confirm != "yes":
-                    print("❌ Отменено")
-                    return 0
+            # Запрос подтверждения
+            if mode == "drop_all":
+                confirm_msg = "Вы уверены, что хотите УДАЛИТЬ ВСЕ ТАБЛИЦЫ? Это НЕОБРАТИМО!"
+            elif mode == "all_data":
+                confirm_msg = "Вы уверены, что хотите УДАЛИТЬ ВСЕ ДАННЫЕ из всех таблиц?"
+            elif mode == "users":
+                confirm_msg = "Вы уверены, что хотите УДАЛИТЬ ДАННЫЕ ПОЛЬЗОВАТЕЛЕЙ?"
+            elif mode == "tables":
+                confirm_msg = f"Вы уверены, что хотите ОЧИСТИТЬ таблицы: {', '.join(args.tables[:5])}{'...' if len(args.tables) > 5 else ''}?"
+            else:
+                confirm_msg = "Вы уверены, что хотите выполнить очистку?"
+
+            if not prompt_confirmation(confirm_msg, args.force):
+                print("❌ Операция отменена")
+                return 0
 
             # Выполнение очистки
             app_logger.info("🚀 Starting cleanup...")

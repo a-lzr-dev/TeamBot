@@ -1,6 +1,7 @@
 from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .chats import ChatRepository
+from .dirs import DirLanguageRepository
 from .errors import ErrorRepository
 from .errors_filters import ErrorFilterRepository
 from .generic import GenericRepository
@@ -15,6 +16,7 @@ __all__ = [
     "AvanpostRepository",
     "AutomationRequestRepository",
     "ChatRepository",
+    "DirLanguageRepository",
     "ErrorRepository",
     "ErrorFilterRepository",
     "GenericRepository",

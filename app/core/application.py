@@ -6,7 +6,7 @@ from ..api.manager import api_manager
 from ..bot.manager import bot_manager
 from ..config import settings
 from ..db.manager import db_manager
-from ..db.repositories import ReminderRepository, UserRepository
+from ..db.repositories import ReminderRepository
 from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import datetime_now
@@ -134,17 +134,17 @@ class ApplicationManager:
         else:
             app_logger.warning(f"⚠️ Unknown component: {component}")
 
-    # ==================== ЗАПУСК БАЗЫ ДАННЫХ (С ИСПРАВЛЕННЫМ ПОРЯДКОМ) ====================
+    # ==================== ЗАПУСК БАЗЫ ДАННЫХ (ПОСЛЕДОВАТЕЛЬНАЯ СИНХРОНИЗАЦИЯ) ====================
 
     async def _start_database(self) -> None:
         """
-        Запуск базы данных с правильным порядком:
+        Запуск базы данных с последовательной синхронизацией:
         1. Инициализация БД
         2. Создание таблиц
         3. SEED (системные данные)
-        4. SYNC BASE (справочники Avanpost)
+        4. SYNC BASE (справочники Avanpost) - СИНХРОННО!
         5. ADD USERS (добавление пользователей из настроек)
-        6. SYNC USERS (пользовательские данные Avanpost)
+        6. SYNC USERS (пользовательские данные Avanpost) - ОПЦИОНАЛЬНО, В ФОНЕ
         """
         app_logger.debug("🗄️ Starting database...")
 
@@ -156,7 +156,7 @@ class ApplicationManager:
         await self.db.init_tables(drop_first=False)
         app_logger.info("✅ Database tables created")
 
-        # 3. Заполнение систесмных данных
+        # 3. Заполнение системных данных
         try:
             await self.db.seed_tables()
             app_logger.info("✅ Seed data completed")
@@ -164,60 +164,45 @@ class ApplicationManager:
             app_logger.error(f"❌ Failed to seed data: {e}", exc_info=True)
             raise RuntimeError(f"Seed failed: {e}") from e
 
-        # 4. Синхронизация базовых данных из Avanpost
+        # 4. Синхронизация базовых данных (Синхронно)
         if getattr(settings, "AVANPOST_AUTO_SYNC_ON_START", True):
             try:
                 sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
-                sync_async = getattr(settings, "AVANPOST_SYNC_ASYNC", True)
                 sync_timeout = getattr(settings, "AVANPOST_SYNC_TIMEOUT", 300)
                 sync_required = getattr(settings, "AVANPOST_SYNC_REQUIRED", False)
 
-                app_logger.debug(f"🔄 Starting Avanpost base data sync (force={sync_force}, async={sync_async})...")
+                app_logger.debug(f"🔄 Starting Avanpost base data sync (force={sync_force}, sync=True)...")
 
-                if sync_async:
-                    # Фоновая синхронизация базовых данных
-                    task = asyncio.create_task(
-                        self._sync_avanpost_base_data(force=sync_force), name="avanpost_base_sync"
+                # ВАЖНО: Ждем завершения синхронизации справочников
+                try:
+                    await asyncio.wait_for(
+                        self._sync_avanpost_base_data(force=sync_force),
+                        timeout=sync_timeout if sync_timeout > 0 else None,
                     )
-                    self._tasks.append(task)
-                    app_logger.info("✅ Avanpost base data background sync started")
-                else:
-                    # Синхронная синхронизация (блокирующая)
-                    try:
-                        await asyncio.wait_for(
-                            self._sync_avanpost_base_data(force=sync_force),
-                            timeout=sync_timeout if sync_timeout > 0 else None,
-                        )
-                        app_logger.info("✅ Avanpost base data sync completed")
-                    except TimeoutError as err:
-                        error_msg = f"Avanpost base sync timed out after {sync_timeout}s"
-                        if sync_required:
-                            raise TimeoutError(error_msg) from err
-                        app_logger.error(f"❌ {error_msg}")
+                    app_logger.info("✅ Avanpost base data sync completed successfully")
+                except TimeoutError as err:
+                    error_msg = f"Avanpost base sync timed out after {sync_timeout}s"
+                    if sync_required:
+                        raise TimeoutError(error_msg) from err
+                    app_logger.error(f"❌ {error_msg}")
 
             except Exception as e:
                 app_logger.error(f"❌ Avanpost base sync error: {e}", exc_info=True)
                 if getattr(settings, "AVANPOST_SYNC_REQUIRED", False):
                     raise
 
-        # 5. Синхронизация пользовательских данных из Avanpost
+        # 5. Синхронизация пользовательских данных
         if getattr(settings, "AVANPOST_SYNC_USERS", False):
             try:
                 sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
-                sync_async = getattr(settings, "AVANPOST_SYNC_ASYNC", True)
-
                 app_logger.debug("👤 Starting Avanpost users data sync...")
 
-                if sync_async:
-                    task = asyncio.create_task(
-                        self._sync_avanpost_users_in_background(force=sync_force), name="avanpost_users_sync"
-                    )
-                    self._tasks.append(task)
-                    app_logger.info("✅ Avanpost users sync started in background")
-                else:
-                    await self._sync_avanpost_users(force=sync_force)
-                    app_logger.info("✅ Avanpost users sync completed")
-
+                # Запуск в фоне, чтобы не блокировать старт
+                task = asyncio.create_task(
+                    self._sync_avanpost_users_in_background(force=sync_force), name="avanpost_users_sync"
+                )
+                self._tasks.append(task)
+                app_logger.info("✅ Avanpost users sync started in background")
             except Exception as e:
                 app_logger.error(f"❌ Avanpost users sync error: {e}", exc_info=True)
 
@@ -232,7 +217,7 @@ class ApplicationManager:
 
     @staticmethod
     async def _sync_avanpost_base_data(force: bool = False) -> None:
-        """Синхронизация базовых данных Avanpost"""
+        """Синхронизация базовых данных Avanpost (справочники)."""
         try:
             from app.services.avanpost_sync_service import AvanpostSyncService
 
@@ -262,86 +247,8 @@ class ApplicationManager:
             raise
 
     @staticmethod
-    async def _add_avanpost_users() -> None:
-        """Добавление пользователей Avanpost из настроек"""
-        user_ids = getattr(settings, "AVANPOST_AUTO_ADD_USERS_ON_START", [])
-
-        if not user_ids:
-            app_logger.debug("ℹ️ No Avanpost users to add from settings")
-            return
-
-        app_logger.debug(f"👤 Adding Avanpost users from settings: {user_ids}")
-
-        try:
-            async with db_manager.get_session("main") as session:
-                # Проверка существования языков перед добавлением
-                from sqlalchemy import select
-
-                from app.models.avanpost import AvanpostDirLanguageModel
-
-                # Проверка, что язык RU существует
-                stmt = select(AvanpostDirLanguageModel).where(AvanpostDirLanguageModel.FID == "RU")
-                result = await session.execute(stmt)
-                lang_ru = result.scalar_one_or_none()
-
-                if not lang_ru:
-                    app_logger.warning("⚠️ Language 'RU' not found in TAvanpostDirLanguages!")
-                    app_logger.info("   Please run seed first or check Avanpost sync")
-                    # Создание языка RU
-                    try:
-                        from app.models.avanpost import AvanpostDirLanguageModel
-
-                        lang = AvanpostDirLanguageModel(FID="RU", FFlagDefault=True)
-                        session.add(lang)
-                        await session.flush()
-                        app_logger.info("✅ Created language 'RU'")
-                    except Exception as e:
-                        app_logger.error(f"❌ Failed to create language 'RU': {e}")
-                        return
-
-                result_dict = {}
-                for user_id in user_ids:
-                    try:
-                        success, user = await UserRepository.create_or_update_avanpost_user_upsert(
-                            session=session,
-                            telegram_user_id=None,
-                            avanpost_user_id=user_id,
-                            telegram_user_required=False,
-                            fk_contact=None,
-                            fk_language="RU",
-                            fk_menugroup=None,
-                            fk_owner=None,
-                            fk_motorcade=None,
-                            fname=f"User_{user_id}",
-                            fphone=None,
-                        )
-
-                        if success:
-                            result_dict[user_id] = True
-                            app_logger.info(f"✅ Added/updated Avanpost user {user_id}")
-                        else:
-                            result_dict[user_id] = False
-                            app_logger.warning(f"⚠️ Failed to add Avanpost user {user_id}")
-
-                    except Exception as e:
-                        app_logger.error(f"❌ Error adding Avanpost user {user_id}: {e}")
-                        await session.rollback()
-                        result_dict[user_id] = False
-
-                await session.commit()
-
-                added = [uid for uid, was_added in result_dict.items() if was_added]
-                if added:
-                    app_logger.info(f"✅ Successfully added Avanpost users: {added}")
-                else:
-                    app_logger.warning("⚠️ No Avanpost users were added successfully")
-
-        except Exception as e:
-            app_logger.error(f"❌ Failed to add Avanpost users: {e}", exc_info=True)
-
-    @staticmethod
     async def _sync_avanpost_users(force: bool = False) -> None:
-        """Синхронизация пользовательских данных Avanpost"""
+        """Синхронизация пользовательских данных Avanpost."""
         try:
             from app.services.avanpost_sync_service import AvanpostSyncService
 

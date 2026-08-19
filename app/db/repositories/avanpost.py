@@ -363,6 +363,8 @@ class AvanpostRepository:
         force: bool = False,
     ) -> dict[str, Any]:
         """Вызов хранимой процедуры ext.PA_avp_RSAppUserData_Load"""
+        import json
+
         params = {
             "UserId": user_id,
             "DataTypes": data_types,
@@ -400,12 +402,6 @@ class AvanpostRepository:
                             data = json.loads(trimmed)
                             db_logger.debug(f"🔍 Parsed JSON type: {type(data)}")
 
-                            # ============================================================
-                            # СТРУКТУРА ОТВЕТА: список с одним объектом
-                            # [{"SyncType":"User","UserId":3235,"SyncTime":"...","Data":[...],"Stats":{...}}]
-                            # ============================================================
-
-                            # Если ответ - список, берем первый элемент
                             if isinstance(data, list) and len(data) > 0:
                                 data = data[0]
                                 db_logger.debug(
@@ -418,7 +414,6 @@ class AvanpostRepository:
 
                             db_logger.debug(f"🔍 Parsed JSON keys: {list(data.keys())}")
 
-                            # Проверка наличия Data
                             if "Data" not in data:
                                 db_logger.warning(f"⚠️ No 'Data' field in response: {list(data.keys())}")
                                 return {"Data": []}
@@ -431,8 +426,7 @@ class AvanpostRepository:
 
                             db_logger.debug(f"🔍 Raw data length: {len(raw_data)}")
 
-                            # Группировка по DataTypeId
-                            data_by_type: dict[int, list[dict[str, Any]]] = {}
+                            result_data = []
 
                             for item in raw_data:
                                 if not isinstance(item, dict):
@@ -440,59 +434,39 @@ class AvanpostRepository:
                                     continue
 
                                 data_type_id = item.get("DataTypeId")
-
                                 if data_type_id is None:
                                     db_logger.warning(f"⚠️ DataTypeId is None for item: {list(item.keys())}")
                                     continue
 
                                 records = item.get("Data")
-
                                 if records is None:
                                     db_logger.debug(f"ℹ️ No records for DataTypeId {data_type_id}")
                                     continue
 
-                                # Инициализация списка для этого типа
-                                if data_type_id not in data_by_type:
-                                    data_by_type[data_type_id] = []
+                                flag_expire = item.get("FlagExpire", False)
 
-                                # Обработка records в зависимости от типа
-                                if isinstance(records, list):
-                                    for rec in records:
-                                        if isinstance(rec, dict):
-                                            data_by_type[data_type_id].append(rec)
-                                        else:
-                                            db_logger.warning(f"⚠️ Record is not dict: {type(rec)}")
-                                elif isinstance(records, dict):
-                                    data_by_type[data_type_id].append(records)
-                                else:
+                                if not isinstance(records, list | dict):
                                     db_logger.warning(f"⚠️ Unexpected records type: {type(records)}")
+                                    continue
 
-                            # Формирование результата с сохранением FlagExpire
-                            result_data = []
-                            for dt_id, records_list in data_by_type.items():
-                                if records_list:
-                                    # Поиск FlagExpire для этого типа в исходных данных
-                                    flag_expire = False
-                                    for item in raw_data:
-                                        if isinstance(item, dict) and item.get("DataTypeId") == dt_id:
-                                            flag_expire = item.get("FlagExpire", False)
-                                            break
-
-                                    result_data.append(
-                                        {"DataTypeId": dt_id, "Data": records_list, "FlagExpire": flag_expire}
-                                    )
-
-                            # Вывод деталей для отладки
-                            for item in result_data:
-                                records_len = len(item["Data"]) if isinstance(item["Data"], list) else 0
-                                db_logger.debug(
-                                    f"  └─ DataTypeId {item['DataTypeId']}: {records_len} records, FlagExpire={item['FlagExpire']}"
+                                result_data.append(
+                                    {
+                                        "DataTypeId": data_type_id,
+                                        "FlagExpire": flag_expire,
+                                        "Data": records,
+                                    }
                                 )
 
-                            # Проверка Stats из ответа
+                                records_count = len(records) if isinstance(records, list) else 1
+                                db_logger.debug(
+                                    f"  └─ DataTypeId {data_type_id}: {records_count} records, FlagExpire={flag_expire}"
+                                )
+
                             if "Stats" in data:
                                 stats = data["Stats"]
                                 db_logger.debug(f"📊 Stats from response: {stats}")
+
+                            db_logger.debug(f"📊 Total data blocks: {len(result_data)}")
 
                             return {"Data": result_data}
 

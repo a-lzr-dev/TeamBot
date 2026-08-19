@@ -872,7 +872,7 @@ class AvanpostUserChatLangModel(BaseModel):
     __table_args__ = (
         PrimaryKeyConstraint("FK_Parent", "FK_Lang", name="PK_AvanpostUsersChatsLangs"),
         ForeignKeyConstraint(
-            ["FK_Parent"], ["TAvanpostUsers.FID"], ondelete="CASCADE", name="FK_AvanpostUsersChatsLangs_Parent"
+            ["FK_Parent"], ["TAvanpostUsersChats.FID"], ondelete="CASCADE", name="FK_AvanpostUsersChatsLangs_Parent"
         ),
         ForeignKeyConstraint(
             ["FK_Lang"], ["TAvanpostDirLanguages.FID"], ondelete="CASCADE", name="FK_AvanpostUsersChatsLangs_Lang"
@@ -909,6 +909,12 @@ class AvanpostContactMsgModel(BaseModel):
         ),
         ForeignKeyConstraint(["FK_Link"], ["TAvanpostMsgs.FID"], ondelete="CASCADE", name="FK_Avp_ContactsMsgs_Link"),
         ForeignKeyConstraint(
+            ["FK_Direction", "FK_Type"],
+            ["TAvanpostDirContactsMsgsTypes.FK_Direction", "TAvanpostDirContactsMsgsTypes.FID"],
+            ondelete="SET NULL",
+            name="FK_Avp_ContactsMsgs_Type",
+        ),
+        ForeignKeyConstraint(
             ["FK_ContactAuthor"], ["TAvanpostContacts.FID"], ondelete="SET NULL", name="FK_Avp_ContactsMsgs_Author"
         ),
         ForeignKeyConstraint(
@@ -920,8 +926,11 @@ class AvanpostContactMsgModel(BaseModel):
     )
 
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    FK_Parent: Mapped[int] = mapped_column(Integer, nullable=False)
-    FK_Link: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    FK_Parent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    FK_Source: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    FK_Link: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    FK_Direction: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    FK_Type: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     FK_ContactAuthor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FK_ContactTarget: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FDate: Mapped[datetime] = mapped_column(DateTime, nullable=False)
@@ -943,6 +952,12 @@ class AvanpostContactMsgProcessModel(BaseModel):
             name="FK_Avp_ContactsMsgsProc_LinkSrc",
         ),
         ForeignKeyConstraint(
+            ["FK_Direction", "FK_ProcessType"],
+            ["TAvanpostDirContactsMsgsProcessTypes.FK_Direction", "TAvanpostDirContactsMsgsProcessTypes.FID"],
+            ondelete="SET NULL",
+            name="FK_Avp_ContactsMsgsProc_ProcessType",
+        ),
+        ForeignKeyConstraint(
             ["FK_ContactProcess"],
             ["TAvanpostContacts.FID"],
             ondelete="SET NULL",
@@ -954,11 +969,13 @@ class AvanpostContactMsgProcessModel(BaseModel):
 
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     FK_Parent: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    FK_Direction: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    FK_ProcessType: Mapped[int | None] = mapped_column(SmallInteger, nullable=False)
     FK_ContactLinkSource: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FK_ContactProcess: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FDate: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     FDateSend: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    FDateDelivery: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    FDateDelivery: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     FDateProcess: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     FFlagPrimary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -1468,6 +1485,11 @@ AVANPOST_USER_DATA_TYPES: list[int] = [
     508,  # Переводы заказов
     509,  # Связи заказов с заданиями
     510,  # Транспорт
+    601,  # Сообщения
+    602,  # Сообщения контактов
+    603,  # Обработки сообщений контактов
+    604,  # Связи чатов пользователей с сообщениями контактов
+    605,  # Связи пользователей с контрольными сообщениями
 ]
 
 
