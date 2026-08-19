@@ -140,7 +140,6 @@ class SystemRepository:
         await session.flush()
         await session.refresh(data_type)
 
-        db_logger.info(f"✅ Created data type {data_type_id}: {name}")
         return data_type
 
     @staticmethod

@@ -57,7 +57,6 @@ async def cmd_automation(message: Message, **_kwargs: Any) -> None:
     """Команда для вызова меню автоматизации"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -114,7 +113,6 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
     """Обработка колбэков автоматизации"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not callback.from_user:
         await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
         return
@@ -191,7 +189,6 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 parse_mode="Markdown",
             )
 
-            # ИСПРАВЛЕНО: проверка на callback.message
             if callback.message:
                 await callback.message.answer_document(document=pdf_file, caption=f"📄 {result['pdf_filename']}")
 
@@ -379,7 +376,6 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
     """Обработка документа для конвертации"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -391,7 +387,6 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
 
     user_id = message.from_user.id
 
-    # ИСПРАВЛЕНО: проверка на document
     document = message.document
     if not document:
         await bot_manager.send_answer(
@@ -408,7 +403,6 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
     file_name = document.file_name or ""
     file_ext = f".{file_name.split('.')[-1].lower()}" if file_name else ""
 
-    # ИСПРАВЛЕНО: проверка на None для file_name
     if not file_name:
         await bot_manager.send_answer(
             text="❌ **Имя файла не определено**\n\nПожалуйста, отправьте файл с корректным именем.",
@@ -433,7 +427,6 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
 
     # Проверка размера
     file_size = document.file_size
-    # ИСПРАВЛЕНО: проверка на None
     if file_size is None:
         await bot_manager.send_answer(
             text="❌ **Не удалось определить размер файла**",
@@ -460,7 +453,6 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
     await bot_manager.send_toast(text="🔄 Загрузка файла...", message=message)
 
     try:
-        # ИСПРАВЛЕНО: проверка на bot
         bot = message.bot
         if not bot:
             await bot_manager.send_answer(
@@ -537,7 +529,6 @@ async def handle_request_title(message: Message, state: FSMContext) -> None:
     """Обработка названия заявки"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -592,7 +583,6 @@ async def handle_request_description(message: Message, state: FSMContext) -> Non
     """Обработка описания заявки"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",

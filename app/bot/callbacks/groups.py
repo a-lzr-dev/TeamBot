@@ -21,7 +21,6 @@ class GroupCallbackHandler(BaseCallbackHandler):
         """Обработка колбэка группы"""
         callback_data = callback.data
 
-        # Исправлено: проверка на None
         if callback_data and callback_data.startswith(self.PREFIX_GROUP):
             return await self._handle_group(callback, state, **kwargs)
 
@@ -43,7 +42,6 @@ class GroupCallbackHandler(BaseCallbackHandler):
         await bot_manager.send_toast(event=callback)
 
         # Извлечение ID группы
-        # Исправлено: проверка на None
         callback_data = callback.data
         if not callback_data:
             await bot_manager.send_toast(text="❌ Не удалось определить действие.", event=callback)

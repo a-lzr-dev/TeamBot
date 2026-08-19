@@ -394,7 +394,6 @@ class ReminderRepository:
         if not values:
             return False
 
-        # Исправлено: используем правильный тип Update
         update_stmt = update(UserReminderModel).where(UserReminderModel.FID == reminder_id).values(**values)
         result = await session.execute(update_stmt)
         await session.commit()

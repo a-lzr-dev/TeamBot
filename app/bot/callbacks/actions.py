@@ -24,7 +24,6 @@ class ActionCallbackHandler(BaseCallbackHandler):
         """Обработка колбэка действия"""
         callback_data = callback.data
 
-        # Исправлено: проверка на None
         if not callback_data:
             bot_logger.warning("⚠️ Empty callback data")
             await CallbackHandler.answer(callback, "Неизвестное действие")
@@ -90,7 +89,6 @@ class ActionCallbackHandler(BaseCallbackHandler):
             )
             return
 
-        # Исправлено: проверка на None
         callback_data = callback.data
         if not callback_data:
             await bot_manager.send_toast(text="❌ Не удалось определить действие.", event=callback)
@@ -179,7 +177,6 @@ class ActionCallbackHandler(BaseCallbackHandler):
         from ..handlers.aiogram.actions import execute_action, show_menu
         from ..handlers.aiogram.auth import get_user_group_id
 
-        # Исправлено: проверка на None
         callback_data = callback.data
         if not callback_data:
             bot_logger.warning("⚠️ Empty callback data")

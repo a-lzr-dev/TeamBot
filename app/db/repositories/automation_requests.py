@@ -368,7 +368,6 @@ class AutomationRequestRepository:
         result = await session.execute(stmt)
         stats = result.first()
 
-        # ИСПРАВЛЕНО: проверка на None
         if stats is None:
             return {
                 "total": 0,

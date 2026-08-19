@@ -51,16 +51,15 @@ class SyncStatistics:
     tables_with_updates: set[str] = field(default_factory=set)
     tables_with_deletes: set[str] = field(default_factory=set)
     tables_with_errors: set[str] = field(default_factory=set)  # ErrTbl
-    tables_with_unchanged: set[str] = field(default_factory=set)
-    tables_with_skipped: set[str] = field(default_factory=set)
+    tables_with_unchanged_upserts: set[str] = field(default_factory=set)
+    tables_with_unchanged_deletes: set[str] = field(default_factory=set)
 
     # Количество записей
     total_inserted: int = 0  # Ins
     total_updated: int = 0  # Upd
     total_deleted: int = 0  # Del
-    total_unchanged: int = 0  # (не отображается в отчете)
-    total_skipped_upsert: int = 0  # UncUpd
-    total_skipped_delete: int = 0  # UncDel
+    total_unchanged_upsert: int = 0  # UncUpd
+    total_unchanged_delete: int = 0  # UncDel
     total_error_records: int = 0  # Err
 
     # Количество полученных записей
@@ -75,11 +74,10 @@ class SyncStatistics:
                 "inserted": 0,
                 "updated": 0,
                 "deleted": 0,
-                "errors": 0,  # ErrTbl - количество таблиц с ошибками
-                "error_records": 0,  # Err - количество записей с ошибками
-                "unchanged": 0,
-                "skipped_upsert": 0,
-                "skipped_delete": 0,
+                "errors": 0,
+                "error_records": 0,
+                "unchanged_upsert": 0,
+                "unchanged_delete": 0,
                 "received": 0,
                 "received_upsert": 0,
                 "received_delete": 0,
@@ -137,15 +135,15 @@ class SyncStatistics:
         if self._current_user_id is None:
             return
 
-        # Для каждой таблицы, где были изменения, увеличиваем users_ok
+        # Для каждой таблицы, где были изменения
         for table_name in self._current_table_has_changes:
             self.table_stats[table_name]["users_ok"] += 1
 
-        # Для каждой таблицы, где были ошибки, увеличиваем users_err
+        # Для каждой таблицы, где были ошибки
         for table_name in self._current_table_has_error:
             self.table_stats[table_name]["users_err"] += 1
 
-        # Сбрасываем флаги
+        # Сбрас флагов
         self._current_table_has_changes.clear()
         self._current_table_has_error.clear()
 
@@ -205,43 +203,34 @@ class SyncStatistics:
             self.table_stats[table_name]["deleted"] += count
             self._mark_table_change(table_name)
 
-    def add_unchanged(self, table_name: str, count: int = 1) -> None:
-        """Записи без изменений (пропущены)"""
+    def add_unchanged_upsert(self, table_name: str, count: int = 1) -> None:
+        """Записи UPSERT без изменений (пропущены)"""
         if count > 0:
-            self.tables_with_unchanged.add(table_name)
-            self.total_unchanged += count
-            self.table_stats[table_name]["unchanged"] += count
+            self.tables_with_unchanged_upserts.add(table_name)
+            self.total_unchanged_upsert += count
+            self.table_stats[table_name]["unchanged_upsert"] += count
 
-    def add_skip_upsert(self, table_name: str, count: int = 1) -> None:
-        """Пропущено из UPSERT (не вставлены/не обновлены из-за ошибок) -> UncUpd"""
+    def add_unchanged_delete(self, table_name: str, count: int = 1) -> None:
+        """Записи DELETE без изменений (пропущены)"""
         if count > 0:
-            self.tables_with_skipped.add(table_name)
-            self.total_skipped_upsert += count
-            self.table_stats[table_name]["skipped_upsert"] += count
+            self.tables_with_unchanged_deletes.add(table_name)
+            self.total_unchanged_delete += count
+            self.table_stats[table_name]["unchanged_delete"] += count
 
-    def add_skip_delete(self, table_name: str, count: int = 1) -> None:
-        """Пропущено из DELETE (не найдены для удаления) -> UncDel"""
-        if count > 0:
-            self.tables_with_skipped.add(table_name)
-            self.total_skipped_delete += count
-            self.table_stats[table_name]["skipped_delete"] += count
-
-    def add_error(self, table_name: str, error: str) -> None:
-        """
-        Добавление ошибки для таблицы.
-        Увеличивает счетчик таблиц с ошибками (ErrTbl).
-        """
+    def add_error(self, table_name: str, error: str, error_count: int = 1) -> None:
+        """Добавление ошибки для таблицы"""
         self.tables_with_errors.add(table_name)
         self.failed_data_types += 1
         self.table_stats[table_name]["errors"] += 1
+        self.total_error_records += error_count
+        self.table_stats[table_name]["error_records"] = (
+            self.table_stats[table_name].get("error_records", 0) + error_count
+        )
         self._mark_table_error(table_name)
         self.error_messages.append(f"[{table_name}] {error[:200]}")
 
     def add_error_records(self, table_name: str, count: int = 1) -> None:
-        """
-        Добавление количества записей с ошибками.
-        Увеличивает счетчик записей с ошибками (Err).
-        """
+        """Добавление количества записей с ошибками"""
         if count > 0:
             self.total_error_records += count
             self.table_stats[table_name]["error_records"] = self.table_stats[table_name].get("error_records", 0) + count
@@ -261,9 +250,8 @@ class SyncStatistics:
         self.total_inserted += other.total_inserted
         self.total_updated += other.total_updated
         self.total_deleted += other.total_deleted
-        self.total_unchanged += other.total_unchanged
-        self.total_skipped_upsert += other.total_skipped_upsert
-        self.total_skipped_delete += other.total_skipped_delete
+        self.total_unchanged_upsert += other.total_unchanged_upsert
+        self.total_unchanged_delete += other.total_unchanged_delete
         self.total_error_records += other.total_error_records
 
         self.total_received += other.total_received
@@ -275,8 +263,8 @@ class SyncStatistics:
         self.tables_with_updates.update(other.tables_with_updates)
         self.tables_with_deletes.update(other.tables_with_deletes)
         self.tables_with_errors.update(other.tables_with_errors)
-        self.tables_with_unchanged.update(other.tables_with_unchanged)
-        self.tables_with_skipped.update(other.tables_with_skipped)
+        self.tables_with_unchanged_upserts.update(other.tables_with_unchanged_upserts)
+        self.tables_with_unchanged_deletes.update(other.tables_with_deletes)
 
         # Объединение детальной статистики по таблицам
         for table_name, stats in other.table_stats.items():
@@ -304,14 +292,13 @@ class SyncStatistics:
             "tables_with_updates": sorted(self.tables_with_updates),
             "tables_with_deletes": sorted(self.tables_with_deletes),
             "tables_with_errors": sorted(self.tables_with_errors),
-            "tables_with_unchanged": sorted(self.tables_with_unchanged),
-            "tables_with_skipped": sorted(self.tables_with_skipped),
+            "tables_with_unchanged_upserts": sorted(self.tables_with_unchanged_upserts),
+            "tables_with_unchanged_deletes": sorted(self.tables_with_unchanged_deletes),
             "total_inserted": int(self.total_inserted),
             "total_updated": int(self.total_updated),
             "total_deleted": int(self.total_deleted),
-            "total_unchanged": int(self.total_unchanged),
-            "total_skipped_upsert": int(self.total_skipped_upsert),
-            "total_skipped_delete": int(self.total_skipped_delete),
+            "total_unchanged_upsert": int(self.total_unchanged_upsert),
+            "total_unchanged_delete": int(self.total_unchanged_delete),
             "total_error_records": int(self.total_error_records),
             "total_received": int(self.total_received),
             "total_received_upsert": int(self.total_received_upsert),
@@ -353,7 +340,8 @@ class SyncStatistics:
             self.total_inserted > 0
             or self.total_updated > 0
             or self.total_deleted > 0
-            or self.total_unchanged > 0
+            or self.total_unchanged_upsert > 0
+            or self.total_unchanged_delete > 0
             or self.total_error_records > 0
         )
         has_errors = len(self.error_messages) > 0 or len(self.tables_with_errors) > 0
@@ -386,8 +374,8 @@ class SyncStatistics:
             | set(self.tables_with_updates)
             | set(self.tables_with_deletes)
             | set(self.tables_with_errors)
-            | set(self.tables_with_unchanged)
-            | set(self.tables_with_skipped)
+            | set(self.tables_with_unchanged_upserts)
+            | set(self.tables_with_unchanged_deletes)
         )
 
         filtered_tables = []
@@ -399,9 +387,8 @@ class SyncStatistics:
                 or stats.get("deleted", 0) > 0
                 or stats.get("errors", 0) > 0
                 or stats.get("error_records", 0) > 0
-                or stats.get("skipped_upsert", 0) > 0
-                or stats.get("skipped_delete", 0) > 0
-                or stats.get("unchanged", 0) > 0
+                or stats.get("unchanged_upsert", 0) > 0
+                or stats.get("unchanged_delete", 0) > 0
             ):
                 filtered_tables.append(table)
 
@@ -449,9 +436,8 @@ class SyncStatistics:
         total_deleted = 0
         total_errors = 0  # ErrTbl
         total_error_records = 0  # Err
-        total_skipped_upsert = 0
-        total_skipped_delete = 0
-        total_unchanged = 0
+        total_unchanged_upsert = 0
+        total_unchanged_delete = 0
 
         for table in filtered_tables:
             stats = self.table_stats.get(table, {})
@@ -462,9 +448,8 @@ class SyncStatistics:
             deleted = stats.get("deleted", 0)
             errors = stats.get("errors", 0)  # ErrTbl
             error_records = stats.get("error_records", 0)  # Err
-            skipped_upsert = stats.get("skipped_upsert", 0)
-            skipped_delete = stats.get("skipped_delete", 0)
-            unchanged = stats.get("unchanged", 0)
+            unchanged_upsert = stats.get("unchanged_upsert", 0)
+            unchanged_delete = stats.get("unchanged_delete", 0)
             users_ok = stats.get("users_ok", 0)
             users_err = stats.get("users_err", 0)
 
@@ -477,17 +462,14 @@ class SyncStatistics:
             total_deleted += deleted
             total_errors += errors
             total_error_records += error_records
-            total_skipped_upsert += skipped_upsert
-            total_skipped_delete += skipped_delete
-            total_unchanged += unchanged
+            total_unchanged_upsert += unchanged_upsert
+            total_unchanged_delete += unchanged_delete
 
             if errors > 0 or error_records > 0:
                 status = "  ❌ ERROR"
             elif inserted > 0 or updated > 0 or deleted > 0:
                 status = "  ✅ OK"
-            elif skipped_upsert > 0 or skipped_delete > 0:
-                status = "  ⚠️ SKIP"
-            elif unchanged > 0:
+            elif unchanged_upsert > 0 or unchanged_delete > 0:
                 status = "  ⏭️  NONE"
             else:
                 continue
@@ -501,8 +483,8 @@ class SyncStatistics:
                 f"{deleted:>8} "
                 f"{error_records:>8} "
                 f"{errors:>8} "
-                f"{skipped_upsert:>8} "
-                f"{skipped_delete:>8} "
+                f"{unchanged_upsert:>8} "
+                f"{unchanged_delete:>8} "
                 f"{users_ok:>8} "
                 f"{users_err:>8} "
                 f"{status:<10}"
@@ -527,8 +509,8 @@ class SyncStatistics:
             f"{total_deleted:>8} "
             f"{total_error_records:>8} "
             f"{total_errors:>8} "
-            f"{total_skipped_upsert:>8} "
-            f"{total_skipped_delete:>8} "
+            f"{total_unchanged_upsert:>8} "
+            f"{total_unchanged_delete:>8} "
             f"{users_ok:>8} "
             f"{users_err:>8} "
             f"{status_text:<10}"
@@ -869,7 +851,7 @@ class AvanpostSyncService:
 
                         try:
                             # Используем GenericRepository.delete_records_bulk для удаления
-                            deleted, skipped, errors = await GenericRepository.delete_records_bulk(
+                            deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                                 session=session,
                                 model=model,
                                 records=clean_records,
@@ -878,18 +860,18 @@ class AvanpostSyncService:
                                 raise_on_error=False,
                             )
 
-                            # Обновляем статистику
+                            # Обновление статистики
                             if deleted > 0:
                                 stats.add_delete(table_name, deleted)
-                            if skipped > 0:
-                                stats.add_skip_delete(table_name, skipped)
+                            if unchanged > 0:
+                                stats.add_unchanged_delete(table_name, unchanged)
                             if errors > 0:
                                 stats.add_error_records(table_name, errors)
                                 stats.add_error(table_name, f"DELETE errors: {errors} records")
 
                             app_logger.debug(
                                 f"🗑️ DELETE result for {table_name}: "
-                                f"deleted={deleted}, skipped={skipped}, errors={errors}"
+                                f"deleted={deleted}, unchanged={unchanged}, errors={errors}"
                             )
 
                         except Exception as e:
@@ -929,7 +911,7 @@ class AvanpostSyncService:
                                 filtered_records.append(rec)
 
                         if len(filtered_records) < len(records):
-                            stats.add_skip_upsert(table_name, len(records) - len(filtered_records))
+                            stats.add_unchanged_upsert(table_name, len(records) - len(filtered_records))
                             app_logger.warning(
                                 f"⚠️ Filtered out {len(records) - len(filtered_records)} records with NULL in required fields "
                                 f"from {table_name}"
@@ -951,21 +933,16 @@ class AvanpostSyncService:
                             )
                             stats.processed_data_types += 1
 
-                            # ============================================================
-                            # ИСПРАВЛЕНО: корректная обработка статистики UPSERT
-                            # ============================================================
                             if result.get("inserted", 0) > 0:
                                 stats.add_insert(table_name, result["inserted"])
                             if result.get("updated", 0) > 0:
                                 stats.add_update(table_name, result["updated"])
                             if result.get("deleted", 0) > 0:
                                 stats.add_delete(table_name, result["deleted"])
-                            if result.get("unchanged", 0) > 0:
-                                stats.add_unchanged(table_name, result["unchanged"])
-                            if result.get("skipped_upsert", 0) > 0:
-                                stats.add_skip_upsert(table_name, result["skipped_upsert"])
-                            if result.get("skipped_delete", 0) > 0:
-                                stats.add_skip_delete(table_name, result["skipped_delete"])
+                            if result.get("unchanged_upsert", 0) > 0:
+                                stats.add_unchanged_upsert(table_name, result["unchanged_upsert"])
+                            if result.get("unchanged_delete", 0) > 0:
+                                stats.add_unchanged_delete(table_name, result["unchanged_delete"])
                             if result.get("error_records", 0) > 0:
                                 stats.add_error_records(table_name, result["error_records"])
 
@@ -974,9 +951,8 @@ class AvanpostSyncService:
                                 f"inserted={result.get('inserted', 0)}, "
                                 f"updated={result.get('updated', 0)}, "
                                 f"deleted={result.get('deleted', 0)}, "
-                                f"unchanged={result.get('unchanged', 0)}, "
-                                f"skipped_upsert={result.get('skipped_upsert', 0)}, "
-                                f"skipped_delete={result.get('skipped_delete', 0)}, "
+                                f"unchanged_upsert={result.get('unchanged_upsert', 0)}, "
+                                f"unchanged_delete={result.get('unchanged_delete', 0)}, "
                                 f"error_records={result.get('error_records', 0)}"
                             )
                         except Exception as e:
@@ -1025,9 +1001,7 @@ class AvanpostSyncService:
     # ==================== СИНХРОНИЗАЦИЯ ДАННЫХ ПОЛЬЗОВАТЕЛЯ ====================
 
     async def sync_user_data(self, user_id: int, force: bool = False, suppress_report: bool = True) -> SyncStatistics:
-        """
-        Синхронизация данных пользователя с детальной статистикой.
-        """
+        """Синхронизация данных пользователя с детальной статистикой"""
         import json
 
         stats = SyncStatistics()
@@ -1037,6 +1011,9 @@ class AvanpostSyncService:
         stats.set_current_user(user_id)
 
         app_logger.debug(f"🔄 Starting user data synchronization for user {user_id}...")
+
+        # Словарь для отслеживания типов данных, которые были обработаны без ошибок
+        successfully_processed_types: set[int] = set()
 
         try:
             last_sync_by_type = await self._get_sync_times_for_types(self.user_data_types, user_id)
@@ -1135,7 +1112,7 @@ class AvanpostSyncService:
                     delete_count = len(delete_records_by_table.get(table_name, []))
                     stats.add_received(table_name, upsert_count, delete_count)
 
-                # ============ DELETE (ИСПРАВЛЕНО) ============
+                # ============ DELETE ============
                 async with db_manager.get_session() as session:
                     for table_name in delete_order:
                         records = delete_records_by_table[table_name]
@@ -1149,10 +1126,8 @@ class AvanpostSyncService:
                         if not model:
                             continue
 
-                        # Получаем колонки первичного ключа
                         pk_columns = [col.name for col in model.__table__.primary_key.columns]
 
-                        # Оставляем только первичные ключи
                         clean_records = []
                         for rec in records:
                             if not isinstance(rec, dict):
@@ -1168,8 +1143,7 @@ class AvanpostSyncService:
                             continue
 
                         try:
-                            # Используем delete_records_bulk для удаления
-                            deleted, skipped, errors = await GenericRepository.delete_records_bulk(
+                            deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                                 session=session,
                                 model=model,
                                 records=clean_records,
@@ -1180,15 +1154,15 @@ class AvanpostSyncService:
 
                             if deleted > 0:
                                 stats.add_delete(table_name, deleted)
-                            if skipped > 0:
-                                stats.add_skip_delete(table_name, skipped)
+                            if unchanged > 0:
+                                stats.add_unchanged_delete(table_name, unchanged)
                             if errors > 0:
                                 stats.add_error_records(table_name, errors)
                                 stats.add_error(table_name, f"DELETE errors: {errors} records")
 
                             app_logger.debug(
                                 f"🗑️ DELETE result for {table_name}: "
-                                f"deleted={deleted}, skipped={skipped}, errors={errors}"
+                                f"deleted={deleted}, unchanged={unchanged}, errors={errors}"
                             )
 
                         except Exception as e:
@@ -1200,17 +1174,30 @@ class AvanpostSyncService:
                             await session.rollback()
 
                 # ============ UPSERT ============
+                # Множество типов данных, которые были обработаны (даже если данных не было)
+                processed_data_types: set[int] = set()
+
                 async with db_manager.get_session() as session:
                     for table_name in upsert_order:
                         records = upsert_records_by_table[table_name]
                         dt_id_raw = data_type_for_table.get(table_name)
 
-                        if dt_id_raw is None or not records:
+                        if dt_id_raw is None:
                             continue
 
-                        dt_id_val_user_upsert: int = dt_id_raw
-                        model = self._get_model_by_data_type(dt_id_val_user_upsert)
+                        # Отмечаем, что этот тип данных был обработан (даже если records пуст)
+                        processed_data_types.add(dt_id_raw)
+
+                        if not records:
+                            # Нет данных для обработки, но это не ошибка
+                            # Добавляем тип в список успешных (ошибок не было)
+                            successfully_processed_types.add(dt_id_raw)
+                            app_logger.debug(f"ℹ️ No data for DataTypeId {dt_id_raw}, marking as successful")
+                            continue
+
+                        model = self._get_model_by_data_type(dt_id_raw)
                         if not model:
+                            app_logger.warning(f"⚠️ No model found for DataTypeId {dt_id_raw}")
                             continue
 
                         model_columns = self._get_model_columns(model)
@@ -1222,39 +1209,21 @@ class AvanpostSyncService:
                         table_inserted = 0
                         table_updated = 0
                         table_deleted = 0
-                        table_skipped = 0
-                        table_unchanged = 0
+                        table_unchanged_updates = 0
+                        table_unchanged_deletes = 0
                         table_errors = 0
                         table_error_records = 0
+                        table_has_error = False  # Флаг ошибки в таблице
 
                         for chunk_idx in range(0, len(records), chunk_size):
                             chunk_records = records[chunk_idx : chunk_idx + chunk_size]
 
-                            # Фильтруем записи с NULL в обязательных полях
-                            required_fields = [col.name for col in model.__table__.columns if not col.nullable]
-
                             filtered_records = []
-                            skipped_records = []
 
                             for rec in chunk_records:
                                 if not isinstance(rec, dict):
                                     continue
-                                has_null = False
-                                for req_field in required_fields:
-                                    if req_field in rec and rec[req_field] is None:
-                                        has_null = True
-                                        break
-                                if has_null:
-                                    skipped_records.append(rec)
-                                else:
-                                    filtered_records.append(rec)
-
-                            if skipped_records:
-                                stats.add_skip_upsert(table_name, len(skipped_records))
-                                table_skipped += len(skipped_records)
-
-                            if not filtered_records:
-                                continue
+                                filtered_records.append(rec)
 
                             try:
                                 result = await GenericRepository.save_data_bulk(
@@ -1266,22 +1235,21 @@ class AvanpostSyncService:
                                     commit_chunks=True,
                                 )
 
-                                # Коммитим успешный чанк
+                                # Коммит успешного чанка
                                 await session.commit()
 
-                                # Обновляем статистику
+                                # Обновление статистики
                                 inserted = result.get("inserted", 0)
                                 updated = result.get("updated", 0)
                                 deleted = result.get("deleted", 0)
-                                unchanged = result.get("unchanged", 0)
-                                skipped_upsert = result.get("skipped_upsert", 0)
-                                skipped_delete = result.get("skipped_delete", 0)
+                                unchanged_upsert = result.get("unchanged_upsert", 0)
+                                unchanged_delete = result.get("unchanged_delete", 0)
                                 error_records = result.get("error_records", 0)
 
                                 table_inserted += inserted
                                 table_updated += updated
-                                table_skipped += skipped_upsert
-                                table_unchanged += unchanged
+                                table_unchanged_updates += unchanged_upsert
+                                table_unchanged_deletes += unchanged_delete
                                 table_error_records += error_records
 
                                 stats.processed_data_types += 1
@@ -1292,28 +1260,21 @@ class AvanpostSyncService:
                                     stats.add_update(table_name, updated)
                                 if deleted > 0:
                                     stats.add_delete(table_name, deleted)
-                                if unchanged > 0:
-                                    stats.add_unchanged(table_name, unchanged)
-                                if skipped_upsert > 0:
-                                    stats.add_skip_upsert(table_name, skipped_upsert)
-                                if skipped_delete > 0:
-                                    stats.add_skip_delete(table_name, skipped_delete)
+                                if unchanged_upsert > 0:
+                                    stats.add_unchanged_upsert(table_name, unchanged_upsert)
+                                if unchanged_delete > 0:
+                                    stats.add_unchanged_delete(table_name, unchanged_delete)
                                 if error_records > 0:
                                     stats.add_error_records(table_name, error_records)
-
-                                if chunk_size == 0:
-                                    app_logger.debug(
-                                        f"✅ Chunk {chunk_idx // chunk_size + 1}/{total_chunks} for {table_name}: "
-                                        f"inserted={inserted}, updated={updated}, deleted={deleted}, unchanged={unchanged}"
-                                    )
 
                             except Exception as e:
                                 table_errors += 1
                                 table_error_records += len(filtered_records)
+                                table_has_error = True
                                 await session.rollback()
 
                                 error_msg = f"Chunk {chunk_idx // chunk_size + 1}/{total_chunks} failed: {str(e)[:200]}"
-                                stats.add_error(table_name, error_msg)
+                                stats.add_error(table_name, error_msg, error_count=len(filtered_records))
 
                                 app_logger.error(
                                     f"❌ Failed to UPSERT {table_name} (chunk {chunk_idx // chunk_size + 1}/{total_chunks}): {e}"
@@ -1322,40 +1283,76 @@ class AvanpostSyncService:
                                     f"   Problematic records (first 3): {json.dumps(filtered_records[:3], ensure_ascii=False, default=str, indent=2)}"
                                 )
 
-                                # Пропускаем оставшиеся чанки при ошибке
+                                # Пропуск оставшихся чанков при ошибке
                                 break
 
-                        # Логируем итоги по таблице
-                        if table_inserted > 0 or table_updated > 0 or table_deleted > 0 or table_skipped > 0:
+                        # Если таблица обработана без ошибок, добавляем её в список успешных
+                        if not table_has_error:
+                            successfully_processed_types.add(dt_id_raw)
+
+                        # Логирование итогов по таблице
+                        if (
+                            table_inserted > 0
+                            or table_updated > 0
+                            or table_deleted > 0
+                            or table_unchanged_updates > 0
+                            or table_unchanged_deletes > 0
+                        ):
                             app_logger.info(
                                 f"✅ Table {table_name} completed: "
                                 f"inserted={table_inserted}, "
                                 f"updated={table_updated}, "
                                 f"deleted={table_deleted}, "
-                                f"skipped={table_skipped}, "
-                                f"unchanged={table_unchanged}, "
+                                f"unchanged_update={table_unchanged_updates}, "
+                                f"unchanged_delete={table_unchanged_deletes}, "
                                 f"errors={table_errors}, "
                                 f"error_records={table_error_records}"
                             )
                         elif table_errors > 0:
                             app_logger.warning(
-                                f"⚠️ Table {table_name} failed: {table_errors} chunks with errors, {table_skipped} skipped records"
+                                f"⚠️ Table {table_name} failed: {table_errors} chunks with errors, {table_error_records} skipped records"
                             )
+                        else:
+                            # Нет изменений и нет ошибок
+                            app_logger.debug(f"ℹ️ Table {table_name}: no changes detected")
 
-                current_time = datetime_now()
-                sync_times: dict[int, datetime] = {}
-
+                # ============================================================
+                # ⚠️ ВАЖНО: Добавляем ВСЕ запрошенные типы, которые НЕ БЫЛИ обработаны,
+                # но и не вызвали ошибок (типы, по которым не пришло данных)
+                # ============================================================
                 for dt_id in all_requested_types:
-                    sync_times[dt_id] = current_time
+                    if dt_id not in processed_data_types and dt_id not in successfully_processed_types:
+                        # Этот тип данных не пришел в ответе, но ошибок не было
+                        # Отмечаем его как успешно обработанный (данных нет, но это нормально)
+                        successfully_processed_types.add(dt_id)
+                        app_logger.debug(f"ℹ️ No data received for DataTypeId {dt_id}, marking as successful")
 
-                if sync_times:
-                    await self._update_sync_times(sync_times, user_id)
+                # Обновляем время синхронизации ДЛЯ ВСЕХ типов данных,
+                # которые были обработаны без ошибок (включая те, по которым не было данных)
+                if successfully_processed_types:
+                    current_time = datetime_now()
+                    sync_times: dict[int, datetime] = {}
 
-            # ============ ВАЖНО: возвращаем stats ВСЕГДА ============
+                    for dt_id in successfully_processed_types:
+                        sync_times[dt_id] = current_time
+
+                    if sync_times:
+                        await self._update_sync_times(sync_times, user_id)
+                        app_logger.debug(
+                            f"✅ Updated sync times for {len(sync_times)} successfully processed data types "
+                            f"for user {user_id}"
+                        )
+
+                # Логируем типы, которые были пропущены из-за ошибок
+                failed_types = all_requested_types - successfully_processed_types
+                if failed_types:
+                    app_logger.warning(
+                        f"⚠️ Sync times NOT updated for failed data types: {sorted(failed_types)} for user {user_id}"
+                    )
+
             stats.finish()
             stats.finalize_user()
 
-            # Если не было данных, но статистика пустая - все равно возвращаем stats
             return stats
 
         except Exception as e:
@@ -1416,9 +1413,8 @@ class AvanpostSyncService:
                 "total_inserted": all_stats.total_inserted,
                 "total_updated": all_stats.total_updated,
                 "total_deleted": all_stats.total_deleted,
-                "total_unchanged": all_stats.total_unchanged,
-                "total_skipped_upsert": all_stats.total_skipped_upsert,
-                "total_skipped_delete": all_stats.total_skipped_delete,
+                "total_unchanged_upsert": all_stats.total_unchanged_upsert,
+                "total_unchanged_delete": all_stats.total_unchanged_delete,
                 "total_received": all_stats.total_received,
                 "total_received_upsert": all_stats.total_received_upsert,
                 "total_received_delete": all_stats.total_received_delete,

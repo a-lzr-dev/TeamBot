@@ -39,7 +39,7 @@ class AvanpostSeedService:
             data_types_to_create = []
             for data_type_id, model in AVANPOST_MODEL_MAPPING.items():
                 if data_type_id not in existing_ids:
-                    # Определяем флаги на основе ID
+                    # Определение флагов на основе ID
                     user_related = data_type_id in AVANPOST_USER_DATA_TYPES
                     deferred_sync = data_type_id >= 700  # ID 701-704 - отложенная синхронизация
 
@@ -52,7 +52,6 @@ class AvanpostSeedService:
                             "FDeferredSync": deferred_sync,
                         }
                     )
-                    logger.info(f"➕ New type: {data_type_id} -> {model.__name__}")
 
             if data_types_to_create:
                 created_count = await SystemRepository.create_data_types_bulk(
@@ -143,12 +142,11 @@ class AvanpostSeedService:
 
         # 1. Проверка и создание языка 'RU'
         try:
-            lang_ru = await DirLanguageRepository.ensure_language(
+            await DirLanguageRepository.ensure_language(
                 session=session,
                 language_id="RU",
                 is_default=True,
             )
-            logger.debug(f"✅ Language 'RU' ready (default={lang_ru.FFlagDefault})")
         except Exception as e:
             logger.error(f"❌ Failed to ensure language 'RU': {e}")
 

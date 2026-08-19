@@ -60,13 +60,11 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
         if not text:
             await state.clear()
-            # ИСПРАВЛЕНО: проверка на callback.message
             if callback.message and hasattr(callback.message, "edit_text"):
                 await callback.message.edit_text("❌ Текст сообщения не найден.")
             return
 
         # Обновление сообщения о начале рассылки
-        # ИСПРАВЛЕНО: проверка на callback.message
         if callback.message and hasattr(callback.message, "edit_text"):
             await callback.message.edit_text("🔄 Начинаю рассылку...")
 
@@ -99,7 +97,6 @@ class AdminCallbackHandler(BaseCallbackHandler):
                 report += f"• ... и еще {len(result['failed_chats']) - 5} чатов\n"
 
         # Обновление сообщение с результатом
-        # ИСПРАВЛЕНО: проверка на callback.message
         if callback.message and hasattr(callback.message, "edit_text"):
             await callback.message.edit_text(report, parse_mode="Markdown")
 
@@ -130,7 +127,6 @@ class AdminCallbackHandler(BaseCallbackHandler):
             return
 
         try:
-            # ИСПРАВЛЕНО: проверка на bot
             bot = callback.bot
             if not bot:
                 await bot_manager.send_toast(text="❌ Бот не инициализирован.", event=callback)
@@ -148,7 +144,6 @@ class AdminCallbackHandler(BaseCallbackHandler):
                 if db_message:
                     db_message.FFlagDeleted = True
                     db_message.FDateDeleted = datetime_now()
-                    # ИСПРАВЛЕНО: проверка на callback.message
                     if callback.message:
                         db_message.FK_DeletedByMessage = callback.message.message_id
                     db_message.FDeletedByType = "admin"

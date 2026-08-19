@@ -119,7 +119,7 @@ class GenericRepository:
         Массовое удаление записей по первичному ключу с разбивкой на чанки.
 
         Returns:
-            tuple[int, int, int]: (удалено, пропущено (не найдены), ошибки)
+            tuple[int, int, int]: (удалено, без изменений (не найдены), ошибки)
         """
         if not records:
             return 0, 0, 0
@@ -157,7 +157,7 @@ class GenericRepository:
         )
 
         total_deleted = 0
-        total_skipped = 0
+        total_unchanged = 0
         total_errors = 0
 
         for i in range(0, len(delete_ids), safe_chunk_size):
@@ -170,7 +170,7 @@ class GenericRepository:
                     result = await session.execute(delete_stmt)
                     rowcount = result.rowcount if hasattr(result, "rowcount") else 0
                     total_deleted += rowcount
-                    total_skipped += len(chunk_ids) - rowcount
+                    total_unchanged += len(chunk_ids) - rowcount
                 except Exception as e:
                     LogHelper.log_batch_error_fast(
                         logger=db_logger,
@@ -197,7 +197,7 @@ class GenericRepository:
                         result = await session.execute(delete_stmt)
                         rowcount = result.rowcount if hasattr(result, "rowcount") else 0
                         total_deleted += rowcount
-                        total_skipped += len(chunk_ids) - rowcount
+                        total_unchanged += len(chunk_ids) - rowcount
                     except Exception as e:
                         LogHelper.log_batch_error_fast(
                             logger=db_logger,
@@ -210,7 +210,7 @@ class GenericRepository:
                             raise
                         total_errors += len(chunk_ids)
 
-        return total_deleted, total_skipped, total_errors
+        return total_deleted, total_unchanged, total_errors
 
     @staticmethod
     async def upsert_records_bulk(
@@ -223,53 +223,77 @@ class GenericRepository:
         raise_on_error: bool = False,
     ) -> dict[str, int]:
         """
-        Массовое обновление или вставка записей (UPSERT).
+        Массовое обновление или вставка записей (UPSERT) с корректным подсчётом статистики.
 
         Returns:
             dict: {
-                "inserted": количество вставленных,
-                "updated": количество обновленных,
-                "unchanged": количество без изменений,
-                "skipped": количество пропущенных из-за ошибок,
-                "error_records": количество записей с ошибками
+                "inserted": количество ВСТАВЛЕННЫХ записей (новые записи),
+                "updated": количество ОБНОВЛЕННЫХ записей (были изменения),
+                "unchanged": количество записей БЕЗ ИЗМЕНЕНИЙ (уже существовали и не изменились),
+                "error_records": количество записей с ошибками,
             }
         """
         if not records:
-            return {"inserted": 0, "updated": 0, "unchanged": 0, "skipped": 0, "error_records": 0}
+            return {"inserted": 0, "updated": 0, "unchanged": 0, "error_records": 0}
 
         if model_columns is None:
             model_columns = {column.name for column in model.__table__.columns}
 
+        # 1. Нормализация записей
+        normalized_records = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            # Конвертация типов данных
+            normalized_records.append(GenericRepository._convert_record_types(model, rec))
+
+        if not normalized_records:
+            return {"inserted": 0, "updated": 0, "unchanged": 0, "error_records": 0}
+
+        records = normalized_records
+
+        # 2. Определение безопасного размера чанка
         num_columns = len(model_columns)
         safe_chunk_size = GenericRepository._calculate_safe_chunk_size(
             chunk_size=chunk_size,
             num_columns=num_columns,
             operation_type="upsert",
         )
-
         select_chunk_size = min(safe_chunk_size, 1000)
+
+        # 3. Загрузка существующих записей из БД
+        # Использование словаря с нормализованными ключами
         existing_records: dict[Any, Any] = {}
-        existing_ids: set[Any] = set()
 
         if len(primary_keys) == 1:
             pk_col = getattr(model, primary_keys[0])
-            pk_values = [rec.get(primary_keys[0]) for rec in records if rec.get(primary_keys[0]) is not None]
+            # Сбор всех значений PK из записей
+            pk_values = set()
+            for rec in records:
+                pk_val = rec.get(primary_keys[0])
+                if pk_val is not None:
+                    pk_values.add(pk_val)
 
             if pk_values:
-                for i in range(0, len(pk_values), select_chunk_size):
-                    chunk = pk_values[i : i + select_chunk_size]
-                    select_stmt = select(model).where(pk_col.in_(chunk))
+                # Разбивка на чанки для SELECT
+                pk_list = list(pk_values)
+                for i in range(0, len(pk_list), select_chunk_size):
+                    chunk = pk_list[i : i + select_chunk_size]
                     try:
+                        select_stmt = select(model).where(pk_col.in_(chunk))
                         result = await session.execute(select_stmt)
                         db_records = result.scalars().all()
                         for db_rec in db_records:
-                            pk_val = getattr(db_rec, primary_keys[0])
-                            existing_records[pk_val] = db_rec
+                            db_pk_val = getattr(db_rec, primary_keys[0])
+                            # Сохранение с нормализованным ключом (как в БД)
+                            existing_records[db_pk_val] = db_rec
                     except Exception:
                         if raise_on_error:
                             raise
-                existing_ids = set(existing_records.keys())
+                        # При ошибке загрузки пропускаем чанк
+                        continue
         else:
+            # Составной первичный ключ
             all_keys: list[tuple[Any, ...]] = []
             for rec in records:
                 key_values = tuple(rec.get(pk) for pk in primary_keys)
@@ -286,89 +310,108 @@ class GenericRepository:
                         )
                         conditions.append(cond)
                     if conditions:
-                        select_stmt = select(model).where(or_(*conditions))
                         try:
+                            select_stmt = select(model).where(or_(*conditions))
                             result = await session.execute(select_stmt)
                             db_records = result.scalars().all()
                             for db_rec in db_records:
+                                # Формирование ключа как tuple
                                 key = tuple(getattr(db_rec, pk) for pk in primary_keys)
                                 existing_records[key] = db_rec
                         except Exception:
                             if raise_on_error:
                                 raise
+                            continue
 
-        insert_records = []
-        update_records = []
-        unchanged_records = []
+        # 4. Классификация записей
+        insert_records: list[dict[str, Any]] = []
+        update_records: list[dict[str, Any]] = []
+        unchanged_records: list[dict[str, Any]] = []
+        error_records: list[dict[str, Any]] = []
 
         for rec in records:
-            if len(primary_keys) == 1:
-                pk_val = rec.get(primary_keys[0])
-                if pk_val is not None and pk_val in existing_ids:
-                    db_rec = existing_records.get(pk_val)
-                    if db_rec:
-                        has_changes = False
-                        for col in model_columns:
-                            if col in primary_keys:
-                                continue
-                            new_val = rec.get(col)
-                            old_val = getattr(db_rec, col, None)
+            try:
+                # Поиск существующей записи
+                db_rec = None
+                found = False
 
-                            if isinstance(new_val, str) and isinstance(old_val, str):
-                                new_val = new_val.strip()
-                                old_val = old_val.strip()
-                            elif new_val is None and old_val is None:
-                                continue
-
-                            if new_val != old_val:
-                                has_changes = True
-                                break
-
-                        if has_changes:
-                            update_records.append(rec)
+                if len(primary_keys) == 1:
+                    pk_val = rec.get(primary_keys[0])
+                    if pk_val is not None:
+                        # Прямой поиск по точному значению
+                        if pk_val in existing_records:
+                            db_rec = existing_records[pk_val]
+                            found = True
                         else:
-                            unchanged_records.append(rec)
-                    else:
-                        insert_records.append(rec)
+                            # Поиск по строковому представлению (для разных типов)
+                            pk_str = str(pk_val)
+                            for existing_pk, existing_db_rec in existing_records.items():
+                                if str(existing_pk) == pk_str:
+                                    db_rec = existing_db_rec
+                                    found = True
+                                    break
                 else:
-                    insert_records.append(rec)
-            else:
-                pk_tuple = tuple(rec.get(pk) for pk in primary_keys)
-                if all(k is not None for k in pk_tuple):
-                    db_rec = existing_records.get(pk_tuple)
-                    if db_rec:
-                        has_changes = False
-                        for col in model_columns:
-                            if col in primary_keys:
-                                continue
-                            new_val = rec.get(col)
-                            old_val = getattr(db_rec, col, None)
-
-                            if isinstance(new_val, str) and isinstance(old_val, str):
-                                new_val = new_val.strip()
-                                old_val = old_val.strip()
-                            elif new_val is None and old_val is None:
-                                continue
-
-                            if new_val != old_val:
-                                has_changes = True
-                                break
-
-                        if has_changes:
-                            update_records.append(rec)
+                    # Составной ключ
+                    key_tuple = tuple(rec.get(pk) for pk in primary_keys)
+                    if all(k is not None for k in key_tuple):
+                        if key_tuple in existing_records:
+                            db_rec = existing_records[key_tuple]
+                            found = True
                         else:
-                            unchanged_records.append(rec)
-                    else:
-                        insert_records.append(rec)
-                else:
-                    insert_records.append(rec)
+                            # Поиск по строковому представлению для составного ключа
+                            key_str = tuple(str(k) for k in key_tuple)
+                            for existing_key, existing_db_rec in existing_records.items():
+                                if tuple(str(k) for k in existing_key) == key_str:
+                                    db_rec = existing_db_rec
+                                    found = True
+                                    break
 
+                if not found or db_rec is None:
+                    # Запись не найдена → INSERT
+                    insert_records.append(rec)
+                    continue
+
+                # 5. Проверка изменений
+                has_changes = False
+                for col in model_columns:
+                    if col in primary_keys:
+                        continue
+                    new_val = rec.get(col)
+                    old_val = getattr(db_rec, col, None)
+
+                    # Сравнение с учётом None и типов
+                    if new_val is None and old_val is None:
+                        continue
+                    if new_val is None or old_val is None:
+                        has_changes = True
+                        break
+
+                    # Для строк — обрезаем пробелы
+                    if isinstance(new_val, str) and isinstance(old_val, str):
+                        new_val = new_val.strip()
+                        old_val = old_val.strip()
+
+                    if new_val != old_val:
+                        has_changes = True
+                        break
+
+                if has_changes:
+                    update_records.append(rec)
+                else:
+                    unchanged_records.append(rec)
+
+            except Exception:
+                # Ошибка при классификации записи
+                error_records.append(rec)
+                if raise_on_error:
+                    raise
+
+        # 6. Выполнение UPSERT
         inserted = 0
         updated = 0
-        skipped = 0
-        error_records = 0
+        error_records_count = len(error_records)
 
-        # INSERT
+        # 6.1. INSERT (новые записи)
         if insert_records:
             for i in range(0, len(insert_records), safe_chunk_size):
                 batch = insert_records[i : i + safe_chunk_size]
@@ -376,19 +419,21 @@ class GenericRepository:
                     insert_stmt = pg_insert(model).values(batch)
                     if len(primary_keys) == 1:
                         insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=primary_keys)
+                    else:
+                        insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=primary_keys)
                     await session.execute(insert_stmt)
                     inserted += len(batch)
                 except Exception:
                     if raise_on_error:
                         raise
-                    skipped += len(batch)
-                    error_records += len(batch)
+                    error_records_count += len(batch)
 
-        # UPDATE
+        # 6.2. UPDATE (записи с изменениями)
         if update_records:
+            # Для UPDATE используем ON CONFLICT DO UPDATE
+            update_fields = [col for col in model_columns if col not in primary_keys]
             for i in range(0, len(update_records), safe_chunk_size):
                 batch = update_records[i : i + safe_chunk_size]
-                update_fields = [col for col in batch[0] if col not in primary_keys]
                 try:
                     if update_fields:
                         upsert_stmt = pg_insert(model).values(batch)
@@ -397,22 +442,20 @@ class GenericRepository:
                             set_={col: getattr(upsert_stmt.excluded, col) for col in update_fields},
                         )
                     else:
-                        upsert_stmt = pg_insert(model).values(batch)
-                        upsert_stmt = upsert_stmt.on_conflict_do_nothing()
+                        upsert_stmt = pg_insert(model).values(batch).on_conflict_do_nothing()
                     await session.execute(upsert_stmt)
                     updated += len(batch)
                 except Exception:
                     if raise_on_error:
                         raise
-                    skipped += len(batch)
-                    error_records += len(batch)
+                    error_records_count += len(batch)
 
+        # 7. Возврат статистики
         return {
             "inserted": inserted,
             "updated": updated,
             "unchanged": len(unchanged_records),
-            "skipped": skipped,
-            "error_records": error_records,
+            "error_records": error_records_count,
         }
 
     @staticmethod
@@ -442,9 +485,8 @@ class GenericRepository:
                 - inserted: количество вставленных записей
                 - updated: количество обновленных записей
                 - deleted: количество удаленных записей
-                - unchanged: количество записей без изменений
-                - skipped_upsert: количество пропущенных при UPSERT
-                - skipped_delete: количество пропущенных при DELETE
+                - unchanged_upsert: количество записей без изменений при UPSERT
+                - unchanged_delete: количество записей без изменений при DELETE
                 - error_records: количество записей с ошибками
 
         Note:
@@ -456,9 +498,8 @@ class GenericRepository:
                 "inserted": 0,
                 "updated": 0,
                 "deleted": 0,
-                "unchanged": 0,
-                "skipped_upsert": 0,
-                "skipped_delete": 0,
+                "unchanged_upsert": 0,
+                "unchanged_delete": 0,
                 "error_records": 0,
             }
 
@@ -471,9 +512,8 @@ class GenericRepository:
                 "inserted": 0,
                 "updated": 0,
                 "deleted": 0,
-                "unchanged": 0,
-                "skipped_upsert": 0,
-                "skipped_delete": 0,
+                "unchanged_upsert": 0,
+                "unchanged_delete": 0,
                 "error_records": 0,
             }
 
@@ -523,12 +563,11 @@ class GenericRepository:
                 if clean_record:
                     upsert_records.append(clean_record)
 
-        total_skipped_delete = 0
-        total_deleted = 0
         total_inserted = 0
         total_updated = 0
-        total_unchanged = 0
-        total_skipped_upsert = 0
+        total_deleted = 0
+        total_unchanged_upsert = 0
+        total_unchanged_delete = 0
         total_error_records = 0
 
         # DELETE
@@ -538,7 +577,7 @@ class GenericRepository:
                 for i in range(0, len(delete_records), delete_chunk_size):
                     chunk = delete_records[i : i + delete_chunk_size]
                     try:
-                        deleted, skipped, errors = await GenericRepository.delete_records_bulk(
+                        deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                             session=session,
                             model=model,
                             records=chunk,
@@ -547,7 +586,7 @@ class GenericRepository:
                             raise_on_error=False,
                         )
                         total_deleted += deleted
-                        total_skipped_delete += skipped
+                        total_unchanged_delete += unchanged
                         total_error_records += errors
                         if commit_chunks:
                             await session.commit()
@@ -557,7 +596,7 @@ class GenericRepository:
                         if raise_on_error:
                             raise
             else:
-                deleted, skipped, errors = await GenericRepository.delete_records_bulk(
+                deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                     session=session,
                     model=model,
                     records=delete_records,
@@ -566,7 +605,7 @@ class GenericRepository:
                     raise_on_error=raise_on_error,
                 )
                 total_deleted += deleted
-                total_skipped_delete += skipped
+                total_unchanged_delete += unchanged
                 total_error_records += errors
 
         # UPSERT
@@ -591,8 +630,7 @@ class GenericRepository:
                         )
                         total_inserted += result["inserted"]
                         total_updated += result["updated"]
-                        total_unchanged += result["unchanged"]
-                        total_skipped_upsert += result["skipped"]
+                        total_unchanged_upsert += result["unchanged"]
                         total_error_records += result["error_records"]
                         if commit_chunks:
                             await session.commit()
@@ -614,17 +652,15 @@ class GenericRepository:
                 )
                 total_inserted += result["inserted"]
                 total_updated += result["updated"]
-                total_unchanged += result["unchanged"]
-                total_skipped_upsert += result["skipped"]
+                total_unchanged_upsert += result["unchanged"]
                 total_error_records += result["error_records"]
 
         return {
             "inserted": total_inserted,
             "updated": total_updated,
             "deleted": total_deleted,
-            "unchanged": total_unchanged,
-            "skipped_upsert": total_skipped_upsert,
-            "skipped_delete": total_skipped_delete,
+            "unchanged_upsert": total_unchanged_upsert,
+            "unchanged_delete": total_unchanged_delete,
             "error_records": total_error_records,
         }
 

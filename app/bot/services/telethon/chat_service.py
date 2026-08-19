@@ -20,7 +20,6 @@ class TelethonChatService(BaseService):
     def __init__(self, telethon_client: TelethonClient) -> None:
         """Инициализация сервиса"""
         self._client = telethon_client
-        # ИСПРАВЛЕНО: используем строковую аннотацию вместо прямого типа
         self._telethon: TelegramClient | None = None
         self._initialized = False
 

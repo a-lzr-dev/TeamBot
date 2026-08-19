@@ -35,7 +35,6 @@ async def cmd_actions(message: Message, state: FSMContext) -> None:
     """Команда для вызова меню действий"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -93,7 +92,6 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
     """Обработка колбэков действий"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not callback.from_user:
         await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
         return
@@ -106,18 +104,15 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
     await state.update_data(user_id=user_id, is_admin=user_id in settings.ADMIN_IDS)
 
     # Обработка выбора действия (не "Назад" и не "В главное меню")
-    # ИСПРАВЛЕНО: проверка на None
     callback_data = callback.data
     if callback_data and callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
         try:
-            # ИСПРАВЛЕНО: проверка на None
             if not callback_data:
                 return
             action_id = int(callback_data.split("_")[1])
 
             group_id = await get_user_group_id(user_id)
             if group_id:
-                # Используем репозиторий напрямую
                 async with db_manager.get_session("avanpost") as session:
                     has_children = await AvanpostRepository.has_subitems(
                         session=session,
@@ -249,7 +244,6 @@ async def show_menu(
             empty_text = "📋 Нет доступных действий."
 
             if is_callback and isinstance(event, CallbackQuery):
-                # ИСПРАВЛЕНО: проверка на event.message
                 if event.message:
                     await bot_manager.delete_message_by_link(event.message)
                     await bot_manager.send_message(
@@ -260,7 +254,6 @@ async def show_menu(
                         parse_mode="Markdown",
                     )
             else:
-                # ИСПРАВЛЕНО: для Message
                 if isinstance(event, Message):
                     await bot_manager.send_message(
                         chat_id=event.chat.id,
@@ -321,7 +314,6 @@ async def show_menu(
                     bot_logger.debug(f"✅ Sent new message {result.get('message_id')}")
 
         else:
-            # ИСПРАВЛЕНО: для Message
             if isinstance(event, Message):
                 await bot_manager.send_message(
                     chat_id=event.chat.id,

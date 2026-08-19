@@ -48,7 +48,6 @@ async def cmd_broadcast(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -81,7 +80,6 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
     """Получение текста для рассылки"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -275,7 +273,6 @@ async def cmd_delete_message(message: Message, state: FSMContext) -> None:
     # Сохраняем текст команды до удаления
     command_text = message.text or ""
 
-    # ИСПРАВЛЕНО: проверка на None
     if command_text is None:
         await bot_manager.send_answer(
             text="❌ Не удалось получить текст команды.",
@@ -330,7 +327,6 @@ async def delete_get_chat_id(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # ИСПРАВЛЕНО: проверка на None
     text = message.text
     if text is None or not text.strip():
         await bot_manager.send_answer(
@@ -379,7 +375,6 @@ async def delete_get_message_id(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # ИСПРАВЛЕНО: проверка на None
     text = message.text
     if text is None or not text.strip():
         await bot_manager.send_answer(
@@ -457,7 +452,6 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
     chat_id = data.get("chat_id")
     message_id = data.get("message_id")
 
-    # ИСПРАВЛЕНО: проверка на None
     if chat_id is None or message_id is None:
         await bot_manager.send_answer(
             text="❌ Данные для удаления не найдены.",
@@ -514,7 +508,6 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
 
         # Пытаемся удалить из Telegram (если бот имеет права)
         try:
-            # ИСПРАВЛЕНО: проверка на None
             if chat_id is not None and message_id is not None:
                 await _bot.delete_message(chat_id, message_id)
                 if message.from_user:
@@ -619,7 +612,6 @@ async def cmd_add_admin(message: Message) -> None:
     # Сохраняем текст команды до удаления
     command_text = message.text or ""
 
-    # ИСПРАВЛЕНО: проверка на None
     if command_text is None:
         await bot_manager.send_answer(
             text="❌ Не удалось получить текст команды.",
@@ -710,7 +702,6 @@ async def cmd_remove_admin(message: Message) -> None:
     # Сохраняем текст команды до удаления
     command_text = message.text or ""
 
-    # ИСПРАВЛЕНО: проверка на None
     if command_text is None:
         await bot_manager.send_answer(
             text="❌ Не удалось получить текст команды.",
@@ -893,7 +884,6 @@ async def cmd_sync_user(message: Message) -> None:
 
     await bot_manager.delete_message_by_link(message)
 
-    # ИСПРАВЛЕНО: проверка на None
     command_text = message.text or ""
     if command_text is None:
         await bot_manager.send_answer(

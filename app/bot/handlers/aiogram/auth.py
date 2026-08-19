@@ -47,7 +47,6 @@ async def is_user_authenticated(user_id: int) -> bool:
 @log_exceptions(bot_logger)
 async def cmd_start(message: Message, state: FSMContext) -> None:
     """Обработчик команды /start - запрос верификации"""
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await message.answer("❌ Не удалось определить пользователя.")
         return
@@ -150,7 +149,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     """Обработка полученного контакта"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -165,7 +163,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 
     await bot_manager.send_toast(text="⏳ Проверка данных...", message=message)
 
-    # ИСПРАВЛЕНО: проверка на contact
     if not contact or not contact.phone_number:
         await bot_manager.send_answer(
             text="❌ Не удалось получить номер телефона. Попробуйте еще раз.",
@@ -316,7 +313,6 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
     """Команда для выхода из системы"""
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -377,7 +373,6 @@ async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
 
     bot_manager = get_bot_manager()
 
-    # ИСПРАВЛЕНО: проверка на from_user
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
