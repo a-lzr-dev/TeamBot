@@ -50,13 +50,43 @@ class ConsoleFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Форматирование записи лога с добавлением цветов и выравниванием"""
         original_levelname = record.levelname
+
+        # Форматирование уровеня с цветом
         padded_levelname = original_levelname.ljust(8)
         if original_levelname in self.COLORS:
             record.levelname = f"{self.COLORS[original_levelname]}{padded_levelname}{self.COLORS['RESET']}"
         else:
             record.levelname = padded_levelname
+
+        # Форматирование основного сообщения
         result = super().format(record)
+
+        # Добавление EXTRA полей
+        extra_parts = []
+
+        extra_fields = [
+            ("duration_ms", "⏱️"),
+        ]
+
+        for field_name, emoji in extra_fields:
+            value = getattr(record, field_name, None)
+            if value is not None and value != "N/A":
+                if field_name == "duration_ms" and isinstance(value, int | float):
+                    formatted = f"{value:.2f}ms"
+                else:
+                    formatted = str(value)
+                if len(formatted) > 50:
+                    formatted = formatted[:47] + "..."
+                extra_parts.append(f"{emoji} {formatted}")
+
+        # Добавление Extra к основному сообщению
+        if extra_parts:
+            extra_str = " | ".join(extra_parts)
+            result = f"{result} │ {extra_str}"
+
+        # Восстановление оригинального значения
         record.levelname = original_levelname
+
         return result
 
 

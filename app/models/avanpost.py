@@ -22,6 +22,7 @@ from .base import BaseModel
 if TYPE_CHECKING:
     from .main import UserModel
 
+
 # ============ МОДЕЛИ ДЛЯ МЕНЮ ДЕЙСТВИЙ (AVANPOST) ============
 
 
@@ -802,7 +803,6 @@ class AvanpostUserModel(BaseModel):
     __tablename__ = "TAvanpostUsers"
     __table_args__ = (
         PrimaryKeyConstraint("FID", name="PK_AvanpostUsers"),
-        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_Avp_Users_User"),
         ForeignKeyConstraint(
             ["FK_MenuGroup"], ["TAvanpostDirScenariosGroups.FID"], ondelete="SET NULL", name="FK_Avp_Users_MenuGroup"
         ),
@@ -819,14 +819,12 @@ class AvanpostUserModel(BaseModel):
         ForeignKeyConstraint(
             ["FK_Language"], ["TAvanpostDirLanguages.FID"], ondelete="RESTRICT", name="FK_Avp_Users_Lang"
         ),
-        Index("IX_AvanpostUsers_User", "FK_User"),
         Index("IX_AvanpostUsers_Contact", "FK_Contact"),
         Index("IX_AvanpostUsers_MenuGroup", "FK_MenuGroup"),
         Index("IX_AvanpostUsers_Phone", "FPhone"),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True)
-    FK_User: Mapped[int] = mapped_column(Integer, nullable=True)
     FK_MenuGroup: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
     FK_Group: Mapped[int] = mapped_column(SmallInteger, nullable=True)
     FK_Contact: Mapped[int] = mapped_column(Integer, nullable=True)
@@ -836,11 +834,53 @@ class AvanpostUserModel(BaseModel):
     FName: Mapped[str | None] = mapped_column(String(50), nullable=True)
     FPhone: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
-    # Связь с Telegram пользователем
+    user_link: Mapped[Optional["AvanpostUserLinkModel"]] = relationship(
+        "AvanpostUserLinkModel",
+        foreign_keys="AvanpostUserLinkModel.FK_Parent",
+        back_populates="avanpost_user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def fk_user(self) -> int | None:
+        """Получение FK_Link из связанной модели"""
+        return self.user_link.FK_Link if self.user_link else None
+
+    @fk_user.setter
+    def fk_user(self, value: int | None) -> None:
+        """Установка FK_Link в связанную модель"""
+        if not self.user_link:
+            self.user_link = AvanpostUserLinkModel(FK_Parent=self.FID)
+        self.user_link.FK_Link = value
+
+
+class AvanpostUserLinkModel(BaseModel):
+    """Связь пользователя Avanpost с Telegram пользователем"""
+
+    __tablename__ = "TAvanpostUsersLinks"
+    __table_args__ = (
+        PrimaryKeyConstraint("FK_Parent", name="PK_AvanpostUsersLinks"),
+        ForeignKeyConstraint(
+            ["FK_Parent"], ["TAvanpostUsers.FID"], ondelete="CASCADE", name="FK_Avp_UsersLinks_Parent"
+        ),
+        ForeignKeyConstraint(["FK_Link"], ["TUsers.FID"], ondelete="CASCADE", name="FK_Avp_UsersLinks_Link"),
+    )
+
+    FK_Parent: Mapped[int] = mapped_column(Integer, primary_key=True)
+    FK_Link: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    avanpost_user: Mapped["AvanpostUserModel"] = relationship(
+        "AvanpostUserModel",
+        foreign_keys=[FK_Parent],
+        back_populates="user_link",
+        uselist=False,
+    )
+
     telegram_user: Mapped[Optional["UserModel"]] = relationship(
         "UserModel",
-        foreign_keys=[FK_User],
-        back_populates="avanpost_user",
+        foreign_keys=[FK_Link],
+        back_populates="avanpost_link",
         uselist=False,
     )
 
@@ -1492,7 +1532,6 @@ AVANPOST_USER_DATA_TYPES: list[int] = [
     605,  # Связи пользователей с контрольными сообщениями
 ]
 
-
 # ============ ЭКСПОРТ ============
 
 __all__ = [
@@ -1535,6 +1574,7 @@ __all__ = [
     "AvanpostContactLangModel",
     "AvanpostContactLinkModel",
     "AvanpostUserModel",
+    "AvanpostUserLinkModel",
     "AvanpostUserChatModel",
     "AvanpostUserChatLangModel",
     # Оперативная синхронизация

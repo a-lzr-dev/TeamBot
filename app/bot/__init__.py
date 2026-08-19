@@ -5,12 +5,10 @@ from .callbacks import (
     AuthCallbackHandler,
     BaseCallbackHandler,
     CallbackHandler,
-    GroupCallbackHandler,
     action_callback_handler,
     admin_callback_handler,
     auth_callback_handler,
     callback_handler,
-    group_callback_handler,
 )
 from .clients import (
     AiogramClient,
@@ -22,13 +20,13 @@ from .handlers.aiogram import (
     chat_router,
     commands_router,
     setup_aiogram_handlers,
+    users_router,
 )
 from .handlers.telethon import (
     setup_telethon_handlers,
 )
 from .keyboards import (
     BUTTONS_PER_ROW_ACTIONS,
-    BUTTONS_PER_ROW_GROUPS,
     # Actions
     ActionKeyboard,
     # Admin
@@ -39,16 +37,17 @@ from .keyboards import (
     AutomationKeyboard,
     BaseKeyboard,
     # Groups
-    GroupKeyboard,
+    UserKeyboard,
     get_action_menu_keyboard,
     get_auth_needed_keyboard,
     get_auth_request_keyboard,
     get_broadcast_confirm_keyboard,
+    get_close_keyboard,
     get_delete_confirm_keyboard,
-    get_groups_keyboard,
     get_inline_keyboard,
     get_logout_keyboard,
     get_reply_keyboard,
+    get_users_keyboard,
 )
 from .manager import (
     BotManager,
@@ -123,6 +122,7 @@ __all__ = [
     "commands_router",
     "admin_router",
     "setup_telethon_handlers",
+    "users_router",
     # Клавиатуры - Base
     "BaseKeyboard",
     "get_inline_keyboard",
@@ -140,10 +140,10 @@ __all__ = [
     "ActionKeyboard",
     "get_action_menu_keyboard",
     "BUTTONS_PER_ROW_ACTIONS",
-    # Клавиатуры - Groups
-    "GroupKeyboard",
-    "get_groups_keyboard",
-    "BUTTONS_PER_ROW_GROUPS",
+    # Клавиатуры - Users
+    "UserKeyboard",
+    "get_users_keyboard",
+    "get_close_keyboard",
     # Клавиатуры - Automation
     "AutomationKeyboard",
     # Колбэки
@@ -152,8 +152,6 @@ __all__ = [
     "callback_handler",
     "ActionCallbackHandler",
     "action_callback_handler",
-    "GroupCallbackHandler",
-    "group_callback_handler",
     "AuthCallbackHandler",
     "auth_callback_handler",
     "AdminCallbackHandler",

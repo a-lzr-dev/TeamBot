@@ -1202,7 +1202,7 @@ class AvanpostSyncService:
 
                         model_columns = self._get_model_columns(model)
 
-                        # Разбиваем на чанки
+                        # Разбитие на чанки
                         chunk_size = 1000
                         total_chunks = (len(records) + chunk_size - 1) // chunk_size
 
@@ -1213,7 +1213,7 @@ class AvanpostSyncService:
                         table_unchanged_deletes = 0
                         table_errors = 0
                         table_error_records = 0
-                        table_has_error = False  # Флаг ошибки в таблице
+                        table_has_error = False
 
                         for chunk_idx in range(0, len(records), chunk_size):
                             chunk_records = records[chunk_idx : chunk_idx + chunk_size]

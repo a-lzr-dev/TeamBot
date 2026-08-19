@@ -541,7 +541,7 @@ class ChatRepository:
                 {
                     "id": msg.FID,
                     "chat_id": msg.FK_Chat,
-                    "user_id": msg.FK_User,
+                    "user_id": msg.fk_user,
                     "text": msg.FText[:100] + "..." if msg.FText and len(msg.FText) > 100 else msg.FText,
                     "deleted_at": msg.FDateDeleted.isoformat() + "Z" if msg.FDateDeleted else None,
                     "deleted_by_type": msg.FDeletedByType,

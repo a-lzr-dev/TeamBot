@@ -930,8 +930,8 @@ class AutomationService:
             message = (
                 f"📋 **Новая заявка на автоматизацию**\n\n"
                 f"#{request.FID} {priority_emoji} **{request.FTitle}**\n\n"
-                f"👤 **Пользователь:** {request.user.fullname if request.user else request.FK_User}\n"
-                f"🆔 **User ID:** {request.FK_User}\n"
+                f"👤 **Пользователь:** {request.user.fullname if request.user else request.fk_user}\n"
+                f"🆔 **User ID:** {request.fk_user}\n"
                 f"📅 **Создана:** {request.FCreatedAt.strftime('%d.%m.%Y %H:%M')}\n"
                 f"📊 **Приоритет:** {request.FPriority.value.upper()}\n\n"
                 f"📝 **Описание:**\n{request.FDescription[:300]}{'...' if len(request.FDescription) > 300 else ''}\n\n"
@@ -978,7 +978,7 @@ class AutomationService:
         """
         return {
             "id": request.FID,
-            "user_id": request.FK_User,
+            "user_id": request.fk_user,
             "user_name": request.user.fullname if request.user else None,
             "title": request.FTitle,
             "description": request.FDescription,

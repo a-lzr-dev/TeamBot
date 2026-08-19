@@ -12,7 +12,11 @@ class ActionKeyboard:
 
     @staticmethod
     def get_action_menu_keyboard(
-        items: list[dict[str, Any]], parent_id: int | None = None, is_admin: bool = False, is_root_menu: bool = False
+        items: list[dict[str, Any]],
+        parent_id: int | None = None,
+        is_admin: bool = False,
+        is_root_menu: bool = False,
+        show_back_to_users: bool = False,
     ) -> InlineKeyboardMarkup:
         """
         Создание клавиатуры для меню действий.
@@ -22,6 +26,7 @@ class ActionKeyboard:
             parent_id: ID родительского элемента
             is_admin: Является ли пользователь администратором
             is_root_menu: Является ли это главным меню (без кнопки "В главное меню")
+            show_back_to_users: Показывать кнопку "К списку пользователей"
         """
         keyboard = []
 
@@ -53,9 +58,13 @@ class ActionKeyboard:
             # Кнопка "В главное меню"
             nav_row.append(InlineKeyboardButton(text="🏠 В главное меню", callback_data="action_home"))
 
-        # Кнопка "К группам"
+        # Кнопка "К группам" (для администраторов)
         if is_admin:
             nav_row.append(InlineKeyboardButton(text="📋 К группам", callback_data="back_to_groups"))
+
+        # Кнопка "К списку пользователей" (если выбран пользователь через /users)
+        if show_back_to_users:
+            nav_row.append(InlineKeyboardButton(text="👥 К пользователям", callback_data="back_to_users"))
 
         if nav_row:
             keyboard.append(nav_row)

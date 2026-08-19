@@ -33,9 +33,6 @@ class ActionCallbackHandler(BaseCallbackHandler):
         if callback_data == self.PREFIX_HOME:
             return await self._handle_home(callback, state, **kwargs)
 
-        if callback_data == self.PREFIX_BACK_TO_GROUPS:
-            return await self._handle_back_to_groups(callback, state, **kwargs)
-
         if callback_data.startswith(self.PREFIX_BACK):
             return await self._handle_back(callback, state, **kwargs)
 
@@ -151,25 +148,6 @@ class ActionCallbackHandler(BaseCallbackHandler):
         )
 
     @staticmethod
-    async def _handle_back_to_groups(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
-        """Обработка кнопки 'К группам'"""
-        await CallbackHandler.answer(callback)
-
-        from ..handlers.aiogram.groups import show_groups
-
-        # Очистка историт при переходе к группам
-        await state.update_data(menu_history=[])
-
-        # Удаление текущего сообщения перед показом групп
-        bot_manager = get_bot_manager()
-        await bot_manager.delete_message_by_link(callback.message)
-
-        if callback.message:
-            await show_groups(event=callback, state=state)
-        else:
-            await bot_manager.send_toast(text="❌ Не удалось найти сообщение.", event=callback)
-
-    @staticmethod
     async def _handle_action(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
         """Обработка выбора действия"""
         await CallbackHandler.answer(callback)
@@ -239,7 +217,7 @@ class ActionCallbackHandler(BaseCallbackHandler):
                 parent_item_id=action_id,
                 state=state,
                 is_callback=True,
-                is_new=True,
+                _is_new=True,
             )
         else:
             # Выполнение действия

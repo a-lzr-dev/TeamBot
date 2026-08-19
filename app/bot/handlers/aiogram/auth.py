@@ -51,25 +51,27 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await message.answer("❌ Не удалось определить пользователя.")
         return
 
-    user_id = message.from_user.id
+    telegram_user_id = message.from_user.id
     bot_manager = get_bot_manager()
 
     # Проверка, авторизован ли пользователь в БД
-    is_authenticated_db = await is_user_authenticated(user_id)
+    is_authenticated_db = await is_user_authenticated(telegram_user_id)
 
     # Проверка, есть ли пользователь в кеше команд
-    is_in_cache = bot_manager.is_user_in_cache(user_id)
+    is_in_cache = bot_manager.is_user_in_cache(telegram_user_id)
 
-    # Очистка кеша
+    # Очистка кеша, если пользователь разлогинился
     if is_in_cache and not is_authenticated_db:
-        bot_manager.clear_user_cache(user_id)
-        bot_logger.debug(f"🧹 Cleared stale cache for user {user_id} during /start")
+        bot_manager.clear_user_cache(telegram_user_id)
+        # Очищаем и глобальный кэш авторизации
+        _auth_cache.pop(telegram_user_id, None)
+        bot_logger.debug(f"🧹 Cleared stale cache for user {telegram_user_id} during /start")
 
-    if await is_user_authenticated(user_id):
+    if await is_user_authenticated(telegram_user_id):
         # Обновление команды для авторизованного пользователя
-        is_admin = user_id in settings.ADMIN_IDS
+        is_admin = telegram_user_id in settings.ADMIN_IDS
         try:
-            await bot_manager.update_user_commands(user_id, is_admin)
+            await bot_manager.update_user_commands(telegram_user_id, is_admin)
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
@@ -86,7 +88,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
         # Обновление времени последней активности
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_user_by_id(session, user_id)
+            user = await UserRepository.get_user_by_id(session, telegram_user_id)
             if user:
                 user.FDateLastActivity = datetime_now()
                 await session.commit()
@@ -158,7 +160,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         )
         return
 
-    user_id = message.from_user.id
+    telegram_user_id = message.from_user.id
     contact = message.contact
 
     await bot_manager.send_toast(text="⏳ Проверка данных...", message=message)
@@ -172,7 +174,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         )
         return
 
-    if contact.user_id != user_id:
+    if contact.user_id != telegram_user_id:
         await bot_manager.send_answer(
             text="⚠️ Пожалуйста, отправьте свой собственный контакт.\n\n"
             "Нажмите кнопку 'Поделиться контактом' и подтвердите отправку.",
@@ -183,7 +185,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         return
 
     phone_number = normalize_phone(contact.phone_number)
-    bot_logger.info(f"📱 Received contact from user {user_id}: {phone_number}")
+    bot_logger.info(f"📱 Received contact from user {telegram_user_id}: {phone_number}")
 
     try:
         # 1. Проверка пользователя через хранимую процедуру Avanpost
@@ -205,12 +207,12 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             )
             return
 
-        # 2. Сохранение инфломации о пользователе в БД
+        # 2. Сохранение информации о пользователе в БД
         async with db_manager.get_session("main") as session:
             # Сохранение пользователя
             user = await UserRepository.save_user(
                 session=session,
-                user_id=user_id,
+                user_id=telegram_user_id,
                 chat_id=message.chat.id,
                 first_name=contact.first_name or message.from_user.first_name,
                 last_name=contact.last_name or message.from_user.last_name,
@@ -229,10 +231,10 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 )
                 return
 
-            # Создание или обновляние связи с AvanpostUser
+            # Создание или обновление связи с AvanpostUser
             success, avanpost_user = await UserRepository.create_or_update_avanpost_user_upsert(
                 session=session,
-                telegram_user_id=user.FID,
+                telegram_user_id=telegram_user_id,
                 avanpost_user_id=avanpost_user_id,
                 fk_contact=fk_contact,
                 fk_menugroup=menu_group_id,
@@ -252,7 +254,8 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             await session.commit()
 
         # 3. Обновление кеша авторизации
-        _auth_cache[user_id] = {
+        # ВАЖНО! Используем Telegram ID как ключ
+        _auth_cache[telegram_user_id] = {
             "user_id": avanpost_user_id,
             "group_id": menu_group_id,
             "phone": phone_number,
@@ -263,16 +266,16 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         # 4. Запуск синхронизации пользовательских данных в фоне
         asyncio.create_task(
             _sync_user_in_background(
-                telegram_user_id=user_id,
+                telegram_user_id=telegram_user_id,
                 avanpost_user_id=avanpost_user_id,
             )
         )
 
         # 5. Обновление команды для пользователя
-        is_admin = user_id in settings.ADMIN_IDS
+        is_admin = telegram_user_id in settings.ADMIN_IDS
         try:
-            await bot_manager.update_user_commands(user_id, is_admin)
-            bot_logger.info(f"✅ Commands updated for user {user_id}")
+            await bot_manager.update_user_commands(telegram_user_id, is_admin)
+            bot_logger.info(f"✅ Commands updated for user {telegram_user_id}")
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
@@ -504,15 +507,46 @@ async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, i
 
 
 async def get_user_group_id(user_id: int) -> int | None:
-    """Получение ID группы действий для пользователя из TAvanpostUsers.FK_MenuGroup."""
-    # Проверка кеша
+    """
+    Получение ID группы действий для пользователя.
+
+    Поддерживает как Telegram ID, так и Avanpost ID.
+    """
+    # Проверка кеша по Telegram ID
     user_data = _auth_cache.get(user_id)
     if user_data:
-        return user_data.get("group_id")
+        group_id = user_data.get("group_id")
+        if group_id is not None:
+            if isinstance(group_id, int):
+                return group_id
+            try:
+                return int(group_id)
+            except (ValueError, TypeError):
+                pass
 
     try:
         async with db_manager.get_session() as session:
-            return await UserRepository.get_user_group_id(session, user_id)
+            # Сначала пробуем как Telegram ID
+            result = await UserRepository.get_user_group_id(session, user_id)
+            if result is not None:
+                return result
+
+            # Если не нашли, пробуем как Avanpost ID
+            from app.models.avanpost import AvanpostUserModel
+
+            avanpost_user = await session.get(AvanpostUserModel, user_id)
+            if avanpost_user:
+                fk_menu_group = avanpost_user.FK_MenuGroup
+                if fk_menu_group is None:
+                    return None
+                if isinstance(fk_menu_group, int):
+                    return fk_menu_group
+                try:
+                    return int(fk_menu_group)
+                except (ValueError, TypeError):
+                    return None
+
+            return None
     except Exception as e:
         bot_logger.error(f"❌ Failed to get user group: {e}")
 
@@ -520,9 +554,7 @@ async def get_user_group_id(user_id: int) -> int | None:
 
 
 async def _sync_user_in_background(avanpost_user_id: int, **_kwargs: Any) -> None:
-    """
-    Фоновая синхронизация пользовательских данных из Avanpost.
-    """
+    """Фоновая синхронизация пользовательских данных из Avanpost"""
     try:
         from ....services import avanpost_sync_service
 

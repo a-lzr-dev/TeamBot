@@ -114,7 +114,12 @@ class UserRepository:
         Returns:
             list[AvanpostUserModel]: Список пользователей Avanpost
         """
-        stmt = select(AvanpostUserModel).order_by(AvanpostUserModel.FID).offset(offset)
+        stmt = (
+            select(AvanpostUserModel)
+            .options(selectinload(AvanpostUserModel.user_link))
+            .order_by(AvanpostUserModel.FID)
+            .offset(offset)
+        )
 
         if limit:
             stmt = stmt.limit(limit)
@@ -147,13 +152,20 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_authorized_users(session: AsyncSession, limit: int | None = None, offset: int = 0) -> list[UserModel]:
-        """Получение списка авторизованных пользователей (у которых есть AvanpostUser)"""
-        stmt = (
-            select(UserModel)
-            .join(AvanpostUserModel, UserModel.FID == AvanpostUserModel.FK_User)
-            .order_by(UserModel.FID)
-            .offset(offset)
-        )
+        """
+        Получение списка авторизованных пользователей.
+
+        Использует EXISTS для проверки наличия связи, что быстрее, чем JOIN,
+        если не нужно выбирать данные из связанной таблицы.
+        """
+        from sqlalchemy import exists
+
+        from ...models import AvanpostUserLinkModel
+
+        # Подзапрос для проверки наличия связи
+        has_avanpost_link = exists().where(AvanpostUserLinkModel.FK_Link == UserModel.FID)
+
+        stmt = select(UserModel).where(has_avanpost_link).order_by(UserModel.FID).offset(offset)
 
         if limit:
             stmt = stmt.limit(limit)
@@ -169,15 +181,32 @@ class UserRepository:
         Получение количества авторизованных пользователей
         (у которых есть связь с AvanpostUser).
 
+        Использует новую структуру AvanpostUserLinkModel для подсчёта.
+
         Args:
             session: Сессия БД
 
         Returns:
             int: Количество авторизованных пользователей
         """
-        stmt = select(func.count()).select_from(AvanpostUserModel).where(AvanpostUserModel.FK_User.is_not(None))
-        result = await session.execute(stmt)
-        return result.scalar() or 0
+        try:
+            from ...models import AvanpostUserLinkModel
+
+            # Подсчет количество записей в AvanpostUserLinkModel
+            stmt = (
+                select(func.count())
+                .select_from(AvanpostUserLinkModel)
+                .where(AvanpostUserLinkModel.FK_Link.is_not(None))
+            )
+            result = await session.execute(stmt)
+            count = result.scalar() or 0
+
+            db_logger.debug(f"📊 Authorized users count: {count}")
+            return count
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get authorized users count: {e}", exc_info=True)
+            return 0
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -266,7 +295,9 @@ class UserRepository:
         telegram_user_id: int,
     ) -> AvanpostUserModel | None:
         """
-        Получение AvanpostUser по Telegram ID.
+        Получение AvanpostUser по Telegram ID через новую структуру.
+
+        Использует цепочку: User -> AvanpostUserLink -> AvanpostUser
 
         Args:
             session: Сессия БД (main)
@@ -279,10 +310,27 @@ class UserRepository:
             return None
 
         try:
-            stmt = select(AvanpostUserModel).where(AvanpostUserModel.FK_User == telegram_user_id)
+            from sqlalchemy.orm import selectinload
+
+            from ...models import AvanpostUserLinkModel
+
+            # Загружаем AvanpostUser через цепочку связей
+            stmt = (
+                select(AvanpostUserModel)
+                .join(AvanpostUserLinkModel, AvanpostUserModel.FID == AvanpostUserLinkModel.FK_Parent)
+                .where(AvanpostUserLinkModel.FK_Link == telegram_user_id)
+                .options(selectinload(AvanpostUserModel.user_link))
+            )
             result = await session.execute(stmt)
             user: AvanpostUserModel | None = result.scalar_one_or_none()
+
+            if user:
+                db_logger.debug(f"✅ Found AvanpostUser {user.FID} for telegram user {telegram_user_id}")
+            else:
+                db_logger.debug(f"ℹ️ No AvanpostUser found for telegram user {telegram_user_id}")
+
             return user
+
         except Exception as e:
             db_logger.error(f"❌ Failed to get Avanpost user by Telegram ID: {e}", exc_info=True)
             return None
@@ -482,14 +530,38 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_user_with_avanpost(session: AsyncSession, user_id: int) -> UserModel | None:
-        """Получение пользователя с предзагруженным AvanpostUser"""
+        """
+        Получение пользователя с предзагруженной связью с Avanpost.
+        Использует новую структуру: User -> AvanpostUserLink -> AvanpostUser
+        """
         if not user_id or user_id <= 0:
             return None
 
-        stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_user))
-        result = await session.execute(stmt)
-        user: UserModel | None = result.scalar_one_or_none()
-        return user
+        try:
+            from sqlalchemy.orm import selectinload
+
+            from ...models import AvanpostUserLinkModel
+
+            # Загрузка пользователя с двумя уровнями связей
+            stmt = (
+                select(UserModel)
+                .where(UserModel.FID == user_id)
+                .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                return None
+
+            if not isinstance(user, UserModel):
+                return None
+
+            return user
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get user with Avanpost: {e}", exc_info=True)
+            return None
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -529,7 +601,7 @@ class UserRepository:
         avanpost_user_id: int,
         telegram_user_required: bool = True,
         fk_contact: int | None = None,
-        fk_language: str = "RU",
+        fk_language: str | None = None,
         fk_menugroup: int | None = None,
         fk_owner: int | None = None,
         fk_motorcade: int | None = None,
@@ -537,8 +609,8 @@ class UserRepository:
         fphone: str | None = None,
     ) -> tuple[bool, AvanpostUserModel | None]:
         """
-        Создание или обновление связи пользователя с Avanpost через UPSERT (ON CONFLICT DO UPDATE).
-        Использует прямой SQL INSERT ... ON CONFLICT.
+        Создание или обновление связи пользователя с Avanpost через UPSERT.
+        Работает с новой структурой: TAvanpostUsers (данные) + TAvanpostUsersLinks (связь).
         """
         if not avanpost_user_id or avanpost_user_id <= 0:
             db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
@@ -551,43 +623,64 @@ class UserRepository:
         try:
             from sqlalchemy.dialects.postgresql import insert
 
-            from ...models import AvanpostUserModel
+            from ...models import AvanpostUserLinkModel, AvanpostUserModel
 
-            # Подготовка данных
-            values = {
+            db_logger.debug(f"🔄 UPSERT AvanpostUser: avanpost_id={avanpost_user_id}, telegram_id={telegram_user_id}")
+
+            # 1. UPSERT для TAvanpostUsers (данные из Avanpost)
+            user_values: dict[str, Any] = {
                 "FID": avanpost_user_id,
-                "FK_User": telegram_user_id,
-                "FK_Contact": fk_contact,
-                "FK_MenuGroup": fk_menugroup,
-                "FK_Owner": fk_owner,
-                "FK_MotorCade": fk_motorcade,
-                "FK_Language": fk_language[:2] if fk_language else "RU",
-                "FName": fname[:50] if fname else None,
-                "FPhone": fphone[:30] if fphone else None,
+                "FK_Language": fk_language or "RU",
             }
 
-            # UPSERT: INSERT ... ON CONFLICT (FID) DO UPDATE
-            stmt = insert(AvanpostUserModel).values(**values)
-            stmt = stmt.on_conflict_do_update(
+            if fk_contact is not None:
+                user_values["FK_Contact"] = fk_contact
+            if fk_menugroup is not None:
+                user_values["FK_MenuGroup"] = fk_menugroup
+            if fk_owner is not None:
+                user_values["FK_Owner"] = fk_owner
+            if fk_motorcade is not None:
+                user_values["FK_MotorCade"] = fk_motorcade
+            if fname is not None:
+                user_values["FName"] = fname
+            if fphone is not None:
+                user_values["FPhone"] = fphone
+
+            user_stmt = insert(AvanpostUserModel).values(**user_values)
+            user_stmt = user_stmt.on_conflict_do_update(
                 index_elements=["FID"],
-                set_={
-                    "FK_User": stmt.excluded.FK_User,
-                    "FK_Contact": stmt.excluded.FK_Contact,
-                    "FK_MenuGroup": stmt.excluded.FK_MenuGroup,
-                    "FK_Owner": stmt.excluded.FK_Owner,
-                    "FK_MotorCade": stmt.excluded.FK_MotorCade,
-                    "FK_Language": stmt.excluded.FK_Language,
-                    "FName": stmt.excluded.FName,
-                    "FPhone": stmt.excluded.FPhone,
-                },
+                set_={k: v for k, v in user_values.items() if k != "FID"},
             )
+            await session.execute(user_stmt)
+            db_logger.debug(f"✅ TAvanpostUsers upserted: {avanpost_user_id}")
 
-            await session.execute(stmt)
-            await session.flush()
+            # 2. UPSERT для TAvanpostUsersLinks (связь с Telegram)
+            # Проверка, есть ли уже связь
+            link_stmt = select(AvanpostUserLinkModel).where(AvanpostUserLinkModel.FK_Parent == avanpost_user_id)
+            result = await session.execute(link_stmt)
+            existing_link = result.scalar_one_or_none()
 
-            # Получение созданной/обновленной записи
-            result = await session.execute(select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id))
-            user = result.scalar_one_or_none()
+            if existing_link:
+                # Обновление существующей связи
+                if existing_link.FK_Link != telegram_user_id:
+                    existing_link.FK_Link = telegram_user_id
+                    await session.flush()
+                    db_logger.debug(f"✅ TAvanpostUsersLinks updated: {avanpost_user_id} -> {telegram_user_id}")
+            else:
+                # Создание новой связи
+                new_link = AvanpostUserLinkModel(
+                    FK_Parent=avanpost_user_id,
+                    FK_Link=telegram_user_id,
+                )
+                session.add(new_link)
+                await session.flush()
+                db_logger.debug(f"✅ TAvanpostUsersLinks created: {avanpost_user_id} -> {telegram_user_id}")
+
+            # 3. Получение созданной/обновленной записи пользователя Avanpost
+            result_user = await session.execute(
+                select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
+            )
+            user = result_user.scalar_one_or_none()
 
             if user:
                 db_logger.info(f"✅ UPSERT AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
@@ -598,21 +691,71 @@ class UserRepository:
 
         except Exception as e:
             db_logger.error(f"❌ Failed to UPSERT AvanpostUser: {e}", exc_info=True)
+            await session.rollback()
             return False, None
 
     @staticmethod
     @log_exceptions(db_logger)
     async def get_user_group_id(session: AsyncSession, user_id: int) -> int | None:
-        """Получение ID группы действий пользователя из AvanpostUser"""
+        """
+        Получение ID группы действий пользователя через новую структуру.
+
+        Использует цепочку: User -> AvanpostUserLink -> AvanpostUser -> FK_MenuGroup
+
+        Args:
+            session: Сессия БД (main)
+            user_id: ID пользователя в Telegram (TUsers.FID)
+
+        Returns:
+            int | None: ID группы действий (FK_MenuGroup) или None
+        """
         if not user_id or user_id <= 0:
             return None
 
-        user = await UserRepository.get_user_with_avanpost(session, user_id)
-        if user and user.avanpost_user:
-            group_id: int | None = user.avanpost_user.FK_MenuGroup
-            return group_id
+        try:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
 
-        return None
+            from ...models import AvanpostUserLinkModel
+
+            # Загрузка пользователя с предзагрузкой связей
+            stmt = (
+                select(UserModel)
+                .where(UserModel.FID == user_id)
+                .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if not user:
+                db_logger.debug(f"ℹ️ User {user_id} not found")
+                return None
+
+            # Проверка наличия связи
+            if not user.avanpost_link or user.avanpost_link.FK_Link is None:
+                db_logger.debug(f"ℹ️ User {user_id} is not authenticated (no link)")
+                return None
+
+            # Получение группы из AvanpostUser
+            if user.avanpost_link.avanpost_user:
+                group_id = user.avanpost_link.avanpost_user.FK_MenuGroup
+                if group_id is not None:
+                    db_logger.debug(f"✅ User {user_id} has group {group_id}")
+                else:
+                    db_logger.debug(f"ℹ️ User {user_id} has no group assigned")
+
+                # Явная проверка типа для mypy
+                if not isinstance(group_id, int):
+                    return None
+
+                return group_id
+
+            db_logger.debug(f"ℹ️ User {user_id} has no AvanpostUser record")
+            return None
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get user group ID: {e}", exc_info=True)
+            return None
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -638,38 +781,57 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def is_user_authorized(session: AsyncSession, user_id: int) -> bool:
-        """Проверка авторизации пользователя по наличию AvanpostUser"""
+        """
+        Проверка авторизации пользователя по наличию связи в AvanpostUserLinkModel.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя в Telegram (TUsers.FID)
+
+        Returns:
+            bool: True если пользователь авторизован (есть связь с Avanpost)
+        """
         if not user_id or user_id <= 0:
             return False
 
-        stmt = select(AvanpostUserModel).where(AvanpostUserModel.FK_User == user_id)
-        result: Result = await session.execute(stmt)
-        return result.first() is not None
+        try:
+            from ...models import AvanpostUserLinkModel
+
+            stmt = select(AvanpostUserLinkModel).where(AvanpostUserLinkModel.FK_Link == user_id)
+            result = await session.execute(stmt)
+            return result.first() is not None
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to check user authorization: {e}", exc_info=True)
+            return False
 
     @staticmethod
     @log_exceptions(db_logger)
     async def is_user_authenticated(session: AsyncSession, user_id: int) -> bool:
         """
         Проверка авторизации пользователя с обновлением времени активности.
-        Использует selectinload для предотвращения MissingGreenlet ошибки.
+        Использует новую структуру AvanpostUserLinkModel.
 
         Args:
             session: Сессия БД
-            user_id: ID пользователя
+            user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
-            bool: True если пользователь авторизован (есть связь с AvanpostUser)
+            bool: True если пользователь авторизован (есть связь с Avanpost)
         """
         if not user_id or user_id <= 0:
             return False
 
         try:
-            # Использование selectinload для жадной загрузки связи
-            stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_user))
+            from sqlalchemy.orm import selectinload
+
+            # Загружзка пользователя с предзагрузкой связи
+            stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_link))
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
-            if user and user.avanpost_user:
+            # Проверка наличия связи
+            if user and user.avanpost_link and user.avanpost_link.FK_Link is not None:
                 # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
@@ -678,18 +840,19 @@ class UserRepository:
             return False
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to check user authentication: {e}")
+            db_logger.error(f"❌ Failed to check user authentication: {e}", exc_info=True)
             return False
 
     @staticmethod
     @log_exceptions(db_logger)
     async def get_authenticated_user(session: AsyncSession, user_id: int) -> UserModel | None:
         """
-        Получение пользователя с предзагруженной связью AvanpostUser.
+        Получение пользователя с предзагруженной связью Avanpost.
+        Используется для проверки авторизации с обновлением времени активности.
 
         Args:
             session: Сессия БД
-            user_id: ID пользователя
+            user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
             UserModel | None: Пользователь с загруженной связью или None
@@ -698,18 +861,34 @@ class UserRepository:
             return None
 
         try:
-            stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_user))
-            result = await session.execute(stmt)
-            user: UserModel | None = result.scalar_one_or_none()
+            from sqlalchemy.orm import selectinload
 
-            if user:
+            from ...models import AvanpostUserLinkModel
+
+            # Загрузка пользователя с предзагрузкой связи
+            stmt = (
+                select(UserModel)
+                .where(UserModel.FID == user_id)
+                .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
+            )
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user and user.avanpost_link and user.avanpost_link.FK_Link is not None:
+                # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
 
-            return user
+                # Явная проверка типа для mypy
+                if not isinstance(user, UserModel):
+                    return None
+
+                return user
+
+            return None
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to get authenticated user: {e}")
+            db_logger.error(f"❌ Failed to get authenticated user: {e}", exc_info=True)
             return None
 
     # ==================== МЕТОДЫ ОБНОВЛЕНИЯ ====================

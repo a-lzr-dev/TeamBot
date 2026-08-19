@@ -642,23 +642,37 @@ class UnifiedMessageService(BaseService):
         reply_markup: Any = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Редактирование сообщения"""
-        bot = self._bot
+        """
+        Редактирование сообщения.
+
+        Важно: message_thread_id не передается в edit_message_text,
+        так как сообщение уже находится в топике и его ID уникален в рамках чата.
+        """
+        from ..dependencies import get_bot_manager
+
+        bot_manager = get_bot_manager()
+        bot = bot_manager.aiogram_client.bot
+
         if bot is None:
             return {"success": False, "error": "Bot not initialized"}
 
         try:
+            #  Удаление параметров, не поддерживаемых edit_message_text
+            edit_kwargs = kwargs.copy()
+            edit_kwargs.pop("message_thread_id", None)
+
             normalized_parse_mode = self._normalize_parse_mode(parse_mode)
+
             message = await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=text,
                 parse_mode=normalized_parse_mode,
                 reply_markup=reply_markup,
-                **kwargs,
+                **edit_kwargs,
             )
 
-            # Обновляем сообщение в БД через репозиторий
+            # Обновление сообщения в БД через репозиторий
             if message:
                 edit_date = message.date.replace(tzinfo=None) if message.date else None
                 await self._update_message_in_db(
@@ -701,6 +715,7 @@ class UnifiedMessageService(BaseService):
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update message {message_id} in DB: {e}")
 
+    @log_exceptions(bot_logger)
     async def edit_callback_message(
         self,
         callback: CallbackQuery,

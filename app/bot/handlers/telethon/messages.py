@@ -24,14 +24,19 @@ if TYPE_CHECKING:
 @log_exceptions(bot_logger)
 async def handle_new_message(event: events.NewMessage.Event, client: TelegramClient) -> None:
     """Обработчик новых сообщений через Telethon"""
+    print("handle_new_message")
+
     message: TypeMessage | None = event.message
 
     if not message:
         return
-
-    # Игнорирование исходящих сообщений
-    if message.out:
-        return
+    try:
+        me = await client.get_me()
+        if message.sender_id == me.id:
+            bot_logger.debug(f"⏭️ Skipping bot's own message {message.id}")
+            return
+    except Exception:
+        pass
 
     has_content = (
         message.text
@@ -217,6 +222,8 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
 @log_exceptions(bot_logger)
 async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramClient) -> None:
     """Обработчик редактирования сообщения"""
+    print("handle_edited_message")
+
     message: TypeMessage | None = event.message
 
     if not message:
@@ -270,6 +277,8 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
 @log_exceptions(bot_logger)
 async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
     """Обработчик удаления сообщения"""
+    print("handle_deleted_message")
+
     if not event.deleted_ids:
         return
 

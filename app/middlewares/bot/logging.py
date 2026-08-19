@@ -2,8 +2,13 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject, Update
+from aiogram import BaseMiddleware, Bot
+from aiogram.types import (
+    CallbackQuery,
+    Message,
+    TelegramObject,
+    Update,
+)
 
 from ...db import DBManager
 from ...db.repositories import ChatRepository, UserRepository
@@ -18,6 +23,9 @@ class LoggingMiddleware(BaseMiddleware):
         self.log_requests = log_requests
         self.log_updates = log_updates
         self.component = component
+        self._bot_info_cache: dict[str, Any] | None = None
+        self._cache_time: float = 0.0
+        self._cache_ttl: int = 60  # Кеширование на 60 секунд
         super().__init__()
 
     async def __call__(
@@ -29,6 +37,134 @@ class LoggingMiddleware(BaseMiddleware):
         """Логирование входящих обновлений"""
         user_id = get_user_id(event)
         chat_id = get_chat_id(event)
+
+        # print(f"log_telegram_event {user_id}{chat_id}")
+        #
+        # if isinstance(event, Message):
+        #     print("✅ Это сообщение")
+        #     # message.text, message.chat, message.from_user и т.д.
+        #
+        # elif isinstance(event, CallbackQuery):
+        #     print("✅ Это callback-запрос")
+        #     # event.data, event.from_user, event.message
+        #
+        # elif isinstance(event, Update):
+        #     print("✅ Это Update (контейнер)")
+        #     # event.message, event.callback_query, event.chat_member и т.д.
+        #
+        # elif isinstance(event, ChatMemberUpdated):
+        #     print("✅ Это обновление участника чата")
+        #     # event.chat, event.from_user, event.new_chat_member
+        #
+        #     # === ДРУГИЕ ТИПЫ ===
+        # elif isinstance(event, InlineQuery):
+        #     print("✅ Это inline-запрос")
+        #
+        # elif isinstance(event, ChosenInlineResult):
+        #     print("✅ Это выбранный inline-результат")
+        #
+        # elif isinstance(event, ShippingQuery):
+        #     print("✅ Это запрос доставки")
+        #
+        # elif isinstance(event, PreCheckoutQuery):
+        #     print("✅ Это запрос предоплаты")
+        #
+        # elif isinstance(event, Poll):
+        #     print("✅ Это опрос")
+        #
+        # elif isinstance(event, PollAnswer):
+        #     print("✅ Это ответ на опрос")
+        #
+        # elif isinstance(event, ChatJoinRequest):
+        #     print("✅ Это запрос на вступление в чат")
+        #
+        # # Проверяем, что это Update
+        # if isinstance(event, Update):
+        #     update: Update = event
+        #
+        #     # === 1. Обработка Message ===
+        #     if update.message:
+        #         message: Message = update.message
+        #         print(f"📩 Message: {message.text}")
+        #         print(f"   Chat ID: {message.chat.id}")
+        #         print(f"   User ID: {message.from_user.id if message.from_user else None}")
+        #
+        #         # Можно получить все данные из сообщения
+        #         if message.text:
+        #             text = message.text
+        #             if text.startswith("/"):
+        #                 command = text.split()[0]
+        #                 args = text.split()[1:] if len(text.split()) > 1 else []
+        #                 print(f"   Command: {command}, Args: {args}")
+        #
+        #         elif message.photo:
+        #             print(f"   Photo: {message.photo[-1].file_id}")
+        #
+        #         elif message.document:
+        #             print(f"   Document: {message.document.file_name}")
+        #
+        #     # === 2. Обработка edited_message ===
+        #     elif update.edited_message:
+        #         message: Message = update.edited_message
+        #         print(f"📝 Edited message: {message.text}")
+        #
+        #     # === 3. Обработка CallbackQuery ===
+        #     elif update.callback_query:
+        #         callback: CallbackQuery = update.callback_query
+        #         print(f"🔘 Callback: {callback.data}")
+        #         print(f"   User ID: {callback.from_user.id}")
+        #
+        #         if callback.message:
+        #             print(f"   Message ID: {callback.message.message_id}")
+        #             print(f"   Chat ID: {callback.message.chat.id}")
+        #
+        #     # === 4. Обработка ChatMemberUpdated ===
+        #     elif update.chat_member:
+        #         chat_member: ChatMemberUpdated = update.chat_member
+        #         print(f"👤 Chat member update in {chat_member.chat.id}")
+        #         print(f"   Old status: {chat_member.old_chat_member.status}")
+        #         print(f"   New status: {chat_member.new_chat_member.status}")
+        #
+        #     # === 5. Обработка MyChatMemberUpdated ===
+        #     elif update.my_chat_member:
+        #         my_chat_member = update.my_chat_member
+        #         print(f"🤖 Bot status changed in {my_chat_member.chat.id}")
+        #         print(f"   Old: {my_chat_member.old_chat_member.status}")
+        #         print(f"   New: {my_chat_member.new_chat_member.status}")
+        #
+        #     # === 6. Обработка InlineQuery ===
+        #     elif update.inline_query:
+        #         inline_query = update.inline_query
+        #         print(f"🔍 Inline query: {inline_query.query}")
+        #         print(f"   User: {inline_query.from_user.id}")
+        #
+        #     # === 7. Обработка ChosenInlineResult ===
+        #     elif update.chosen_inline_result:
+        #         chosen = update.chosen_inline_result
+        #         print(f"✅ Chosen inline result: {chosen.result_id}")
+        #
+        #     # === 8. Обработка ChatJoinRequest ===
+        #     elif update.chat_join_request:
+        #         join_request = update.chat_join_request
+        #         print(f"📨 Join request to {join_request.chat.id}")
+        #         print(f"   User: {join_request.from_user.id}")
+        #
+        #     # === 9. Другие типы ===
+        #     elif update.poll:
+        #         print(f"📊 Poll: {update.poll.question}")
+        #     elif update.poll_answer:
+        #         print(f"📊 Poll answer from {update.poll_answer.user.id}")
+        #     elif update.shipping_query:
+        #         print(f"📦 Shipping query")
+        #     elif update.pre_checkout_query:
+        #         print(f"💳 Pre-checkout query")
+        #
+        #     # === Продолжаем обработку ===
+        #     return await handler(event, data)
+        #
+        # # Если это не Update - обрабатываем как обычно
+        # else:
+        #     return await handler(event, data)
 
         # Логирование обновления
         if self.log_updates:
@@ -54,6 +190,7 @@ class LoggingMiddleware(BaseMiddleware):
                 bot_logger.info(
                     f"Handler completed: {self._get_event_type(event)}",
                     extra={"duration_ms": duration_ms, "user_id": user_id, "chat_id": chat_id},
+                    exc_info=True,
                 )
 
             return result
@@ -70,6 +207,7 @@ class LoggingMiddleware(BaseMiddleware):
                     "event_type": self._get_event_type(event),
                     "update_id": self._get_update_id(event),
                 },
+                exc_info=True,
             )
             raise
 
@@ -113,6 +251,86 @@ class LoggingMiddleware(BaseMiddleware):
                 return update_id
             return None
         return None
+
+    async def _is_message_for_bot(self, message: Message, bot: Bot) -> bool:
+        """Основная проверка адресованности боту"""
+        if not bot:
+            return False
+
+        # Получаем информацию о боте с кешированием
+        bot_info = await self._get_bot_info(bot)
+        if not bot_info:
+            return False
+
+        bot_id = bot_info.get("id")
+        bot_username = bot_info.get("username")
+
+        if not bot_id or not bot_username:
+            return False
+
+        # === 1. Личный чат ===
+        if message.chat.type == "private":
+            return True
+
+        # === 2. Команда ===
+        if message.text and message.text.startswith("/"):
+            command_parts = message.text.split()
+            command = command_parts[0]
+
+            # Проверяем, что команда не для другого бота
+            if "@" in command:
+                # /command@other_bot
+                return bool(command.endswith(f"@{bot_username}"))
+            else:
+                # /command — для нашего бота
+                return True
+
+        # === 3. Reply на сообщение бота ===
+        if (
+            message.reply_to_message
+            and message.reply_to_message.from_user
+            and message.reply_to_message.from_user.id == bot_id
+        ):
+            return True
+
+        # === 4. Упоминание @username ===
+        if message.text and f"@{bot_username}" in message.text:
+            return True
+
+        # === 5. Проверка entities ===
+        if message.entities:
+            for entity in message.entities:
+                if entity.type == "mention":
+                    text = message.text[entity.offset : entity.offset + entity.length]
+                    if text == f"@{bot_username}":
+                        return True
+                elif entity.type == "text_mention":
+                    if entity.user.id == bot_id:
+                        return True
+
+        return False
+
+    async def _get_bot_info(self, bot: Bot) -> dict:
+        """Кешированное получение информации о боте"""
+        import time
+
+        current_time = time.time()
+        if self._bot_info_cache and (current_time - self._cache_time) < self._cache_ttl:
+            return self._bot_info_cache
+
+        try:
+            me = await bot.get_me()
+            self._bot_info_cache = {
+                "id": me.id,
+                "username": me.username,
+                "first_name": me.first_name,
+                "is_bot": me.is_bot,
+            }
+            self._cache_time = current_time
+            return self._bot_info_cache
+        except Exception as e:
+            print(f"⚠️ Не удалось получить информацию о боте: {e}")
+            return {}
 
 
 class ChatActivityMiddleware(BaseMiddleware):

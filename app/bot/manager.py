@@ -698,7 +698,6 @@ class BotManager:
         await self._setup_dynamic_commands()
 
         dp = Dispatcher()
-
         dp.update.middleware(LoggingMiddleware())
         dp.update.middleware(ChatActivityMiddleware(db_manager))
         dp.update.middleware(DatabaseMiddleware())
@@ -939,7 +938,7 @@ class BotManager:
     def get_admin_commands() -> list[dict[str, str]]:
         """Админ-команды (видны только администраторам)"""
         return [
-            {"command": "/groups", "description": "Группы действий (админ)"},
+            {"command": "/users", "description": "Пользователи (админ)"},
             {"command": "/broadcast", "description": "Рассылка (админ)"},
             {"command": "/delete", "description": "Удалить сообщение (админ)"},
             {"command": "/sync", "description": "Меню синхронизации (админ)"},

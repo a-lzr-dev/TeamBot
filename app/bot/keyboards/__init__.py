@@ -3,7 +3,7 @@ from .admin import AdminKeyboard, get_broadcast_confirm_keyboard, get_delete_con
 from .auth import AuthKeyboard, get_auth_needed_keyboard, get_auth_request_keyboard, get_logout_keyboard
 from .automation import AutomationKeyboard
 from .base import BaseKeyboard, get_inline_keyboard, get_reply_keyboard
-from .groups import BUTTONS_PER_ROW_GROUPS, GroupKeyboard, get_groups_keyboard
+from .users import UserKeyboard, get_close_keyboard, get_users_keyboard
 
 __all__ = [
     # Base
@@ -23,10 +23,10 @@ __all__ = [
     "ActionKeyboard",
     "get_action_menu_keyboard",
     "BUTTONS_PER_ROW_ACTIONS",
-    # Groups
-    "GroupKeyboard",
-    "get_groups_keyboard",
-    "BUTTONS_PER_ROW_GROUPS",
+    # Users
+    "UserKeyboard",
+    "get_users_keyboard",
+    "get_close_keyboard",
     # Automation
     "AutomationKeyboard",
 ]

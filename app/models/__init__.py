@@ -54,6 +54,7 @@ from .avanpost import (
     AvanpostUserLinkChatContactMsgModel,
     AvanpostUserLinkContactModel,
     AvanpostUserLinkContactMsgControlModel,
+    AvanpostUserLinkModel,
     AvanpostUserMissionItemLangModel,
     AvanpostUserMissionItemModel,
     AvanpostUserMissionLangModel,
@@ -159,6 +160,7 @@ __all__ = [
     "AvanpostContactLangModel",
     "AvanpostContactLinkModel",
     "AvanpostUserModel",
+    "AvanpostUserLinkModel",
     "AvanpostUserChatModel",
     "AvanpostUserChatLangModel",
     # Avanpost - оперативная синхронизация

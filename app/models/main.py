@@ -18,7 +18,7 @@ from sqlalchemy import (
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .avanpost import AvanpostUserModel
+from .avanpost import AvanpostUserLinkModel, AvanpostUserModel
 from .base import (
     BaseModel,
     ChatMemberMixin,
@@ -77,12 +77,12 @@ class UserModel(BaseModel, UserMixin):
         back_populates="completed_by_user",
     )
 
-    # Связь с AvanpostUser (один к одному)
-    avanpost_user: Mapped[Optional["AvanpostUserModel"]] = relationship(
-        "AvanpostUserModel",
-        foreign_keys="AvanpostUserModel.FK_User",
+    avanpost_link: Mapped[Optional["AvanpostUserLinkModel"]] = relationship(
+        "AvanpostUserLinkModel",
+        foreign_keys="AvanpostUserLinkModel.FK_Link",
         back_populates="telegram_user",
         uselist=False,
+        cascade="all, delete-orphan",
     )
 
     def __str__(self) -> str:
@@ -102,19 +102,60 @@ class UserModel(BaseModel, UserMixin):
         return self.FUserName or ""
 
     @property
+    def avanpost_user(self) -> Optional["AvanpostUserModel"]:
+        """Получение AvanpostUser через связь"""
+        if self.avanpost_link is None:
+            return None
+
+        avanpost_user = self.avanpost_link.avanpost_user
+        if avanpost_user is None:
+            return None
+
+        if not isinstance(avanpost_user, AvanpostUserModel):
+            return None
+
+        return avanpost_user
+
+    @property
     def is_authenticated(self) -> bool:
         """Проверка авторизации через наличие связи с AvanpostUser"""
-        return self.avanpost_user is not None
+        if self.avanpost_link is None:
+            return False
+        return self.avanpost_link.FK_Link is not None
 
     @property
     def avanpost_id(self) -> int | None:
         """Получение ID пользователя в Avanpost"""
-        return self.avanpost_user.FID if self.avanpost_user else None
+        if self.avanpost_link is None:
+            return None
+
+        fk_parent = self.avanpost_link.FK_Parent
+        if fk_parent is None:
+            return None
+
+        if not isinstance(fk_parent, int):
+            return None
+
+        return fk_parent
 
     @property
     def avanpost_group_id(self) -> int | None:
         """Получение ID группы меню из AvanpostUser"""
-        return self.avanpost_user.FK_MenuGroup if self.avanpost_user else None
+        if self.avanpost_link is None:
+            return None
+
+        avanpost_user = self.avanpost_link.avanpost_user
+        if avanpost_user is None:
+            return None
+
+        menu_group = avanpost_user.FK_MenuGroup
+        if menu_group is None:
+            return None
+
+        if not isinstance(menu_group, int):
+            return None
+
+        return menu_group
 
     @property
     def display_name(self) -> str:

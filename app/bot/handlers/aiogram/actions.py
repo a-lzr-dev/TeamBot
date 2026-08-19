@@ -10,12 +10,14 @@ from aiogram.types import CallbackQuery, Message
 from ....bot.dependencies import get_bot_manager
 from ....config import settings
 from ....db import AvanpostRepository, db_manager
+from ....db.repositories import UserRepository
 from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import ErrorCategory, MessageActionType, MessageType
 from ....services import error_service
 from ...keyboards import ActionKeyboard
-from .auth import get_user_group_id, is_user_authenticated
+from .auth import _auth_cache, get_user_group_id, is_user_authenticated
+from .users import back_to_users
 
 router = Router(name="aiogram_actions")
 
@@ -46,9 +48,75 @@ async def cmd_actions(message: Message, state: FSMContext) -> None:
 
     user_id = message.from_user.id
 
+    # Проверка, не является ли пользователь выбранным через /users
+    state_data = await state.get_data()
+    selected_user_id = state_data.get("selected_user_id")
+    selected_user_name = state_data.get("selected_user_name")
+
+    # Если выбран конкретный пользователь через /users
+    if selected_user_id and selected_user_id != user_id:
+        # Использование выбранного пользователя
+        user_id = selected_user_id
+        bot_logger.debug(f"✅ Using selected user ID from state: {user_id} ({selected_user_name})")
+
+        # Проверка, что пользователь существует в Avanpost
+        async with db_manager.get_session() as session:
+            avanpost_user = await UserRepository.get_avanpost_user_data(session, user_id)
+            if not avanpost_user:
+                await bot_manager.send_answer(
+                    text="❌ **Пользователь не найден**\n\n"
+                    f"Пользователь с ID `{user_id}` не найден в системе Avanpost.",
+                    event=message,
+                    message_type=MessageType.COMMAND_ACTION_INFO,
+                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                    parse_mode="Markdown",
+                )
+                return
+
+        # Обновление is_admin
+        is_admin = user_id in settings.ADMIN_IDS
+        await state.update_data(
+            user_id=user_id,
+            is_admin=is_admin,
+            selected_user_id=user_id,
+            selected_user_name=selected_user_name,
+        )
+
+        # Получение group_id для выбранного пользователя
+        group_id = await get_user_group_id(user_id)
+        if not group_id:
+            await bot_manager.send_answer(
+                text="❌ **Группа действий не найдена**\n\n"
+                f"У пользователя `{selected_user_name or user_id}` не назначена группа действий в системе.\n"
+                "Обратитесь к администратору для настройки прав.",
+                event=message,
+                message_type=MessageType.COMMAND_ACTION_INFO,
+                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                parse_mode="Markdown",
+            )
+            return
+
+        await state.set_state(ActionStates.viewing_menu)
+        await bot_manager.delete_message_by_link(message)
+
+        # Очистка истории при входе в меню
+        await state.update_data(menu_history=[])
+
+        await show_menu(
+            event=message,
+            group_id=group_id,
+            state=state,
+            _is_new=True,
+            user_display_name=selected_user_name or f"User #{user_id}",
+        )
+        return
+
+    # Стандартная логика для текущего пользователя
     if not await is_user_authenticated(user_id):
         await bot_manager.send_answer(
-            text="🔐 **Требуется авторизация**\n\nДля доступа к действиям необходимо авторизоваться.\nИспользуйте /start для начала авторизации.",
+            text="🔐 **Требуется авторизация**\n\n"
+            "Для доступа к действиям необходимо авторизоваться.\n"
+            "Используйте /start для начала авторизации.",
             event=message,
             message_type=MessageType.COMMAND_ACTION_INFO,
             delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
@@ -60,7 +128,9 @@ async def cmd_actions(message: Message, state: FSMContext) -> None:
 
     if not group_id:
         await bot_manager.send_answer(
-            text="❌ **Группа действий не найдена**\n\nУ вас не назначена группа действий в системе.\nОбратитесь к администратору для настройки прав.",
+            text="❌ **Группа действий не найдена**\n\n"
+            "У вас не назначена группа действий в системе.\n"
+            "Обратитесь к администратору для настройки прав.",
             event=message,
             message_type=MessageType.COMMAND_ACTION_INFO,
             delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
@@ -69,13 +139,12 @@ async def cmd_actions(message: Message, state: FSMContext) -> None:
         return
 
     await state.set_state(ActionStates.viewing_menu)
-
     await bot_manager.delete_message_by_link(message)
 
-    # Очищаем историю при входе в меню
+    # Очистка истории при входе в меню
     await state.update_data(menu_history=[])
 
-    await show_menu(event=message, group_id=group_id, state=state, is_new=True)
+    await show_menu(event=message, group_id=group_id, state=state, _is_new=True)
 
 
 # ============ ОБРАБОТЧИКИ КОЛБЭКОВ ============
@@ -85,33 +154,177 @@ async def cmd_actions(message: Message, state: FSMContext) -> None:
     F.data.startswith("action_")
     | F.data.startswith("action_back_")
     | (F.data == "action_home")
-    | (F.data == "back_to_groups")
+    | (F.data == "back_to_users")
 )
 @log_exceptions(bot_logger)
 async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков действий"""
+    """
+    Обработка колбэков действий.
+
+    Поддерживает:
+    - action_<id> - выбор действия
+    - action_back_<parent_id> - возврат на уровень назад
+    - action_home - возврат в главное меню
+    - back_to_groups - переход к списку групп (админ)
+    - back_to_users - переход к списку пользователей
+    """
     bot_manager = get_bot_manager()
 
     if not callback.from_user:
         await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
         return
 
-    user_id = callback.from_user.id
+    telegram_user_id = callback.from_user.id
+    callback_data = callback.data
 
-    bot_logger.debug(f"✅ Callback from REAL user: {user_id}")
+    if not callback_data:
+        await bot_manager.send_toast(text="❌ Пустой callback.", event=callback)
+        return
+
+    # Обработка возврата к списку пользователей
+    if callback_data == "back_to_users":
+        await back_to_users(callback, state)
+        return
+
+    bot_logger.debug(f"✅ Callback from REAL user: {telegram_user_id}")
     bot_logger.debug(f"✅ Callback data: {callback.data}")
 
-    await state.update_data(user_id=user_id, is_admin=user_id in settings.ADMIN_IDS)
+    # Получение состояния
+    state_data = await state.get_data()
+    selected_user_id = state_data.get("selected_user_id")
+    selected_user_name = state_data.get("selected_user_name")
+    selected_user_group_id = state_data.get("selected_user_group_id")
+
+    # ============================================================
+    # БЛОК 1: ОБРАБОТКА ВЫБРАННОГО ПОЛЬЗОВАТЕЛЯ (через /users)
+    # ============================================================
+    if selected_user_id and selected_user_id != telegram_user_id:
+        bot_logger.debug(f"✅ Using selected user ID from state in callback: {selected_user_id} ({selected_user_name})")
+
+        # 1. Получаем group_id из состояния (сохранен в select_user)
+        group_id = selected_user_group_id
+
+        # 2. Если в состоянии нет, пробуем из кеша
+        if not group_id:
+            cache_data = _auth_cache.get(telegram_user_id)
+            if cache_data:
+                group_id = cache_data.get("group_id")
+                bot_logger.debug(f"✅ Found group_id in cache: {group_id}")
+
+        # 3. Если всё еще нет — пробуем получить из БД напрямую по Avanpost ID
+        if not group_id:
+            async with db_manager.get_session() as session:
+                from app.models.avanpost import AvanpostUserModel
+
+                avanpost_user = await session.get(AvanpostUserModel, selected_user_id)
+                if avanpost_user:
+                    group_id = avanpost_user.FK_MenuGroup
+                    bot_logger.debug(f"✅ Found group_id in DB: {group_id}")
+                else:
+                    await bot_manager.send_toast(
+                        text=f"❌ Пользователь {selected_user_name or selected_user_id} не найден в системе Avanpost.",
+                        event=callback,
+                    )
+                    return
+
+        if not group_id:
+            await bot_manager.send_toast(
+                text=f"❌ У пользователя {selected_user_name or selected_user_id} не назначена группа действий.",
+                event=callback,
+            )
+            return
+
+        # 4. Проверка, что пользователь существует в Avanpost
+        async with db_manager.get_session() as session:
+            from app.models.avanpost import AvanpostUserModel
+
+            avanpost_user = await session.get(AvanpostUserModel, selected_user_id)
+            if not avanpost_user:
+                await bot_manager.send_toast(
+                    text=f"❌ Пользователь {selected_user_id} не найден в системе Avanpost.",
+                    event=callback,
+                )
+                return
+
+        # 5. Обновление состояния и кеша
+        is_admin = telegram_user_id in settings.ADMIN_IDS
+        await state.update_data(
+            user_id=selected_user_id,
+            is_admin=is_admin,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+            selected_user_group_id=group_id,
+            use_group_id=group_id,
+        )
+
+        # Обновляем кеш с данными выбранного пользователя
+        _auth_cache[telegram_user_id] = {
+            "avanpost_user_id": selected_user_id,
+            "group_id": group_id,
+            "phone": avanpost_user.FPhone,
+            "telegram_user_id": telegram_user_id,
+        }
+        bot_logger.debug(f"✅ Updated _auth_cache for telegram user {telegram_user_id} with group_id={group_id}")
+
+        # ============================================================
+        # ОБРАБОТКА ВЫБОРА ДЕЙСТВИЯ
+        # ============================================================
+        if callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
+            try:
+                action_id = int(callback_data.split("_")[1])
+
+                async with db_manager.get_session("avanpost") as session:
+                    has_children = await AvanpostRepository.has_subitems(
+                        session=session,
+                        group_id=group_id,
+                        item_id=action_id,
+                    )
+
+                if has_children:
+                    await bot_manager.send_toast(event=callback)
+
+                    # Сохранение истории переходов
+                    history = state_data.get("menu_history", [])
+                    history.append(action_id)
+                    await state.update_data(menu_history=history)
+                    bot_logger.debug(f"📜 Added {action_id} to history: {history}")
+
+                    await show_menu(
+                        event=callback,
+                        group_id=group_id,
+                        parent_item_id=action_id,
+                        state=state,
+                        is_callback=True,
+                        user_display_name=selected_user_name or f"User #{selected_user_id}",
+                    )
+                else:
+                    await execute_action(callback=callback, action_id=action_id, state=state)
+                return
+
+            except (ValueError, IndexError):
+                bot_logger.warning(f"⚠️ Invalid action ID in callback: {callback.data}")
+
+        # Обработка остальных колбэков (action_back_, action_home)
+        from ...callbacks import action_callback_handler
+
+        await action_callback_handler.handle(callback, state)
+        return
+
+    # ============================================================
+    # БЛОК 2: СТАНДАРТНАЯ ЛОГИКА ДЛЯ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ
+    # ============================================================
+    await state.update_data(
+        user_id=telegram_user_id,
+        is_admin=telegram_user_id in settings.ADMIN_IDS,
+    )
 
     # Обработка выбора действия (не "Назад" и не "В главное меню")
-    callback_data = callback.data
-    if callback_data and callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
+    if callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
         try:
-            if not callback_data:
-                return
             action_id = int(callback_data.split("_")[1])
 
-            group_id = await get_user_group_id(user_id)
+            group_id = await get_user_group_id(telegram_user_id)
+
             if group_id:
                 async with db_manager.get_session("avanpost") as session:
                     has_children = await AvanpostRepository.has_subitems(
@@ -123,8 +336,7 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
                 if has_children:
                     await bot_manager.send_toast(event=callback)
 
-                    # Сохраняем историю переходов
-                    state_data = await state.get_data()
+                    # Сохранение истории переходов
                     history = state_data.get("menu_history", [])
                     history.append(action_id)
                     await state.update_data(menu_history=history)
@@ -139,7 +351,13 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
                     )
                 else:
                     await execute_action(callback=callback, action_id=action_id, state=state)
+            else:
+                await bot_manager.send_toast(
+                    text="❌ Не удалось определить группу действий для пользователя.",
+                    event=callback,
+                )
             return
+
         except (ValueError, IndexError):
             bot_logger.warning(f"⚠️ Invalid action ID in callback: {callback.data}")
 
@@ -160,7 +378,8 @@ async def show_menu(
     state: FSMContext,
     parent_item_id: int | None = None,
     is_callback: bool = False,
-    is_new: bool = False,
+    _is_new: bool = False,
+    user_display_name: str | None = None,
 ) -> None:
     """
     Отображение меню действий с горизонтальным расположением кнопок.
@@ -173,6 +392,14 @@ async def show_menu(
     try:
         state_data = await state.get_data()
         user_id = state_data.get("user_id")
+
+        # Проверка на выбранного пользователя
+        selected_user_id = state_data.get("selected_user_id")
+        # selected_user_name = state_data.get("selected_user_name")
+
+        if selected_user_id and not user_id:
+            user_id = selected_user_id
+            bot_logger.debug(f"✅ Using selected user ID from state in show_menu: {user_id}")
 
         if user_id:
             bot_logger.debug(f"✅ Using user_id from state: {user_id}")
@@ -187,7 +414,7 @@ async def show_menu(
                     is_callback = True
 
             elif isinstance(event, Message):
-                # Для обычного сообщения - ИСПРАВЛЕНО: объединенные условия
+                # Для обычного сообщения
                 if event.from_user and not event.from_user.is_bot:
                     # Реальный пользователь отправил сообщение
                     user_id = event.from_user.id
@@ -275,6 +502,11 @@ async def show_menu(
         # Формирование текста с красивым оформлением
         header_text = "✨ 📋 **МЕНЮ ДЕЙСТВИЙ**"
 
+        # Добавляем информацию о выбранном пользователе
+        display_name = user_display_name or state_data.get("selected_user_name")
+        if display_name:
+            header_text += f" 👤 {display_name}"
+
         if parent_item_id is not None:
             if parent_name:
                 header_text += f" • 📂 {parent_name} ✨\n"
@@ -287,7 +519,11 @@ async def show_menu(
 
         # Создание клавиатуры
         keyboard = ActionKeyboard.get_action_menu_keyboard(
-            items=menu_items, parent_id=parent_id, is_admin=is_admin, is_root_menu=(parent_item_id is None)
+            items=menu_items,
+            parent_id=parent_id,
+            is_admin=is_admin,
+            is_root_menu=(parent_item_id is None),
+            show_back_to_users=bool(state_data.get("selected_user_id")),
         )
 
         if is_callback and isinstance(event, CallbackQuery):
@@ -395,6 +631,11 @@ async def execute_action(callback: CallbackQuery, action_id: int, state: FSMCont
     try:
         state_data = await state.get_data()
         group_id = state_data.get("group_id")
+
+        # Проверка на выбранного пользователя
+        selected_user_id = state_data.get("selected_user_id")
+        if selected_user_id:
+            group_id = await get_user_group_id(selected_user_id)
 
         if not group_id:
             group_id = await get_user_group_id(callback.from_user.id)
