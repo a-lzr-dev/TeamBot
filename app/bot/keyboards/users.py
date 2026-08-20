@@ -4,7 +4,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from ...config import settings
 
-# Количество кнопок с пользователями в ряду
 BUTTONS_PER_ROW_USERS = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 2)
 
 
@@ -18,20 +17,9 @@ class UserKeyboard:
         total_pages: int = 1,
         has_prev: bool = False,
         has_next: bool = False,
+        search_query: str | None = None,
     ) -> InlineKeyboardMarkup:
-        """
-        Создание клавиатуры со списком пользователей.
-
-        Args:
-            users: Список пользователей
-            current_page: Текущая страница
-            total_pages: Всего страниц
-            has_prev: Есть ли предыдущая страница
-            has_next: Есть ли следующая страница
-
-        Returns:
-            InlineKeyboardMarkup
-        """
+        """Создание клавиатуры со списком пользователей"""
         keyboard = []
 
         # Кнопки пользователей
@@ -41,11 +29,9 @@ class UserKeyboard:
             name = user.get("name", f"User #{user_id}")
             is_authorized = user.get("is_authorized", False)
 
-            # Ограничение длины имени
             if len(name) > 20:
                 name = name[:18] + "…"
 
-            # Эмодзи для авторизованных пользователей
             prefix = "✅ " if is_authorized else "⬜ "
             button_text = f"{prefix}{name}"
 
@@ -63,13 +49,36 @@ class UserKeyboard:
         nav_row = []
 
         if has_prev:
-            nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"users_{current_page - 1}_page"))
+            if search_query:
+                nav_row.append(
+                    InlineKeyboardButton(
+                        text="⬅️ Назад", callback_data=f"users_{current_page - 1}_page_search_{search_query}"
+                    )
+                )
+            else:
+                nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"users_{current_page - 1}_page"))
 
-        # Информация о странице
-        nav_row.append(InlineKeyboardButton(text=f"📄 {current_page + 1}/{total_pages}", callback_data="users_info"))
+        if search_query:
+            nav_row.append(
+                InlineKeyboardButton(text=f"🔍 {current_page + 1}/{total_pages} Поиск...", callback_data="users_search")
+            )
+        else:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text=f"📄 {current_page + 1}/{total_pages} Поиск...",
+                    callback_data="users_search",
+                )
+            )
 
         if has_next:
-            nav_row.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"users_{current_page + 1}_page"))
+            if search_query:
+                nav_row.append(
+                    InlineKeyboardButton(
+                        text="Вперед ➡️", callback_data=f"users_{current_page + 1}_page_search_{search_query}"
+                    )
+                )
+            else:
+                nav_row.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"users_{current_page + 1}_page"))
 
         keyboard.append(nav_row)
 
@@ -85,7 +94,14 @@ class UserKeyboard:
             inline_keyboard=[[InlineKeyboardButton(text="❌ Закрыть", callback_data="users_close")]]
         )
 
+    @staticmethod
+    def get_search_cancel_keyboard() -> InlineKeyboardMarkup:
+        """Клавиатура для отмены поиска (только кнопка отмены)"""
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="❌ Отменить поиск", callback_data="users_cancel_search")]]
+        )
 
-# Удобные алиасы
+
 get_users_keyboard = UserKeyboard.get_users_keyboard
 get_close_keyboard = UserKeyboard.get_close_keyboard
+get_search_cancel_keyboard = UserKeyboard.get_search_cancel_keyboard

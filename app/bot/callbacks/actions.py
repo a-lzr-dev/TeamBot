@@ -48,8 +48,8 @@ class ActionCallbackHandler(BaseCallbackHandler):
         """Обработка кнопки 'В главное меню'"""
         await CallbackHandler.answer(callback)
 
-        from ..handlers.aiogram.actions import show_menu
-        from ..handlers.aiogram.auth import get_user_group_id
+        from app.bot.handlers.aiogram.actions import show_menu
+        from app.bot.handlers.aiogram.auth import get_user_group_id
 
         group_id = await get_user_group_id(callback.from_user.id)
         if not group_id:
@@ -73,8 +73,8 @@ class ActionCallbackHandler(BaseCallbackHandler):
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(event=callback)
 
-        from ..handlers.aiogram.actions import show_menu
-        from ..handlers.aiogram.auth import get_user_group_id
+        from app.bot.handlers.aiogram.actions import show_menu
+        from app.bot.handlers.aiogram.auth import get_user_group_id
 
         group_id = await get_user_group_id(callback.from_user.id)
         if not group_id:
@@ -152,8 +152,8 @@ class ActionCallbackHandler(BaseCallbackHandler):
         """Обработка выбора действия"""
         await CallbackHandler.answer(callback)
 
-        from ..handlers.aiogram.actions import execute_action, show_menu
-        from ..handlers.aiogram.auth import get_user_group_id
+        from app.bot.handlers.aiogram.actions import execute_action, show_menu
+        from app.bot.handlers.aiogram.auth import get_user_group_id
 
         callback_data = callback.data
         if not callback_data:

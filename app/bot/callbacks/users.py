@@ -15,22 +15,23 @@ class UsersCallbackHandler(BaseCallbackHandler):
 
     Поддерживает:
     - users_<page>_page - переключение страницы
+    - users_<page>_page_search_<query> - переключение страницы с поиском
     - users_<page>_select_<user_id> - выбор пользователя
     - users_close - закрытие списка
-    - users_info - информация о странице (заглушка)
+    - users_search - кнопка поиска
+    - users_cancel_search - ОТМЕНА ПОИСКА (НОВЫЙ)
     """
 
     PREFIX_USERS = "users_"
     PREFIX_CLOSE = "users_close"
-    PREFIX_INFO = "users_info"
+    PREFIX_SEARCH = "users_search"
+    PREFIX_CANCEL_SEARCH = "users_cancel_search"  # НОВЫЙ ПРЕФИКС
 
     def __init__(self) -> None:
         super().__init__(self.PREFIX_USERS)
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """
-        Обработка колбэка пользователей.
-        """
+        """Обработка колбэка пользователей"""
         callback_data = callback.data
 
         if not callback_data:
@@ -49,10 +50,13 @@ class UsersCallbackHandler(BaseCallbackHandler):
         if callback_data == self.PREFIX_CLOSE:
             return await self._handle_close(callback, state, **kwargs)
 
-        # Обработка информации о странице (заглушка)
-        if callback_data == self.PREFIX_INFO:
-            await CallbackHandler.answer(callback, "ℹ️ Информация о странице")
-            return None
+        # Обработка поиска
+        if callback_data == self.PREFIX_SEARCH:
+            return await self._handle_search(callback, state, **kwargs)
+
+        # Обработчик: отмена поиска
+        if callback_data == self.PREFIX_CANCEL_SEARCH:
+            return await self._handle_cancel_search(callback, state, **kwargs)
 
         # Обработка переключения страницы и выбора пользователя
         if callback_data.startswith(self.PREFIX_USERS):
@@ -62,16 +66,78 @@ class UsersCallbackHandler(BaseCallbackHandler):
         await CallbackHandler.answer(callback, "Неизвестное действие")
         return None
 
-    # ОБРАБОТЧИКИ
+    # ============ ОБРАБОТЧИКИ ============
 
     @staticmethod
     async def _handle_close(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
-        """Закрытие списка пользователей"""
+        """Закрытие списка пользователей / отмена поиска"""
         await CallbackHandler.answer(callback)
 
-        from ..handlers.aiogram.users import close_users_list
+        # Проверка нахождения в состоянии поиска
+        current_state = await state.get_state()
 
-        await close_users_list(callback, state)
+        if current_state == "UserStates:searching_users":
+            # Если в поиске - возврат к списку
+            from app.bot.handlers.aiogram.users import show_users
+
+            # Сброс состояния поиска
+            await state.set_state(None)
+            await state.update_data(search_query=None)
+
+            # Получение сохраненной страницы
+            data = await state.get_data()
+            page = data.get("users_page_before_search", 0)
+            await state.update_data(users_page_before_search=0)
+
+            # Отображение списка пользователей
+            await show_users(event=callback, state=state, page=page, search_query=None)
+        else:
+            # Обычное закрытие
+            from app.bot.handlers.aiogram.users import close_users_list
+
+            await close_users_list(callback, state)
+
+    @staticmethod
+    async def _handle_search(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
+        """Обработка кнопки поиска"""
+        await callback.answer("🔍 Введите поисковый запрос", show_alert=False)
+
+        from app.bot.handlers.aiogram.users import handle_users_search_button
+
+        await handle_users_search_button(callback, state)
+
+    @staticmethod
+    async def _handle_cancel_search(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
+        """Отмена поиска - возврат к списку пользователей"""
+        await callback.answer("👥 Возврат к списку пользователей", show_alert=False)
+
+        from app.bot.handlers.aiogram.users import show_users
+
+        # Сброс состояния поиска
+        await state.set_state(None)
+
+        # Получение сохраненной страницы
+        data = await state.get_data()
+        page = data.get("users_page_before_search", 0)
+
+        # Очистка временных переменных
+        await state.update_data(
+            users_page_before_search=0,
+            search_query=None,
+        )
+
+        # Удаление сообщения с поиском
+        if callback.message:
+            try:
+                await callback.message.delete()
+                bot_logger.debug("🗑️ Deleted search message")
+            except Exception as e:
+                bot_logger.warning(f"⚠️ Could not delete message: {e}")
+
+        # Отображение списка пользователей
+        await show_users(event=callback, state=state, page=page, search_query=None)
+
+        bot_logger.info("✅ Search cancelled, returned to users list")
 
     async def _handle_users_action(self, callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
         """Обработка действий со списком пользователей"""
@@ -89,13 +155,23 @@ class UsersCallbackHandler(BaseCallbackHandler):
             page = int(parts[1])
             action = parts[2]
 
+            # Проверка наличия поискового запроса в callback_data
+            search_query = None
+            if len(parts) >= 5 and parts[3] == "search" and action in ("page", "select"):
+                search_query = parts[4]
+
             if action == "page":
                 # Переключение страницы
                 await CallbackHandler.answer(callback)
 
-                from ..handlers.aiogram.users import show_users
+                from app.bot.handlers.aiogram.users import show_users
 
-                await show_users(event=callback, state=state, page=page)
+                await show_users(
+                    event=callback,
+                    state=state,
+                    page=page,
+                    search_query=search_query,
+                )
 
             elif action == "select":
                 # Выбор пользователя
@@ -103,7 +179,16 @@ class UsersCallbackHandler(BaseCallbackHandler):
                     bot_logger.warning(f"⚠️ No user_id in select callback: {callback_data}")
                     return
 
-                user_id = int(parts[3])
+                # Если есть поисковый запрос, user_id может быть на позиции 3 или 4
+                user_id_idx = 3
+                if search_query is not None:
+                    user_id_idx = 4
+
+                if len(parts) <= user_id_idx:
+                    bot_logger.warning(f"⚠️ No user_id in select callback: {callback_data}")
+                    return
+
+                user_id = int(parts[user_id_idx])
                 await self._select_user(callback, state, user_id)
 
             else:
@@ -123,7 +208,7 @@ class UsersCallbackHandler(BaseCallbackHandler):
         bot_manager = get_bot_manager()
 
         try:
-            from ..handlers.aiogram.users import select_user
+            from app.bot.handlers.aiogram.users import select_user
 
             await select_user(callback, state, user_id)
 

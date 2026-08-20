@@ -1,7 +1,7 @@
 from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .chats import ChatRepository
-from .dirs import DirLanguageRepository
+from .dirs import DirContactGroupRepository, DirLanguageRepository
 from .errors import ErrorRepository
 from .errors_filters import ErrorFilterRepository
 from .generic import GenericRepository
@@ -13,17 +13,26 @@ from .system import SystemRepository
 from .users import UserRepository
 
 __all__ = [
+    # Основные репозитории
     "AvanpostRepository",
-    "AutomationRequestRepository",
     "ChatRepository",
+    "UserRepository",
+    "MessageRepository",
+    # Справочники
     "DirLanguageRepository",
+    "DirContactGroupRepository",
+    # Системные
+    "SystemRepository",
+    "StatsRepository",
+    # Ошибки
     "ErrorRepository",
     "ErrorFilterRepository",
-    "GenericRepository",
-    "MessageRepository",
+    # Уведомления
     "NotificationSettingsRepository",
+    # Напоминания
     "ReminderRepository",
-    "StatsRepository",
-    "SystemRepository",
-    "UserRepository",
+    # Автоматизация
+    "AutomationRequestRepository",
+    # Общие
+    "GenericRepository",
 ]

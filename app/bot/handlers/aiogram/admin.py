@@ -5,16 +5,22 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from ....bot.dependencies import get_bot_manager
-from ....config import settings
-from ....db import ChatRepository, MessageRepository, db_manager
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
-from ....models import MessageActionType, MessageType
-from ....services.avanpost_sync_service import AvanpostSyncService
-from ...keyboards import AdminKeyboard
+from app.bot.dependencies import get_bot_manager
+from app.bot.keyboards import AdminKeyboard
+from app.config import settings
+from app.db import ChatRepository, MessageRepository, db_manager
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import MessageActionType, MessageType
+from app.services.avanpost_sync_service import AvanpostSyncService
+from app.services.seed_service import AvanpostSeedService
 
 router = Router(name="aiogram_admin")
+
+
+# ============================================================
+# СОСТОЯНИЯ ДЛЯ FSM
+# ============================================================
 
 
 class BroadcastStates(StatesGroup):
@@ -30,6 +36,11 @@ class DeleteMessageStates(StatesGroup):
     waiting_for_chat_id = State()
     waiting_for_message_id = State()
     waiting_for_confirmation = State()
+
+
+# ============================================================
+# УПРАВЛЕНИЕ РАССЫЛКОЙ
+# ============================================================
 
 
 @router.message(Command("broadcast"))
@@ -252,6 +263,11 @@ async def broadcast_confirm(message: Message, state: FSMContext) -> None:
     await state.clear()
     if message.from_user:
         bot_logger.info(f"✅ Broadcast completed by {message.from_user.id}: {result['successful']}/{result['total']}")
+
+
+# ============================================================
+# УПРАВЛЕНИЕ УДАЛЕНИЕМ СООБЩЕНИЙ
+# ============================================================
 
 
 @router.message(Command("delete"))
@@ -560,6 +576,11 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     )
 
 
+# ============================================================
+# УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
+# ============================================================
+
+
 @router.message(Command("admins"))
 @log_exceptions(bot_logger)
 async def cmd_admins(message: Message) -> None:
@@ -773,7 +794,7 @@ async def cmd_remove_admin(message: Message) -> None:
 
 
 # ============================================================
-# НОВЫЕ АДМИН-КОМАНДЫ ДЛЯ СИНХРОНИЗАЦИИ AVANPOST
+# СИНХРОНИЗАЦИЯ AVANPOST
 # ============================================================
 
 
@@ -807,7 +828,7 @@ async def cmd_sync_base(message: Message) -> None:
             f"📈 Вставлено: {stats_dict.get('total_inserted', 0)}\n"
             f"🔄 Обновлено: {stats_dict.get('total_updated', 0)}\n"
             f"🗑️ Удалено: {stats_dict.get('total_deleted', 0)}\n"
-            f"⏭️ Без изменений: {stats_dict.get('total_unchanged', 0)}\n"
+            f"⏭️ Без изменений: {stats_dict.get('total_unchanged_upsert', 0)}\n"
             f"❌ Ошибок: {len(stats_dict.get('error_messages', []))}"
         )
         if stats_dict.get("error_messages"):
@@ -918,7 +939,7 @@ async def cmd_sync_user(message: Message) -> None:
             f"📈 Вставлено: {stats_dict.get('total_inserted', 0)}\n"
             f"🔄 Обновлено: {stats_dict.get('total_updated', 0)}\n"
             f"🗑️ Удалено: {stats_dict.get('total_deleted', 0)}\n"
-            f"⏭️ Без изменений: {stats_dict.get('total_unchanged', 0)}\n"
+            f"⏭️ Без изменений: {stats_dict.get('total_unchanged_upsert', 0)}\n"
             f"❌ Ошибок: {len(stats_dict.get('error_messages', []))}"
         )
 
@@ -976,7 +997,7 @@ async def cmd_sync_all_users(message: Message) -> None:
             f"📈 Вставлено: {result.get('total_inserted', 0)}\n"
             f"🔄 Обновлено: {result.get('total_updated', 0)}\n"
             f"🗑️ Удалено: {result.get('total_deleted', 0)}\n"
-            f"⏭️ Без изменений: {result.get('total_unchanged', 0)}"
+            f"⏭️ Без изменений: {result.get('total_unchanged_upsert', 0)}"
         )
 
         if result.get("errors"):
@@ -1012,7 +1033,7 @@ async def cmd_sync_light(message: Message) -> None:
                 f"📈 Вставлено: {stats.get('total_inserted', 0)}\n"
                 f"🔄 Обновлено: {stats.get('total_updated', 0)}\n"
                 f"🗑️ Удалено: {stats.get('total_deleted', 0)}\n"
-                f"⏭️ Без изменений: {stats.get('total_unchanged', 0)}\n"
+                f"⏭️ Без изменений: {stats.get('total_unchanged_upsert', 0)}\n"
                 f"❌ Ошибок: {len(stats.get('error_messages', []))}"
             )
             if stats.get("error_messages"):
@@ -1052,7 +1073,7 @@ async def cmd_sync_force(message: Message) -> None:
                 f"📈 Вставлено: {stats.get('total_inserted', 0)}\n"
                 f"🔄 Обновлено: {stats.get('total_updated', 0)}\n"
                 f"🗑️ Удалено: {stats.get('total_deleted', 0)}\n"
-                f"⏭️ Без изменений: {stats.get('total_unchanged', 0)}\n"
+                f"⏭️ Без изменений: {stats.get('total_unchanged_upsert', 0)}\n"
                 f"❌ Ошибок: {len(stats.get('error_messages', []))}"
             )
             if stats.get("error_messages"):
@@ -1064,6 +1085,52 @@ async def cmd_sync_force(message: Message) -> None:
 
     except Exception as e:
         bot_logger.error(f"❌ sync_force failed: {e}", exc_info=True)
+        await bot_manager.send_answer(text=f"❌ Ошибка: {e}", event=message)
+
+
+# ============================================================
+# ЗАГРУЗКА ПОЛЬЗОВАТЕЛЕЙ ИЗ VEHICLES
+# ============================================================
+
+
+@router.message(Command("sync_vehicles"))
+@log_exceptions(bot_logger)
+async def cmd_sync_vehicles(message: Message) -> None:
+    """Загрузка пользователей из Avanpost Vehicles."""
+    bot_manager = get_bot_manager()
+
+    if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
+        await bot_manager.send_answer(text="⛔ У вас нет прав.", event=message)
+        return
+
+    await bot_manager.delete_message_by_link(message)
+    await bot_manager.send_answer(
+        text="🚗 Запуск загрузки пользователей из Avanpost Vehicles...",
+        event=message,
+    )
+
+    try:
+        async with db_manager.get_session() as session:
+            result = await AvanpostSeedService.seed_avanpost_users_all_vehicles(
+                session=session,
+                create_sync_records=True,
+            )
+
+        report = (
+            f"✅ Загрузка пользователей из ТС завершена!\n"
+            f"📊 Загружено ID: {result['total_loaded']}\n"
+            f"📈 Добавлено: {result['total_added']}\n"
+            f"📝 Создано записей синхронизации: {result['sync_records_created']}\n"
+            f"❌ Ошибок: {result['errors']}"
+        )
+
+        if result.get("error_messages"):
+            report += f"\n⚠️ Первая ошибка: {result['error_messages'][0][:100]}"
+
+        await bot_manager.send_answer(text=report, event=message)
+
+    except Exception as e:
+        bot_logger.error(f"❌ sync_vehicles failed: {e}", exc_info=True)
         await bot_manager.send_answer(text=f"❌ Ошибка: {e}", event=message)
 
 
@@ -1111,4 +1178,5 @@ __all__ = [
     "cmd_sync_all_users",
     "cmd_sync_light",
     "cmd_sync_force",
+    "cmd_sync_vehicles",
 ]

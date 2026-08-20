@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     # Автоматические действия при старте приложения
     AVANPOST_AUTO_ADD_USERS_ON_START: list[int] = Field(default_factory=lambda: [])
+    AVANPOST_AUTO_ADD_VEHICLES_ON_START: bool = True
     AVANPOST_AUTO_SYNC_ON_START: bool = True
 
     # Принудительная полная синхронизация (игнорировать кеш)
@@ -335,6 +336,17 @@ class Settings(BaseSettings):
             except (ValueError, SyntaxError):
                 return []
         return []
+
+    @field_validator("AVANPOST_AUTO_ADD_VEHICLES_ON_START", mode="before")
+    @classmethod
+    def validate_auto_add_vehicles(cls, v: bool | str | None) -> bool:
+        if v is None:
+            return False
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ("true", "1", "yes", "on")
+        return False
 
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")
     @classmethod

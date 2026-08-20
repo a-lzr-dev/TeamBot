@@ -7,15 +7,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from ....bot.dependencies import get_bot_manager
-from ....config import settings
-from ....db import AvanpostRepository, db_manager
-from ....db.repositories import UserRepository
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
-from ....models import ErrorCategory, MessageActionType, MessageType
-from ....services import error_service
-from ...keyboards import ActionKeyboard
+from app.bot.dependencies import get_bot_manager
+from app.bot.keyboards import ActionKeyboard
+from app.config import settings
+from app.db import AvanpostRepository, db_manager
+from app.db.repositories import UserRepository
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import ErrorCategory, MessageActionType, MessageType
+from app.services import error_service
+
 from .auth import _auth_cache, get_user_group_id, is_user_authenticated
 from .users import back_to_users
 

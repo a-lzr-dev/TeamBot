@@ -9,15 +9,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, TelegramObject
 
-from ....bot.dependencies import get_bot_manager
-from ....config import settings
-from ....db import db_manager
-from ....db.repositories import AvanpostRepository, UserRepository
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
-from ....models.base import ErrorCategory, MessageActionType, MessageType, datetime_now
-from ....services.error_service import error_service
-from ...keyboards import AuthKeyboard
+from app.bot.dependencies import get_bot_manager
+from app.bot.keyboards import AuthKeyboard
+from app.config import settings
+from app.db import db_manager
+from app.db.repositories import AvanpostRepository, UserRepository
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models.base import ErrorCategory, MessageActionType, MessageType, datetime_now
+from app.services.error_service import error_service
 
 router = Router(name="aiogram_auth")
 

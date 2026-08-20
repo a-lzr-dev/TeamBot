@@ -100,7 +100,7 @@ class UserRepository:
     @log_exceptions(db_logger)
     async def get_all_avanpost_users(
         session: AsyncSession,
-        limit: int | None = None,
+        limit: int | None = 10,
         offset: int = 0,
     ) -> list[AvanpostUserModel]:
         """
@@ -117,6 +117,7 @@ class UserRepository:
         stmt = (
             select(AvanpostUserModel)
             .options(selectinload(AvanpostUserModel.user_link))
+            #            .where(AvanpostUserModel.FID == 954)
             .order_by(AvanpostUserModel.FID)
             .offset(offset)
         )

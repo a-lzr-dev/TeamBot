@@ -1,10 +1,10 @@
 from aiogram import Bot, Router
 from aiogram.types import ChatMemberUpdated
 
-from ....core import chat_type_from_aiogram, chat_type_to_str, user_info_from_aiogram
-from ....db import ChatRepository, UserRepository, db_manager
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
+from app.core import chat_type_from_aiogram, chat_type_to_str, user_info_from_aiogram
+from app.db import ChatRepository, UserRepository, db_manager
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
 
 router = Router(name="aiogram_chat")
 

@@ -32,7 +32,7 @@ class AuthCallbackHandler(BaseCallbackHandler):
         await CallbackHandler.answer(callback)
 
         # Импортируем здесь, чтобы избежать циклических импортов
-        from ..handlers.aiogram.auth import cmd_start
+        from app.bot.handlers.aiogram.auth import cmd_start
 
         await cmd_start(callback.message, state)
 

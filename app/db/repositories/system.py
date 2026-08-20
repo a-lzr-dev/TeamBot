@@ -260,11 +260,10 @@ class SystemRepository:
                     FDate=default_time,
                 )
                 session.add(new_record)
-                db_logger.info(f"📅 Created sync record for system type {dt_id} with default time")
 
         await session.flush()
 
-        db_logger.debug(f"📖 GET system sync times result: {len(result)} types (found {len(existing)} existing)")
+        db_logger.info(f"📅 Created sync record for system types: {len(result)} types (found {len(existing)} existing)")
         return result
 
     @staticmethod
@@ -314,6 +313,7 @@ class SystemRepository:
     ) -> int:
         """
         Массовое создание записей синхронизации.
+        Логирует только итоговое количество.
 
         Args:
             session: Сессия БД
@@ -343,7 +343,7 @@ class SystemRepository:
 
         if created > 0:
             await session.flush()
-            db_logger.info(f"📅 Created {created} sync records")
+            db_logger.info(f"📅 Created {created} system sync records")
 
         return created
 
@@ -375,8 +375,7 @@ class SystemRepository:
         sync_times: dict[int, datetime],
     ) -> None:
         """
-        Массовое обновление времени синхронизации.
-        Оптимизировано: использует bulk_update.
+        Массовое обновление времени синхронизации для системных типов данных.
 
         Args:
             session: Сессия БД
@@ -398,39 +397,6 @@ class SystemRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_sync_time(
-        session: AsyncSession,
-        user_id: int,
-        data_type_id: int,
-    ) -> datetime | None:
-        """
-        Получение времени последней синхронизации пользователя для типа данных.
-
-        Args:
-            session: Сессия БД
-            user_id: ID пользователя
-            data_type_id: ID типа данных
-
-        Returns:
-            datetime | None: Время синхронизации или None
-        """
-        stmt = select(AvanpostSysUserUpdateModel.FDate).where(
-            AvanpostSysUserUpdateModel.FK_User == user_id,
-            AvanpostSysUserUpdateModel.FK_Type == data_type_id,
-        )
-        result = await session.execute(stmt)
-        sync_time = result.scalar_one_or_none()
-
-        if sync_time is None:
-            return None
-        if not isinstance(sync_time, datetime):
-            return None
-
-        db_logger.debug(f"📖 GET user sync time for user {user_id}, type {data_type_id}: {sync_time}")
-        return sync_time
-
-    @staticmethod
-    @log_exceptions(db_logger)
     async def get_user_sync_times(
         session: AsyncSession,
         user_id: int,
@@ -438,18 +404,7 @@ class SystemRepository:
     ) -> dict[int, datetime]:
         """
         Получение времени синхронизации пользователя для списка типов данных.
-        Оптимизировано: один запрос вместо N.
-
-        Args:
-            session: Сессия БД
-            user_id: ID пользователя
-            data_types: Список ID типов данных
-
-        Returns:
-            dict[int, datetime]: Словарь {data_type_id: last_sync_time}
         """
-        db_logger.debug(f"📖 GET user sync times for user {user_id}, {len(data_types)} types (optimized, single query)")
-
         result: dict[int, datetime] = {}
         default_time = datetime(1900, 1, 1)
 
@@ -463,15 +418,13 @@ class SystemRepository:
         result_query = await session.execute(stmt)
         records = result_query.scalars().all()
 
-        # Создание словаря из полученных записей
         existing = {record.FK_Type: record.FDate for record in records}
 
-        # Проход по всем типам и заполнение результата
+        created_count = 0
         for dt_id in data_types:
             if dt_id in existing:
                 result[dt_id] = existing[dt_id]
             else:
-                # Создание с временем по умолчанию
                 result[dt_id] = default_time
                 new_record = AvanpostSysUserUpdateModel(
                     FK_User=user_id,
@@ -479,98 +432,122 @@ class SystemRepository:
                     FDate=default_time,
                 )
                 session.add(new_record)
-                db_logger.info(f"📅 Created user sync record for user {user_id}, type {dt_id}")
+                created_count += 1
 
-        await session.flush()
+        if created_count > 0:
+            await session.flush()
 
-        db_logger.debug(f"📖 GET user sync times result: {len(result)} types (found {len(existing)} existing)")
         return result
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def create_user_sync_record(
+    async def create_user_sync_records_bulk_with_stats(
         session: AsyncSession,
-        user_id: int,
-        data_type_id: int,
-        sync_time: datetime | None = None,
-    ) -> AvanpostSysUserUpdateModel | None:
-        """
-        Создание записи синхронизации пользователя для типа данных.
-
-        Args:
-            session: Сессия БД
-            user_id: ID пользователя
-            data_type_id: ID типа данных
-            sync_time: Время синхронизации (по умолчанию - 1900-01-01)
-
-        Returns:
-            AvanpostSysUserUpdateModel | None: Созданная запись или None
-        """
-        if sync_time is None:
-            sync_time = datetime(1900, 1, 1)
-
-        # Проверяем существование
-        existing = await SystemRepository.get_user_sync_time(session, user_id, data_type_id)
-        if existing is not None:
-            db_logger.debug(f"ℹ️ User sync record for user {user_id}, type {data_type_id} already exists")
-            return None
-
-        record = AvanpostSysUserUpdateModel(
-            FK_User=user_id,
-            FK_Type=data_type_id,
-            FDate=sync_time,
-        )
-        session.add(record)
-        await session.flush()
-        await session.refresh(record)
-
-        db_logger.info(f"📅 Created user sync record for user {user_id}, type {data_type_id}")
-        return record
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def create_user_sync_records_bulk(
-        session: AsyncSession,
-        user_id: int,
+        user_ids: list[int],
         data_type_ids: list[int],
         sync_time: datetime | None = None,
-    ) -> int:
+        data_type_names: dict[int, str] | None = None,
+    ) -> dict[str, Any]:
         """
-        Массовое создание записей синхронизации пользователя.
+        Массовое создание записей синхронизации для множества пользователей
+        с возвратом агрегированной статистики по типам данных.
 
         Args:
             session: Сессия БД
-            user_id: ID пользователя
+            user_ids: Список ID пользователей
             data_type_ids: Список ID типов данных
             sync_time: Время синхронизации (по умолчанию - 1900-01-01)
+            data_type_names: Словарь {data_type_id: table_name} для отображения
 
         Returns:
-            int: Количество созданных записей
+            dict: Статистика по типам данных
+                {
+                    "total_users": int,
+                    "users_with_records": int,
+                    "total_records_created": int,
+                    "by_data_type": {
+                        "401 (TAvanpostUsers)": 150,
+                        "402 (TAvanpostUsersChats)": 150,
+                        ...
+                    }
+                }
         """
-        if not data_type_ids:
-            return 0
+        if not user_ids or not data_type_ids:
+            return {
+                "total_users": len(user_ids),
+                "users_with_records": 0,
+                "total_records_created": 0,
+                "by_data_type": {},
+            }
 
         if sync_time is None:
             sync_time = datetime(1900, 1, 1)
 
-        created = 0
-        existing_times = await SystemRepository.get_user_sync_times(session, user_id, data_type_ids)
+        # Получение имен типов данных, если не переданы
+        if data_type_names is None:
+            data_type_names = {}
+            stmt = select(AvanpostDirSysDataTypeModel.FID, AvanpostDirSysDataTypeModel.FTableName).where(
+                AvanpostDirSysDataTypeModel.FID.in_(data_type_ids)
+            )
+            result = await session.execute(stmt)
+            for row in result.all():
+                data_type_names[row.FID] = row.FTableName or f"Type_{row.FID}"
 
-        for dt_id in data_type_ids:
-            if dt_id not in existing_times:
-                record = AvanpostSysUserUpdateModel(
-                    FK_User=user_id,
-                    FK_Type=dt_id,
-                    FDate=sync_time,
-                )
-                session.add(record)
-                created += 1
+        # Счетчики по типам данных
+        stats_by_type: dict[int, int] = dict.fromkeys(data_type_ids, 0)
+        total_created = 0
+        users_with_records = 0
 
-        if created > 0:
+        # Обработка пользователей пакетами
+        batch_size = 50
+        for i in range(0, len(user_ids), batch_size):
+            batch_user_ids = user_ids[i : i + batch_size]
+
+            for user_id in batch_user_ids:
+                # Получение существующих записей для пользователя
+                existing_times = await SystemRepository.get_user_sync_times(session, user_id, data_type_ids)
+
+                user_created = 0
+                for dt_id in data_type_ids:
+                    if dt_id not in existing_times:
+                        record = AvanpostSysUserUpdateModel(
+                            FK_User=user_id,
+                            FK_Type=dt_id,
+                            FDate=sync_time,
+                        )
+                        session.add(record)
+                        stats_by_type[dt_id] = stats_by_type.get(dt_id, 0) + 1
+                        user_created += 1
+                        total_created += 1
+
+                if user_created > 0:
+                    users_with_records += 1
+
+                # Периодический flush для освобождения памяти
+                if total_created % 1000 == 0:
+                    await session.flush()
+
+            # Коммит пакета
             await session.flush()
-            db_logger.info(f"📅 Created {created} user sync records for user {user_id}")
 
-        return created
+        # Финальный коммит
+        await session.commit()
+
+        # Формирование результата с человекочитаемыми названиями таблиц
+        by_data_type_readable = {}
+        for dt_id, count in stats_by_type.items():
+            if count > 0:
+                table_name = data_type_names.get(dt_id, f"Type_{dt_id}")
+                by_data_type_readable[f"{dt_id} ({table_name})"] = count
+
+        return {
+            "total_users": len(user_ids),
+            "users_with_records": users_with_records,
+            "total_records_created": total_created,
+            "by_data_type": by_data_type_readable,
+        }
+
+    # ==================== ОБНОВЛЕНИЕ ПОЛЬЗОВАТЕЛЬСКИХ НАСТРОЕК ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -617,7 +594,7 @@ class SystemRepository:
         sync_times: dict[int, datetime],
     ) -> None:
         """
-        Массовое обновление времени синхронизации пользователя.
+        Массовое обновление времени синхронизации для пользователя.
 
         Args:
             session: Сессия БД

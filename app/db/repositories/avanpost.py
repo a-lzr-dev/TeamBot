@@ -8,11 +8,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...exceptions import log_exceptions
 from ...logger import db_logger
 
+# ==================== Перечень ВНЕШНИХ ХРАНИМЫХ ПРОЦЕДУР ====================
+#
+# ext.PA_avp_RSAppUsersObjectsContacts_Check
+#   - Проверка пользователя по номеру телефона
+#   - Возвращает: user_id, menu_group_id, contact_id
+#
+# ext.PA_avp_RSAppScenariosGroups_Load
+#   - Получение списка групп действий
+#   - Возвращает: ID, Name
+#
+# ext.PA_avp_RSAppScenariosGroupsItems_Load
+#   - Получение пунктов меню для группы
+#   - Параметры: @GroupID, @ParentItemID
+#   - Возвращает: ID, Name, FlagHasSubItems, ParentItemID
+#
+# ext.PA_avp_RSAppBaseData_Load
+#   - Синхронизация базовых данных (справочники)
+#   - Параметр: @Params (JSON с DataTypes, LastSync, Force)
+#   - Возвращает: JSON с Data
+#
+# ext.PA_avp_RSAppUserData_Load
+#   - Синхронизация данных пользователя
+#   - Параметры: @Params (JSON с UserId, DataTypes, LastSync, Force)
+#   - Возвращает: JSON с Data
+#
+# ext.PA_avp_RSAppUsersVehicles_Load
+#   - Получение списка ID пользователей из системы
+#   - Возвращает: список user_id
+#
+# ======================================================================
+
 
 class AvanpostRepository:
     """Репозиторий для работы с Avanpost (MSSQL)"""
 
-    # ==================== ПОЛЬЗОВАТЕЛИ (ТОЛЬКО ПРОВЕРКА) ====================
+    # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -36,7 +67,7 @@ class AvanpostRepository:
             row = result.fetchone()
 
             if row:
-                # Проверяка сколько колонок вернула процедура
+                # Проверка сколько колонок вернула процедура
                 if len(row) >= 3:
                     user_id = row[0] if row[0] is not None else None
                     menu_group_id = row[1] if row[1] is not None else None
@@ -55,6 +86,43 @@ class AvanpostRepository:
         except Exception as e:
             db_logger.error(f"❌ Failed to check user in Avanpost: {e}", exc_info=True)
             return None, None, None
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_user_ids_by_vehicles(
+        session: AsyncSession,
+    ) -> list[int]:
+        """
+        Получение списка ID пользователей из Avanpost через хранимую процедуру
+        ext.PA_avp_RSAppUsersVehicles_Load.
+
+        Args:
+            session: Сессия БД (avanpost)
+
+        Returns:
+            list[int]: Список ID пользователей (user_id)
+        """
+        db_logger.info("📥 Calling ext.PA_avp_RSAppUsersVehicles_Load to get user IDs...")
+        try:
+            sql = """
+                EXEC ext.PA_avp_RSAppUsersVehicles_Load
+            """
+
+            result = await session.execute(text(sql))
+            rows = result.scalars().all()
+
+            if not rows:
+                db_logger.info("ℹ️ No user IDs returned from the procedure.")
+                return []
+
+            user_ids = [int(row) for row in rows if row is not None]
+
+            db_logger.info(f"✅ Retrieved {len(user_ids)} user IDs from the procedure.")
+            return user_ids
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get user IDs from vehicles: {e}", exc_info=True)
+            return []
 
     # ==================== ГРУППЫ ДЕЙСТВИЙ ====================
 

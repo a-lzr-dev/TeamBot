@@ -707,7 +707,7 @@ class BotManager:
 
         dp.update.middleware(DynamicCommandsMiddleware())
 
-        from .handlers.aiogram.auth import auth_middleware
+        from app.bot.handlers.aiogram.auth import auth_middleware
 
         dp.update.middleware(auth_middleware)
 
@@ -918,8 +918,8 @@ class BotManager:
     def get_public_commands() -> list[dict[str, str]]:
         """Базовые команды (доступны без авторизации)"""
         return [
-            {"command": "/start", "description": "Начало работы / Авторизация"},
-            {"command": "/help", "description": "Помощь"},
+            {"command": "/start", "description": "🚀 Начало работы / Авторизация"},
+            {"command": "/help", "description": "❓ Помощь"},
             {"command": "/debug_commands", "description": "🔍 Отладка команд"},
         ]
 
@@ -927,31 +927,32 @@ class BotManager:
     def get_auth_commands() -> list[dict[str, str]]:
         """Команды, требующие авторизации (видны всем авторизованным пользователям)"""
         return [
-            {"command": "/actions", "description": "Меню действий"},
-            {"command": "/automation", "description": "Меню автоматизации"},
-            {"command": "/stats", "description": "Статистика"},
-            {"command": "/id", "description": "Мой ID"},
-            {"command": "/logout", "description": "Выйти из системы"},
+            {"command": "/actions", "description": "📋 Меню действий"},
+            {"command": "/automation", "description": "🤖 Меню автоматизации"},
+            {"command": "/stats", "description": "📊 Статистика"},
+            {"command": "/id", "description": "🆔 Мой ID"},
+            {"command": "/logout", "description": "🚪 Выйти из системы"},
         ]
 
     @staticmethod
     def get_admin_commands() -> list[dict[str, str]]:
         """Админ-команды (видны только администраторам)"""
         return [
-            {"command": "/users", "description": "Пользователи (админ)"},
-            {"command": "/broadcast", "description": "Рассылка (админ)"},
-            {"command": "/delete", "description": "Удалить сообщение (админ)"},
-            {"command": "/sync", "description": "Меню синхронизации (админ)"},
-            {"command": "/sync_chats", "description": "Синхр. чатов (админ)"},
-            {"command": "/sync_base", "description": "Синхр. справочников (админ)"},
-            {"command": "/sync_contacts", "description": "Синхр. контактов (админ)"},
-            {"command": "/sync_user", "description": "Синхр. пользователя (админ)"},
-            {"command": "/sync_all_users", "description": "Синхр. всех пользователей (админ)"},
-            {"command": "/sync_light", "description": "Стандартная синхр. (админ)"},
-            {"command": "/sync_force", "description": "Полная синхр. Force (админ)"},
-            {"command": "/admins", "description": "Список админов (админ)"},
-            {"command": "/add_admin", "description": "Добавить админа (админ)"},
-            {"command": "/remove_admin", "description": "Удалить админа (админ)"},
+            {"command": "/users", "description": "👥 Пользователи (админ)"},
+            {"command": "/broadcast", "description": "📢 Рассылка (админ)"},
+            {"command": "/delete", "description": "🗑️ Удалить сообщение (админ)"},
+            {"command": "/sync", "description": "🔄 Меню синхронизации (админ)"},
+            {"command": "/sync_chats", "description": "💬 Синхр. чатов (админ)"},
+            {"command": "/sync_base", "description": "📚 Синхр. справочников (админ)"},
+            {"command": "/sync_contacts", "description": "📇 Синхр. контактов (админ)"},
+            {"command": "/sync_user", "description": "👤 Синхр. пользователя (админ)"},
+            {"command": "/sync_all_users", "description": "👥 Синхр. всех пользователей (админ)"},
+            {"command": "/sync_all_vehicles", "description": "🚗 Синхр. пользователей ТС (админ)"},
+            {"command": "/sync_light", "description": "⚡ Стандартная синхр. (админ)"},
+            {"command": "/sync_force", "description": "💪 Полная синхр. Force (админ)"},
+            {"command": "/admins", "description": "👑 Список админов (админ)"},
+            {"command": "/add_admin", "description": "➕ Добавить админа (админ)"},
+            {"command": "/remove_admin", "description": "➖Удалить админа (админ)"},
         ]
 
     def _get_commands_for_user(self, user_id: int, is_admin: bool = False) -> list[dict[str, str]]:

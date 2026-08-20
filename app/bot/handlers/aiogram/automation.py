@@ -6,13 +6,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from ....bot.dependencies import get_bot_manager
-from ....db import db_manager
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
-from ....models import MessageActionType, MessageType
-from ....services.automation_service import automation_service
-from ...keyboards import AutomationKeyboard
+from app.bot.dependencies import get_bot_manager
+from app.bot.keyboards import AutomationKeyboard
+from app.db import db_manager
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import MessageActionType, MessageType
+from app.services.automation_service import automation_service
+
 from .auth import is_user_authenticated
 
 router = Router(name="aiogram_automation")

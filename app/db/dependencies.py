@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 
 def get_db_manager() -> "DBManager":
-    """Получение экземпляра APIManager"""
+    """Получение экземпляра DBManager"""
     from ..db import db_manager
 
     if db_manager is None:

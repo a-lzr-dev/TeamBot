@@ -13,13 +13,15 @@ from aiogram.types import (
     Message,
 )
 
-from ....bot.dependencies import get_bot_manager
-from ....config import settings
-from ....db import db_manager
-from ....db.repositories import StatsRepository, UserRepository
-from ....exceptions import log_exceptions
-from ....logger import bot_logger
-from ....models import MessageActionType, MessageType
+from app.bot.dependencies import get_bot_manager
+from app.config import settings
+from app.db import db_manager
+from app.db.repositories import StatsRepository, UserRepository
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import MessageActionType, MessageType
+
+from .users import UserStates
 
 router = Router(name="aiogram_commands")
 
@@ -176,7 +178,7 @@ async def cmd_debug_commands(message: Message) -> None:
         admin_ids=admin_ids,
     )
 
-    # Отправляем сообщение
+    # Отправка сообщения
     await bot_manager.send_answer(
         text=debug_info,
         event=message,
@@ -285,9 +287,7 @@ async def cmd_force_set_commands(message: Message) -> None:
     # Удаление сообщения с командой (для чистоты)
     await bot_manager.delete_message_by_link(message)
 
-    # ============================================================
-    # ШАГ 1: ПРОВЕРКА ПРАВ
-    # ============================================================
+    # 1. Проверка прав
     if user_id not in settings.ADMIN_IDS:
         await bot_manager.send_answer(
             text="⛔ **Доступ запрещен**\n\nЭта команда доступна только администраторам.",
@@ -298,9 +298,7 @@ async def cmd_force_set_commands(message: Message) -> None:
         )
         return
 
-    # ============================================================
-    # ШАГ 2: ПРОВЕРКА БОТА
-    # ============================================================
+    # 2. Проверка бота
     bot = bot_manager.aiogram_client.bot
     if not bot:
         await bot_manager.send_answer(
@@ -312,9 +310,8 @@ async def cmd_force_set_commands(message: Message) -> None:
         )
         return
 
-    # ============================================================
-    # ШАГ 3: ПОЛУЧЕНИЕ СПИСКА КОМАНД
-    # ============================================================
+    # 3. Получение списка команд
+
     # Определение права пользователя
     is_admin = user_id in settings.ADMIN_IDS
     is_authorized = await bot_manager.is_user_authorized(user_id)
@@ -342,9 +339,7 @@ async def cmd_force_set_commands(message: Message) -> None:
             unique_commands.append(cmd)
     commands = unique_commands
 
-    # ============================================================
-    # ШАГ 4: ОТПРАВКА В TELEGRAM API
-    # ============================================================
+    # 4. Отправка в Telegram API
     try:
         # Преобразование в формат BotCommand
         bot_commands = [
@@ -355,12 +350,11 @@ async def cmd_force_set_commands(message: Message) -> None:
             for cmd in commands
         ]
 
-        # Устанавливание команды в Telegram
+        # Установка команды в Telegram
         await bot.set_my_commands(bot_commands)
 
-        # ============================================================
-        # ШАГ 5: ОБНОВЛЕНИЕ КЕША
-        # ============================================================
+        # 5. Обновление кеша
+
         # Обновление кеша для текущего пользователя
         await bot_manager.update_user_commands(user_id, is_admin)
 
@@ -372,9 +366,7 @@ async def cmd_force_set_commands(message: Message) -> None:
                 except Exception as e:
                     bot_logger.warning(f"Failed to update commands for admin {admin_id}: {e}")
 
-        # ============================================================
-        # ШАГ 6: ФОРМИРОВАНИЕ ОТВЕТА
-        # ============================================================
+        # 6. Формирование ответа
         response_lines = [
             "✅ **КОМАНДЫ УСПЕШНО УСТАНОВЛЕНЫ!**",
             "",
@@ -407,9 +399,7 @@ async def cmd_force_set_commands(message: Message) -> None:
                 response_lines.append(f"  • `{cmd['command']}` - {cmd['description']}")
             response_lines.append("")
 
-        # ============================================================
-        # ШАГ 7: ДОПОЛНИТЕЛЬНАЯ ИНФОРМАЦИЯ
-        # ============================================================
+        # 7. Дополнительная информация
         response_lines.extend(
             [
                 "⏳ **Важно:**",
@@ -1153,9 +1143,40 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """Отмена текущей операции"""
     bot_manager = get_bot_manager()
 
-    await bot_manager.delete_message_by_link(message)
-
+    # Получение текущего состояния
     current_state = await state.get_state()
+
+    # ================ Специальная обработка для постояния поиска пользователей ================
+    if current_state == "UserStates:searching_users":
+        # Возвращение к списку пользователей
+        from .users import show_users
+
+        # Получение сохраненной страницу
+        data = await state.get_data()
+        page = data.get("users_page_before_search", 0)
+
+        # Сброс состояния поиска
+        await state.set_state(UserStates.viewing_users)
+        await state.update_data(
+            users_page_before_search=0,
+            search_query=None,
+        )
+
+        # Удаление сообщение с командой
+        await bot_manager.delete_message_by_link(message)
+
+        # Отправка toast
+        await bot_manager.send_toast(
+            text="👥 Возврат к списку пользователей",
+            event=message,
+            duration=0,
+        )
+
+        # Отображение списка пользователей
+        await show_users(event=message, state=state, page=page, search_query=None)
+        return
+
+    # Стандартная обработка для других состояний
     if current_state is None:
         await bot_manager.send_answer(
             text="❌ Нет активных операций для отмены.",
