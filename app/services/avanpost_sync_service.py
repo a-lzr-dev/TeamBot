@@ -12,6 +12,7 @@ from ..db import db_manager
 from ..db.repositories import AvanpostRepository, GenericRepository, SystemRepository, UserRepository
 from ..logger import app_logger
 from ..models import datetime_now
+from ..models.avanpost import get_avanpost_model, get_avanpost_table_name
 
 ModelType = TypeVar("ModelType")
 
@@ -551,14 +552,12 @@ class AvanpostSyncService:
     @staticmethod
     def _get_model_by_data_type(data_type_id: int) -> Any:
         """Получение модели по типу данных."""
-        from ..models.avanpost import get_avanpost_model
 
         return get_avanpost_model(data_type_id)
 
     @staticmethod
     def _get_table_name(data_type_id: int) -> str | None:
         """Получение имени таблицы по типу данных."""
-        from ..models.avanpost import get_avanpost_table_name
 
         return get_avanpost_table_name(data_type_id)
 
@@ -780,6 +779,7 @@ class AvanpostSyncService:
                             continue
 
                         try:
+                            # ИСПОЛЬЗУЕМ GenericRepository ДЛЯ УДАЛЕНИЯ
                             deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                                 session=session,
                                 model=model,
@@ -854,12 +854,12 @@ class AvanpostSyncService:
                         total_chunks = (len(filtered_records) + chunk_size_upsert - 1) // chunk_size_upsert
 
                         for chunk_idx in range(0, len(filtered_records), chunk_size_upsert):
-                            # ИСПРАВЛЕНО: уникальное имя переменной для чанка
                             upsert_chunk: list[dict[str, Any]] = filtered_records[
                                 chunk_idx : chunk_idx + chunk_size_upsert
                             ]
 
                             try:
+                                # ИСПОЛЬЗУЕМ GenericRepository ДЛЯ UPSERT
                                 result = await GenericRepository.save_data_bulk(
                                     session=session,
                                     model=model,
@@ -1076,6 +1076,7 @@ class AvanpostSyncService:
                             continue
 
                         try:
+                            # ИСПОЛЬЗУЕМ GenericRepository ДЛЯ УДАЛЕНИЯ
                             deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                                 session=session,
                                 model=model,
@@ -1142,6 +1143,7 @@ class AvanpostSyncService:
                         model_columns = self._get_model_columns(model, include_all=True)
 
                         try:
+                            # ИСПОЛЬЗУЕМ GenericRepository ДЛЯ UPSERT
                             result = await GenericRepository.save_data_bulk(
                                 session=session,
                                 model=model,
@@ -1264,6 +1266,7 @@ class AvanpostSyncService:
         all_stats.start()
 
         async with db_manager.get_session() as session:
+            # ИСПОЛЬЗУЕМ UserRepository ДЛЯ ПОЛУЧЕНИЯ ПОЛЬЗОВАТЕЛЕЙ
             users = await UserRepository.get_all_avanpost_users(session)
             total_users = len(users)
             all_stats.total_data_types = total_users

@@ -130,6 +130,151 @@ class UserRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
+    async def get_avanpost_users_page(
+        session: AsyncSession,
+        page: int = 0,
+        page_size: int = 10,
+        search_query: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Получение списка пользователей Avanpost с пагинацией и поиском.
+
+        Args:
+            session: Сессия БД (main)
+            page: Номер страницы (начиная с 0)
+            page_size: Количество пользователей на странице
+            search_query: Поисковый запрос (имя, фамилия, телефон)
+
+        Returns:
+            dict: {
+                "users": list[dict],
+                "total": int,
+                "page": int,
+                "total_pages": int,
+                "has_prev": bool,
+                "has_next": bool,
+                "search_query": str | None
+            }
+        """
+        try:
+            from sqlalchemy import func, or_, select
+            from sqlalchemy.orm import selectinload
+
+            from ...models import AvanpostUserLinkModel, AvanpostUserModel, UserModel
+
+            # Базовый запрос с подгрузкой связанных моделей
+            stmt = (
+                select(AvanpostUserModel)
+                .options(selectinload(AvanpostUserModel.user_link).selectinload(AvanpostUserLinkModel.telegram_user))
+                .order_by(AvanpostUserModel.FID)
+            )
+
+            # Применение поискового фильтра
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+
+                conditions = [
+                    AvanpostUserModel.FName.ilike(search_pattern),
+                    AvanpostUserModel.FPhone.ilike(search_pattern),
+                ]
+
+                # Поиск по связанному Telegram пользователю
+                subquery = (
+                    select(AvanpostUserLinkModel.FK_Parent)
+                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
+                    .where(
+                        or_(
+                            UserModel.FFirstName.ilike(search_pattern),
+                            UserModel.FLastName.ilike(search_pattern),
+                            UserModel.FUserName.ilike(search_pattern),
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(AvanpostUserModel.FID.in_(subquery))
+
+                stmt = stmt.where(or_(*conditions))
+
+            # Подсчет общего количества
+            count_stmt = select(func.count()).select_from(AvanpostUserModel)
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                conditions = [
+                    AvanpostUserModel.FName.ilike(search_pattern),
+                    AvanpostUserModel.FPhone.ilike(search_pattern),
+                ]
+                subquery = (
+                    select(AvanpostUserLinkModel.FK_Parent)
+                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
+                    .where(
+                        or_(
+                            UserModel.FFirstName.ilike(search_pattern),
+                            UserModel.FLastName.ilike(search_pattern),
+                            UserModel.FUserName.ilike(search_pattern),
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(AvanpostUserModel.FID.in_(subquery))
+                count_stmt = count_stmt.where(or_(*conditions))
+
+            total_result = await session.execute(count_stmt)
+            total = total_result.scalar() or 0
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+            # Пагинация
+            offset = page * page_size
+            stmt = stmt.offset(offset).limit(page_size)
+
+            result = await session.execute(stmt)
+            users = result.scalars().all()
+
+            # Форматирование пользователей
+            users_data = []
+            for user in users:
+                telegram_user = None
+                if user.user_link and user.user_link.telegram_user:
+                    telegram_user = user.user_link.telegram_user
+
+                fk_user = user.user_link.FK_Link if user.user_link else None
+
+                users_data.append(
+                    {
+                        "id": user.FID,
+                        "name": user.FName or f"User #{user.FID}",
+                        "phone": user.FPhone or "Не указан",
+                        "group_id": user.FK_MenuGroup,
+                        "telegram_id": fk_user,
+                        "telegram_name": telegram_user.fullname if telegram_user else None,
+                        "is_authorized": fk_user is not None,
+                    }
+                )
+
+            return {
+                "users": users_data,
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+                "search_query": search_query,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get avanpost users page: {e}", exc_info=True)
+            return {
+                "users": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": str(e),
+            }
+
+    @staticmethod
+    @log_exceptions(db_logger)
     async def get_user_by_id(session: AsyncSession, user_id: int) -> UserModel | None:
         """Получение пользователя по FID"""
         if not user_id or user_id <= 0:

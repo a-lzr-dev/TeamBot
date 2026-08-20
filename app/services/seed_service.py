@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any
 
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
@@ -12,13 +13,22 @@ from ..db.repositories import (
     SystemRepository,
     UserRepository,
 )
+from ..db.repositories.generic import GenericRepository
 from ..logger import app_logger as logger
 from ..models.avanpost import (
     AVANPOST_BASE_DATA_TYPES,
     AVANPOST_MODEL_MAPPING,
     AVANPOST_USER_DATA_TYPES,
+    AvanpostUserModel,
     get_avanpost_table_name,
 )
+
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+_system_repo = SystemRepository()
+_dir_lang_repo = DirLanguageRepository()
+_dir_contact_group_repo = DirContactGroupRepository()
+_avanpost_repo = AvanpostRepository()
 
 # Дата 1900-01-01 означает, что данные никогда не синхронизировались
 DEFAULT_SYNC_DATE = datetime(1900, 1, 1)
@@ -42,7 +52,7 @@ class AvanpostSeedService:
         """
         try:
             # 1. Проверка существующих типов данных
-            existing_types = await SystemRepository.get_data_types_dict(session)
+            existing_types = await _system_repo.get_data_types_dict(session)
             existing_ids = set(existing_types.keys())
 
             # 2. Создание недостающих типов данных через SystemRepository
@@ -64,7 +74,7 @@ class AvanpostSeedService:
                     )
 
             if data_types_to_create:
-                created_count = await SystemRepository.create_data_types_bulk(
+                created_count = await _system_repo.create_data_types_bulk(
                     session=session,
                     data_types=data_types_to_create,
                 )
@@ -102,7 +112,7 @@ class AvanpostSeedService:
             # 4. Заполнение TAvanpostSysUpdates для всех типов данных
             all_types = list(AVANPOST_BASE_DATA_TYPES)
 
-            created_count = await SystemRepository.create_sync_records_bulk(
+            created_count = await _system_repo.create_sync_records_bulk(
                 session=session,
                 data_type_ids=all_types,
                 sync_time=DEFAULT_SYNC_DATE,
@@ -110,7 +120,7 @@ class AvanpostSeedService:
             logger.info(f"✅ Inserted {created_count} records into TAvanpostSysUpdates")
 
             # 5. Заполнение TAvanpostSysUsersUpdates для существующих пользователей
-            users = await UserRepository.get_all_avanpost_users(session)
+            users = await _user_repo.get_all_avanpost_users(session)
 
             if users and AVANPOST_USER_DATA_TYPES:
                 # Получаем всех пользователей одним запросом
@@ -123,7 +133,7 @@ class AvanpostSeedService:
 
                 # Массовое создание записей синхронизации для ВСЕХ пользователей
                 # с возвратом агрегированной статистики
-                stats = await SystemRepository.create_user_sync_records_bulk_with_stats(
+                stats = await _system_repo.create_user_sync_records_bulk_with_stats(
                     session=session,
                     user_ids=user_ids,
                     data_type_ids=AVANPOST_USER_DATA_TYPES,
@@ -189,7 +199,7 @@ class AvanpostSeedService:
 
         # 1. Проверка и создание языка 'RU'
         try:
-            await DirLanguageRepository.ensure_language(
+            await _dir_lang_repo.ensure_language(
                 session=session,
                 language_id="RU",
                 is_default=True,
@@ -202,11 +212,11 @@ class AvanpostSeedService:
         for user_id in user_ids:
             try:
                 # Проверка существования пользователя в TAvanpostUsers
-                existing_user = await UserRepository.get_avanpost_user_data(session, user_id)
+                existing_user = await _user_repo.get_avanpost_user_data(session, user_id)
                 if existing_user:
                     continue
 
-                success, _ = await UserRepository.create_or_update_avanpost_user_upsert(
+                success, _ = await _user_repo.create_or_update_avanpost_user_upsert(
                     session=session,
                     telegram_user_id=None,
                     avanpost_user_id=user_id,
@@ -264,7 +274,7 @@ class AvanpostSeedService:
         # 1. Получение списка пользователей из Avanpost
         try:
             async with db_manager.get_session("avanpost") as avanpost_session:
-                user_ids = await AvanpostRepository.get_user_ids_by_vehicles(avanpost_session)
+                user_ids = await _avanpost_repo.get_user_ids_by_vehicles(avanpost_session)
 
             if not user_ids:
                 logger.warning("⚠️ No users to seed from vehicles.")
@@ -282,7 +292,7 @@ class AvanpostSeedService:
 
         # 2. Проверка существующих пользователей в TAvanpostUsers
         try:
-            existing_users = await UserRepository.get_all_avanpost_users(session)
+            existing_users = await _user_repo.get_all_avanpost_users(session)
             existing_ids = {user.FID for user in existing_users}
             logger.debug(f"📊 Found {len(existing_ids):,} existing users in TAvanpostUsers")
         except Exception as e:
@@ -308,7 +318,7 @@ class AvanpostSeedService:
 
         # 4. Проверка и создание языка 'RU'
         try:
-            await DirLanguageRepository.ensure_language(
+            await _dir_lang_repo.ensure_language(
                 session=session,
                 language_id="RU",
                 is_default=True,
@@ -322,7 +332,7 @@ class AvanpostSeedService:
 
         # 5. Проверка и создание группы контактов с ID=2
         try:
-            await DirContactGroupRepository.ensure_group(
+            await _dir_contact_group_repo.ensure_group(
                 session=session,
                 group_id=2,
                 name="Машина",
@@ -335,10 +345,6 @@ class AvanpostSeedService:
             return result
 
         # 6. Подготовка данных для массовой вставки
-        from sqlalchemy.dialects.postgresql import insert
-
-        from app.models import AvanpostUserModel
-
         records_to_insert = []
         for user_id in new_user_ids:
             records_to_insert.append(
@@ -350,15 +356,22 @@ class AvanpostSeedService:
                 }
             )
 
-        # 7. Массовая вставка
+        # 7. Массовая вставка через GenericRepository
         try:
-            insert_stmt = insert(AvanpostUserModel).values(records_to_insert)
-            insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=["FID"])
+            # Получение всех колонок модели AvanpostUserModel
+            model_columns = {column.name for column in inspect(AvanpostUserModel).columns}
 
-            result_exec = await session.execute(insert_stmt)
-            await session.flush()
+            result_stats = await GenericRepository.save_data_bulk(
+                session=session,
+                model=AvanpostUserModel,
+                records=records_to_insert,
+                model_columns=model_columns,
+                chunk_size=1000,
+                raise_on_error=False,
+                commit_chunks=True,
+            )
 
-            inserted_count = result_exec.rowcount if hasattr(result_exec, "rowcount") else len(records_to_insert)
+            inserted_count = result_stats.get("inserted", 0)
             result["total_added"] = inserted_count
 
             if inserted_count == 0:
@@ -381,7 +394,7 @@ class AvanpostSeedService:
                 for dt_id in AVANPOST_USER_DATA_TYPES:
                     data_type_names[dt_id] = get_avanpost_table_name(dt_id) or f"Type_{dt_id}"
 
-                stats = await SystemRepository.create_user_sync_records_bulk_with_stats(
+                stats = await _system_repo.create_user_sync_records_bulk_with_stats(
                     session=session,
                     user_ids=added_user_ids,
                     data_type_ids=AVANPOST_USER_DATA_TYPES,

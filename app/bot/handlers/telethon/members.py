@@ -12,6 +12,10 @@ from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import ChatMemberStatus, datetime_now
 
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+_chat_repo = ChatRepository()
+
 
 @log_exceptions(bot_logger)
 async def handle_chat_action(event: events.ChatAction.Event, client: TelegramClient) -> None:
@@ -34,7 +38,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 user = await client.get_entity(event.user_id)
                 user_info = user_info_from_telethon(user)
 
-                await UserRepository.save_user(
+                await _user_repo.save_user(
                     session=session,
                     user_id=user_info["user_id"],
                     is_bot=user_info["is_bot"],
@@ -51,7 +55,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 chat = await client.get_entity(event.chat_id)
                 chat_type = chat_type_from_telethon(chat)
 
-                await ChatRepository.save_chat(
+                await _chat_repo.save_chat(
                     session=session,
                     chat_id=chat.id,
                     chat_type=chat_type_to_str(chat_type),
@@ -67,7 +71,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 # Присоединение пользователя к чату
                 bot_logger.info(f"👤 User {event.user_id} joined chat {event.chat_id}")
 
-                await ChatRepository.save_chat_member(
+                await _chat_repo.save_chat_member(
                     session=session,
                     user_id=event.user_id,
                     chat_id=event.chat_id,
@@ -76,7 +80,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 )
 
                 # Обновление времени синхронизации участника
-                await ChatRepository.update_member_sync_time(
+                await _chat_repo.update_member_sync_time(
                     session=session,
                     user_id=event.user_id,
                     chat_id=event.chat_id,
@@ -94,7 +98,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 # Выход пользователя из чата
                 bot_logger.info(f"👤 User {event.user_id} left chat {event.chat_id}")
 
-                await ChatRepository.remove_chat_member(
+                await _chat_repo.remove_chat_member(
                     session=session,
                     user_id=event.user_id,
                     chat_id=event.chat_id,
@@ -104,7 +108,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 # Удаление пользователя из чата
                 bot_logger.info(f"👤 User {event.user_id} kicked from chat {event.chat_id}")
 
-                await ChatRepository.remove_chat_member(
+                await _chat_repo.remove_chat_member(
                     session=session,
                     user_id=event.user_id,
                     chat_id=event.chat_id,
@@ -119,7 +123,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                         user_info = user_info_from_telethon(user)
 
                         if user_info["user_id"] != me.id:
-                            await UserRepository.save_user(
+                            await _user_repo.save_user(
                                 session=session,
                                 user_id=user_info["user_id"],
                                 is_bot=user_info["is_bot"],
@@ -128,7 +132,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                                 username=user_info["username"],
                             )
 
-                            await ChatRepository.save_chat_member(
+                            await _chat_repo.save_chat_member(
                                 session=session,
                                 user_id=user_info["user_id"],
                                 chat_id=event.chat_id,
@@ -142,7 +146,7 @@ async def handle_chat_action(event: events.ChatAction.Event, client: TelegramCli
                 # Массовое обновление времени синхронизации для добавленных пользователей
                 if added_users:
                     for user_id in added_users:
-                        await ChatRepository.update_member_sync_time(
+                        await _chat_repo.update_member_sync_time(
                             session=session,
                             user_id=user_id,
                             chat_id=event.chat_id,
@@ -166,7 +170,7 @@ async def handle_user_update(event: events.UserUpdate.Event) -> None:
     # Например, обновление времени последней активности
     async with db_manager.get_session() as session:
         try:
-            user = await UserRepository.get_user_by_id(session, event.user_id)
+            user = await _user_repo.get_user_by_id(session, event.user_id)
             if user:
                 user.FDateUpdated = datetime_now()
                 await session.commit()

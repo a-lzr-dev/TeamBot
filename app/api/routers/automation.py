@@ -15,6 +15,9 @@ from ..dependencies import get_session
 
 router = APIRouter(prefix="/automation", tags=["Automation"])
 
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+
 
 class ConvertDocRequest(BaseModel):
     """Модель запроса для конвертации DOC в PDF"""
@@ -250,8 +253,8 @@ async def create_automation_request(
     if request.priority not in valid_priorities:
         raise HTTPException(status_code=400, detail=f"Неверный приоритет. Допустимые: {', '.join(valid_priorities)}")
 
-    # Проверка пользователя через репозиторий
-    user = await UserRepository.get_user_by_id(session, request.user_id)
+    # ИСПОЛЬЗУЕМ UserRepository ДЛЯ ПРОВЕРКИ ПОЛЬЗОВАТЕЛЯ
+    user = await _user_repo.get_user_by_id(session, request.user_id)
 
     # Проверка, что пользователь существует и авторизован (есть связь с AvanpostUser)
     if not user:
@@ -265,7 +268,8 @@ async def create_automation_request(
             ).model_dump(),
         )
 
-    if not user.avanpost_user:
+    # ИСПОЛЬЗУЕМ свойство is_authenticated ВМЕСТО ПРЯМОГО ДОСТУПА К avanpost_user
+    if not user.is_authenticated:
         return JSONResponse(
             status_code=403,
             content=AutomationRequestResponse(
@@ -321,12 +325,18 @@ async def create_automation_request(
 async def get_automation_requests(
     user_id: int | None = None,
     status: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Получение списка заявок"""
     api_logger.info(f"📋 Getting automation requests (user={user_id}, status={status})")
 
     try:
-        requests = await automation_service.get_requests(user_id=user_id, status=status)
+        # ИСПОЛЬЗУЕМ automation_service ДЛЯ ПОЛУЧЕНИЯ ЗАЯВОК
+        requests = await automation_service.get_requests(
+            user_id=user_id,
+            status=status,
+            session=session,
+        )
 
         return JSONResponse(
             status_code=200,
@@ -355,6 +365,7 @@ async def update_request_status(
     request_id: int,
     status: str,
     note: str | None = None,
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """Обновление статуса заявки"""
     api_logger.info(f"🔄 Updating request #{request_id} status to {status}")
@@ -364,7 +375,13 @@ async def update_request_status(
         raise HTTPException(status_code=400, detail=f"Неверный статус. Допустимые: {', '.join(valid_statuses)}")
 
     try:
-        result = await automation_service.update_request_status(request_id=request_id, status=status, note=note)
+        # ИСПОЛЬЗУЕМ automation_service ДЛЯ ОБНОВЛЕНИЯ СТАТУСА
+        result = await automation_service.update_request_status(
+            request_id=request_id,
+            status=status,
+            note=note,
+            session=session,
+        )
 
         if not result["success"]:
             return JSONResponse(

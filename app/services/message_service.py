@@ -34,6 +34,11 @@ class UnifiedMessageService(BaseService):
         self._initialized = False
         self._db = db_manager
 
+        # Репозитории
+        self._message_repo = MessageRepository()
+        self._chat_repo = ChatRepository()
+        self._user_repo = UserRepository()
+
     async def initialize(self) -> None:
         """Инициализация сервиса"""
         if self._initialized:
@@ -373,8 +378,6 @@ class UnifiedMessageService(BaseService):
         except TelegramAPIError as e:
             error_str = str(e).lower()
             bot_logger.error(f"❌ [_send_via_aiogram] TelegramAPIError: {e}")
-            bot_logger.error(f"❌ [_send_via_aiogram] Error type: {type(e).__name__}")
-            bot_logger.error(f"❌ [_send_via_aiogram] Full error: {e}")
 
             if "message to be replied not found" in error_str:
                 kwargs["reply_to_message_id"] = None
@@ -453,8 +456,8 @@ class UnifiedMessageService(BaseService):
                 if lifetime_seconds and expires_at is None:
                     expires_at = datetime_now() + timedelta(seconds=lifetime_seconds)
 
-                # Используем репозиторий для создания сообщения
-                message = await MessageRepository.create_message(
+                # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ СОЗДАНИЯ СООБЩЕНИЯ
+                message = await self._message_repo.create_message(
                     session=session,
                     message_id=kwargs["message_id"],
                     chat_id=chat_id_int,
@@ -491,11 +494,11 @@ class UnifiedMessageService(BaseService):
 
     async def _ensure_chat_exists(self, session: AsyncSession, chat_id: int) -> ChatModel | None:
         """
-        Проверка и создание чата при его отсутствии.
+        Проверка и создание чата при его отсутствии через ChatRepository.
         """
         try:
-            # Проверяем существование чата
-            chat = await ChatRepository.get_chat_by_id(session, chat_id)
+            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПРОВЕРКИ СУЩЕСТВОВАНИЯ ЧАТА
+            chat = await self._chat_repo.get_chat_by_id(session, chat_id)
             if chat:
                 return chat
 
@@ -509,7 +512,7 @@ class UnifiedMessageService(BaseService):
             if self._bot:
                 try:
                     chat_info = await self._bot.get_chat(chat_id)
-                    from ...core.converters import chat_type_from_aiogram, chat_type_to_str
+                    from ..core.converters import chat_type_from_aiogram, chat_type_to_str
 
                     chat_type = chat_type_from_aiogram(chat_info)
                     chat_type_str = chat_type_to_str(chat_type)
@@ -526,12 +529,11 @@ class UnifiedMessageService(BaseService):
 
                 except Exception as e:
                     bot_logger.warning(f"⚠️ Could not fetch chat info for {chat_id}: {e}")
-                    # Для отрицательных ID (группы/супергруппы)
                     if chat_id < 0:
                         chat_type_str = "supergroup"
 
-            # Создаем чат через репозиторий
-            chat = await ChatRepository.save_chat(
+            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ СОЗДАНИЯ ЧАТА
+            chat = await self._chat_repo.save_chat(
                 session=session,
                 chat_id=chat_id,
                 chat_type=chat_type_str,
@@ -546,15 +548,17 @@ class UnifiedMessageService(BaseService):
             bot_logger.error(f"❌ Failed to create chat {chat_id}: {e}")
             return None
 
-    @staticmethod
-    async def _ensure_user_exists(session: AsyncSession, **kwargs: Any) -> UserModel | None:
-        """Проверка и создание/обновление пользователя"""
+    async def _ensure_user_exists(self, session: AsyncSession, **kwargs: Any) -> UserModel | None:
+        """
+        Проверка и создание/обновление пользователя через UserRepository.
+        """
         try:
             user_id = kwargs.get("user_id")
             if not user_id:
                 return None
 
-            user = await UserRepository.get_user_by_id(session, user_id)
+            # ИСПОЛЬЗУЕМ UserRepository ДЛЯ ПОЛУЧЕНИЯ ПОЛЬЗОВАТЕЛЯ
+            user = await self._user_repo.get_user_by_id(session, user_id)
 
             if user:
                 # Обновление существующего пользователя
@@ -578,8 +582,8 @@ class UnifiedMessageService(BaseService):
                     bot_logger.debug(f"✅ User {user_id} updated")
                 return user
 
-            # Создание нового пользователя
-            user = await UserRepository.save_user(
+            # ИСПОЛЬЗУЕМ UserRepository ДЛЯ СОЗДАНИЯ НОВОГО ПОЛЬЗОВАТЕЛЯ
+            user = await self._user_repo.save_user(
                 session=session,
                 user_id=user_id,
                 first_name=kwargs.get("user_first_name"),
@@ -618,10 +622,11 @@ class UnifiedMessageService(BaseService):
         return None
 
     async def _mark_message_deleted(self, chat_id: int, message_id: int, deleted_by_type: str) -> None:
-        """Отметка сообщения как удаленного в БД"""
+        """Отметка сообщения как удаленного в БД через ChatRepository"""
         try:
             async with self._db.get_session() as session:
-                await ChatRepository.deactivate_missing_chat_message(
+                # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ОТМЕТКИ СООБЩЕНИЯ КАК УДАЛЕННОГО
+                await self._chat_repo.deactivate_missing_chat_message(
                     session=session,
                     message_id=message_id,
                     chat_id=chat_id,
@@ -657,7 +662,6 @@ class UnifiedMessageService(BaseService):
             return {"success": False, "error": "Bot not initialized"}
 
         try:
-            #  Удаление параметров, не поддерживаемых edit_message_text
             edit_kwargs = kwargs.copy()
             edit_kwargs.pop("message_thread_id", None)
 
@@ -702,10 +706,11 @@ class UnifiedMessageService(BaseService):
         caption: str | None = None,
         edit_date: Any = None,
     ) -> None:
-        """Обновление сообщения в БД через репозиторий"""
+        """Обновление сообщения в БД через MessageRepository"""
         try:
             async with self._db.get_session() as session:
-                await MessageRepository.update_message(
+                # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОБНОВЛЕНИЯ СООБЩЕНИЯ
+                await self._message_repo.update_message(
                     session=session,
                     message_id=message_id,
                     text=text,
@@ -797,7 +802,8 @@ class UnifiedMessageService(BaseService):
 
         try:
             async with self._db.get_session() as session:
-                old_messages = await MessageRepository.get_messages_by_filter(
+                # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ СТАРЫХ СООБЩЕНИЙ
+                old_messages = await self._message_repo.get_messages_by_filter(
                     session=session,
                     chat_id=chat_id,
                     before_minutes=before_minutes,
@@ -841,7 +847,8 @@ class UnifiedMessageService(BaseService):
                             except Exception as e:
                                 bot_logger.warning(f"⚠️ Error deleting message {msg_id}: {e}")
 
-                        deleted = await MessageRepository.mark_messages_deleted_by_ids(
+                        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОТМЕТКИ СООБЩЕНИЙ КАК УДАЛЕННЫХ
+                        deleted = await self._message_repo.mark_messages_deleted_by_ids(
                             session=session, message_ids=ids_to_delete, deleted_by_type=delete_by_type
                         )
                         total_marked += deleted

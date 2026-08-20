@@ -15,6 +15,10 @@ from ..dependencies import get_session
 
 router = APIRouter(prefix="/errors", tags=["Errors"])
 
+# Репозитории (создаем один раз на уровне модуля)
+_error_repo = ErrorRepository()
+_settings_repo = NotificationSettingsRepository()
+
 
 class ErrorRequest(BaseModel):
     """Модель запроса для внешней ошибки"""
@@ -99,7 +103,7 @@ async def register_external_error(
         else:
             api_logger.debug("ℹ️ No chat_ids specified, error will be handled by LogHandlerService")
 
-        # Сохранение ошибки с отправкой в Telegram
+        # ИСПОЛЬЗУЕМ error_service ДЛЯ ЛОГИРОВАНИЯ ОШИБКИ
         error = await error_service.log_external_error(
             error_code=request.error_code,
             error_message=request.error_message,
@@ -115,8 +119,8 @@ async def register_external_error(
             session=session,
         )
 
-        # Получение количества связанных сообщений через репозиторий
-        message_count = await ErrorRepository.get_linked_message_count(session, error.FID)
+        # Используем репозиторий для получения количества связанных сообщений
+        message_count = await _error_repo.get_linked_message_count(session, error.FID)
 
         api_logger.info(f"✅ Error saved with ID: {error.FID}, linked messages: {message_count}")
 
@@ -149,6 +153,7 @@ async def resolve_error(
     api_logger.info(f"🔧 Resolving error {error_id} by user {request.resolved_by}")
 
     try:
+        # ИСПОЛЬЗУЕМ error_service ДЛЯ РЕШЕНИЯ ОШИБКИ
         success, message = await error_service.check_and_resolve_error(
             error_id=error_id,
             resolved_by=request.resolved_by,
@@ -183,6 +188,7 @@ async def reopen_error(
     api_logger.info(f"🔁 Reopening error {error_id}")
 
     try:
+        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПЕРЕОТКРЫТИЯ ОШИБКИ
         success, message = await error_service.reopen_error(
             error_id=error_id,
             session=session,
@@ -217,6 +223,7 @@ async def get_error_stats(
     api_logger.info("📊 Getting error stats")
 
     try:
+        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await error_service.get_error_stats(
             start_date=start_date,
             end_date=end_date,
@@ -244,6 +251,7 @@ async def get_user_stats(
     api_logger.info(f"📊 Getting user stats for user {user_id}")
 
     try:
+        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ ПОЛЬЗОВАТЕЛЯ
         stats = await error_service.get_user_stats(
             user_id=user_id,
             session=session,
@@ -267,29 +275,41 @@ async def update_notification_settings(
     api_logger.info(f"⚙️ Updating notification settings for chat {request.chat_id}")
 
     try:
-        # Получение существующих настроек через репозиторий
-        settings_obj = await NotificationSettingsRepository.get_by_chat_id(session=session, chat_id=request.chat_id)
+        # ИСПОЛЬЗУЕМ репозиторий ДЛЯ ПОЛУЧЕНИЯ НАСТРОЕК
+        settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=request.chat_id)
 
         if settings_obj:
-            # Обновление существующих настроек
-            settings_obj.FSilenceStart = request.silence_start
-            settings_obj.FSilenceEnd = request.silence_end
-            settings_obj.FSilenceEnabled = request.silence_enabled
-            settings_obj.FNotifyErrors = request.notify_errors
-            settings_obj.FNotifyPeriodicTasks = request.notify_periodic_tasks
-            settings_obj.FNotifyTaskExecution = request.notify_task_execution
-            settings_obj.FNotifySystem = request.notify_system
-            settings_obj.FNotificationLevel = request.notification_level
-            settings_obj.FGroupingEnabled = request.grouping_enabled
-            settings_obj.FGroupingWindowMinutes = request.grouping_window_minutes
-            settings_obj.FEnableAutoReports = request.auto_reports_enabled
-            settings_obj.FAutoReportInterval = request.auto_report_interval
-            settings_obj.FAutoReportHourStart = request.auto_report_hour_start
-            settings_obj.FAutoReportHourEnd = request.auto_report_hour_end
+            # ИСПОЛЬЗУЕМ update() МЕТОД РЕПОЗИТОРИЯ ВМЕСТО ПРЯМОГО ИЗМЕНЕНИЯ
+            updated_settings = await _settings_repo.update(
+                session=session,
+                chat_id=request.chat_id,
+                silence_start=request.silence_start,
+                silence_end=request.silence_end,
+                silence_enabled=request.silence_enabled,
+                notify_errors=request.notify_errors,
+                notify_periodic_tasks=request.notify_periodic_tasks,
+                notify_task_execution=request.notify_task_execution,
+                notify_system=request.notify_system,
+                notification_level=request.notification_level,
+                grouping_enabled=request.grouping_enabled,
+                grouping_window_minutes=request.grouping_window_minutes,
+                auto_reports_enabled=request.auto_reports_enabled,
+                auto_report_interval=request.auto_report_interval,
+                auto_report_hour_start=request.auto_report_hour_start,
+                auto_report_hour_end=request.auto_report_hour_end,
+            )
+
+            if updated_settings is None:
+                api_logger.error(f"❌ Failed to update settings for chat {request.chat_id}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "message": "Failed to update settings", "timestamp": get_timestamp()},
+                )
+
             api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
         else:
-            # Создание новых настроек через репозиторий
-            await NotificationSettingsRepository.create(
+            # ИСПОЛЬЗУЕМ create() МЕТОД РЕПОЗИТОРИЯ
+            await _settings_repo.create(
                 session=session,
                 chat_id=request.chat_id,
                 silence_start=request.silence_start,
@@ -309,6 +329,8 @@ async def update_notification_settings(
             )
             api_logger.debug(f"ℹ️ Created new settings for chat {request.chat_id}")
 
+        # Коммит выполняется автоматически через репозиторий
+        # Но для надежности делаем явный коммит
         await session.commit()
 
         api_logger.info(f"✅ Notification settings updated for chat {request.chat_id}")
@@ -335,7 +357,8 @@ async def get_notification_settings(
     api_logger.info(f"⚙️ Getting notification settings for chat {chat_id}")
 
     try:
-        settings_obj = await NotificationSettingsRepository.get_by_chat_id(session=session, chat_id=chat_id)
+        # ИСПОЛЬЗУЕМ репозиторий ДЛЯ ПОЛУЧЕНИЯ НАСТРОЕК
+        settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=chat_id)
 
         if not settings_obj:
             api_logger.warning(f"⚠️ Settings not found for chat {chat_id}")
@@ -346,6 +369,7 @@ async def get_notification_settings(
 
         api_logger.info(f"✅ Settings retrieved for chat {chat_id}")
 
+        # Используем DTO или словарь для ответа
         return JSONResponse(
             status_code=200,
             content={

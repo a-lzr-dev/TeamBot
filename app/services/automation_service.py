@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from ..bot.dependencies import get_bot_manager
 from ..config import settings
@@ -80,6 +79,10 @@ if HAS_SUBPROCESS and subprocess is not None:
             app_logger.warning("⚠️ LibreOffice not found. Install: sudo apt-get install libreoffice")
     except Exception as check_error:
         app_logger.warning(f"⚠️ LibreOffice check failed: {check_error}")
+
+# Репозитории (создаем один раз на уровне модуля)
+_request_repo = AutomationRequestRepository()
+_user_repo = UserRepository()
 
 
 class AutomationService:
@@ -456,7 +459,7 @@ class AutomationService:
         app_logger.info(f"📝 Creating automation request from user {user_id}: {title}")
 
         # Проверка пользователя через репозиторий
-        user = await UserRepository.get_user_by_id(session, user_id)
+        user = await _user_repo.get_user_by_id(session, user_id)
 
         if not user:
             app_logger.warning(f"⚠️ User {user_id} not found")
@@ -473,7 +476,7 @@ class AutomationService:
 
         try:
             # Сохранение в БД через репозиторий
-            request = await AutomationRequestRepository.create(
+            request = await _request_repo.create(
                 session=session,
                 user_id=user_id,
                 title=title,
@@ -552,13 +555,15 @@ class AutomationService:
             except ValueError as priority_error:
                 app_logger.warning(f"⚠️ Invalid priority: {priority}, error: {priority_error}")
 
-        requests = await AutomationRequestRepository.get_all(
+        # Используем репозиторий вместо прямого запроса
+        requests = await _request_repo.get_all(
             session=session,
             status=status_enum,
             priority=priority_enum,
             user_id=user_id,
             limit=limit,
             offset=offset,
+            load_user=True,
         )
 
         return [self._format_request(req) for req in requests]
@@ -583,18 +588,8 @@ class AutomationService:
             async with db_manager.get_session() as new_session:
                 return await self.get_request_by_id(request_id, new_session)
 
-        from sqlalchemy import select
-
-        from ..models import UserRequestAutomationModel
-
-        stmt = (
-            select(UserRequestAutomationModel)
-            .options(selectinload(UserRequestAutomationModel.user))
-            .where(UserRequestAutomationModel.FID == request_id)
-        )
-
-        result = await session.execute(stmt)
-        request = result.scalar_one_or_none()
+        # Используем репозиторий вместо прямого запроса
+        request = await _request_repo.get_by_id(session, request_id)
 
         if not request:
             return None
@@ -640,7 +635,7 @@ class AutomationService:
             return {"success": False, "error": f"Неверный статус: {status}, error: {status_error}"}
 
         try:
-            success, request = await AutomationRequestRepository.update_status(
+            success, request = await _request_repo.update_status(
                 session=session,
                 request_id=request_id,
                 status=status_enum,
@@ -655,17 +650,8 @@ class AutomationService:
 
             app_logger.info(f"✅ Request #{request_id} status updated to {status}")
 
-            from sqlalchemy import select
-
-            from ..models import UserRequestAutomationModel
-
-            stmt = (
-                select(UserRequestAutomationModel)
-                .options(selectinload(UserRequestAutomationModel.user))
-                .where(UserRequestAutomationModel.FID == request_id)
-            )
-            result = await session.execute(stmt)
-            updated_request = result.scalar_one_or_none()
+            # Получаем обновленную заявку через репозиторий
+            updated_request = await _request_repo.get_by_id(session, request_id)
 
             return {
                 "success": True,
@@ -711,7 +697,7 @@ class AutomationService:
             return {"success": False, "error": f"Неверный приоритет: {priority}, error: {priority_error}"}
 
         try:
-            success, request = await AutomationRequestRepository.update_priority(
+            success, request = await _request_repo.update_priority(
                 session=session,
                 request_id=request_id,
                 priority=priority_enum,
@@ -724,17 +710,8 @@ class AutomationService:
 
             app_logger.info(f"✅ Request #{request_id} priority updated to {priority}")
 
-            from sqlalchemy import select
-
-            from ..models import UserRequestAutomationModel
-
-            stmt = (
-                select(UserRequestAutomationModel)
-                .options(selectinload(UserRequestAutomationModel.user))
-                .where(UserRequestAutomationModel.FID == request_id)
-            )
-            result = await session.execute(stmt)
-            updated_request = result.scalar_one_or_none()
+            # Получаем обновленную заявку через репозиторий
+            updated_request = await _request_repo.get_by_id(session, request_id)
 
             return {
                 "success": True,
@@ -792,7 +769,7 @@ class AutomationService:
             except ValueError as end_error:
                 app_logger.warning(f"⚠️ Invalid end_date: {end_date}, error: {end_error}")
 
-        return await AutomationRequestRepository.get_stats(
+        return await _request_repo.get_stats(
             session=session,
             user_id=user_id,
             start_date=start_dt,
@@ -827,16 +804,16 @@ class AutomationService:
 
         try:
             if soft:
-                # Мягкое удаление - меняем статус
-                success, _ = await AutomationRequestRepository.update_status(
+                # Мягкое удаление - меняем статус через репозиторий
+                success, _ = await _request_repo.update_status(
                     session=session,
                     request_id=request_id,
                     status=UserRequestAutomationStatus.CANCELLED,
                     note="Удалено пользователем",
                 )
             else:
-                # Жесткое удаление
-                success = await AutomationRequestRepository.delete(
+                # Жесткое удаление через репозиторий
+                success = await _request_repo.delete(
                     session=session,
                     request_id=request_id,
                     soft=False,

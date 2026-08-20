@@ -1,5 +1,3 @@
-from typing import Any
-
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -18,6 +16,9 @@ from ...keyboards import UserKeyboard, get_search_cancel_keyboard
 from .auth import _auth_cache, is_user_authenticated
 
 router = Router(name="aiogram_users")
+
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
 
 
 class UserStates(StatesGroup):
@@ -44,164 +45,6 @@ async def _clear_user_selection(state: FSMContext) -> None:
         is_admin=False,
     )
     bot_logger.debug("🧹 User selection cleared from state")
-
-
-# ============================================================
-# ПОЛУЧЕНИЕ СПИСКА ПОЛЬЗОВАТЕЛЕЙ С ПАГИНАЦИЕЙ И ПОИСКОМ
-# ============================================================
-
-
-async def get_users_page(
-    session: Any,
-    page: int = 0,
-    page_size: int = 10,
-    search_query: str | None = None,
-) -> dict[str, Any]:
-    """
-    Получение списка пользователей с пагинацией и поддержкой поиска.
-
-    Args:
-        session: Сессия БД
-        page: Номер страницы (начиная с 0)
-        page_size: Количество пользователей на странице
-        search_query: Поисковый запрос (имя, фамилия, телефон)
-
-    Returns:
-        dict: {
-            "users": list[dict],
-            "total": int,
-            "page": int,
-            "total_pages": int,
-            "has_prev": bool,
-            "has_next": bool,
-            "search_query": str | None
-        }
-    """
-    try:
-        from sqlalchemy import func, or_, select
-        from sqlalchemy.orm import selectinload
-
-        from app.models import AvanpostUserLinkModel, AvanpostUserModel, UserModel
-
-        # Базовый запрос с подгрузкой связанных моделей
-        stmt = (
-            select(AvanpostUserModel)
-            .options(selectinload(AvanpostUserModel.user_link).selectinload(AvanpostUserLinkModel.telegram_user))
-            .order_by(AvanpostUserModel.FID)
-        )
-
-        # Применение поискового фильтра при его наличии
-        if search_query and len(search_query) >= 2:
-            search_pattern = f"%{search_query}%"
-
-            # Построение условия для поиска по AvanpostUser
-            conditions = [
-                AvanpostUserModel.FName.ilike(search_pattern),
-                AvanpostUserModel.FPhone.ilike(search_pattern),
-            ]
-
-            # Поиск по связанному Telegram пользователю через подзапрос
-            # Использование явного JOIN с AvanpostUserLinkModel для доступа к FK_Link
-            subquery = (
-                select(AvanpostUserLinkModel.FK_Parent)
-                .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
-                .where(
-                    or_(
-                        UserModel.FFirstName.ilike(search_pattern),
-                        UserModel.FLastName.ilike(search_pattern),
-                        UserModel.FUserName.ilike(search_pattern),
-                    )
-                )
-                .scalar_subquery()
-            )
-
-            # Добавление условия: AvanpostUser.FID IN (subquery)
-            conditions.append(AvanpostUserModel.FID.in_(subquery))
-
-            stmt = stmt.where(or_(*conditions))
-
-        # Общий подсчет (с учетом фильтра)
-        count_stmt = select(func.count()).select_from(AvanpostUserModel)
-
-        if search_query and len(search_query) >= 2:
-            search_pattern = f"%{search_query}%"
-            conditions = [
-                AvanpostUserModel.FName.ilike(search_pattern),
-                AvanpostUserModel.FPhone.ilike(search_pattern),
-            ]
-
-            subquery = (
-                select(AvanpostUserLinkModel.FK_Parent)
-                .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
-                .where(
-                    or_(
-                        UserModel.FFirstName.ilike(search_pattern),
-                        UserModel.FLastName.ilike(search_pattern),
-                        UserModel.FUserName.ilike(search_pattern),
-                    )
-                )
-                .scalar_subquery()
-            )
-            conditions.append(AvanpostUserModel.FID.in_(subquery))
-            count_stmt = count_stmt.where(or_(*conditions))
-
-        total_result = await session.execute(count_stmt)
-        total = total_result.scalar() or 0
-
-        total_pages = (total + page_size - 1) // page_size
-
-        # Пагинация
-        offset = page * page_size
-        stmt = stmt.offset(offset).limit(page_size)
-
-        result = await session.execute(stmt)
-        users = result.scalars().all()
-
-        # Форматирование пользователей
-        users_data = []
-        for user in users:
-            # Получение Telegram пользователя через user_link (если есть)
-            telegram_user = None
-            if user.user_link and user.user_link.telegram_user:
-                telegram_user = user.user_link.telegram_user
-
-            # Безопасное получение fk_user
-            fk_user = user.user_link.FK_Link if user.user_link else None
-
-            users_data.append(
-                {
-                    "id": user.FID,
-                    "name": user.FName or f"User #{user.FID}",
-                    "phone": user.FPhone or "Не указан",
-                    "group_id": user.FK_MenuGroup,
-                    "telegram_id": fk_user,
-                    "telegram_name": telegram_user.fullname if telegram_user else None,
-                    "is_authorized": fk_user is not None,
-                }
-            )
-
-        return {
-            "users": users_data,
-            "total": total,
-            "page": page,
-            "total_pages": total_pages,
-            "has_prev": page > 0,
-            "has_next": page < total_pages - 1,
-            "search_query": search_query,
-        }
-
-    except Exception as e:
-        bot_logger.error(f"❌ Failed to get users: {e}", exc_info=True)
-        return {
-            "users": [],
-            "total": 0,
-            "page": 0,
-            "total_pages": 0,
-            "has_prev": False,
-            "has_next": False,
-            "search_query": search_query,
-            "error": str(e),
-        }
 
 
 # ============================================================
@@ -237,8 +80,8 @@ async def show_users(
 
     try:
         async with db_manager.get_session() as session:
-            # Получение данных с учетом поиска
-            data = await get_users_page(
+            # Используем репозиторий для получения страницы пользователей
+            data = await _user_repo.get_avanpost_users_page(
                 session=session,
                 page=page,
                 page_size=10,
@@ -275,7 +118,7 @@ async def show_users(
                 empty_text = f"🔍 По запросу '{current_search}' пользователи не найдены."
 
             await bot_manager.send_message(
-                chat_id=chat_id,  # Используем переданный chat_id
+                chat_id=chat_id,
                 text=empty_text,
                 message_type=MessageType.COMMAND_ACTION_INFO,
                 delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
@@ -420,14 +263,36 @@ async def handle_user_search_query(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Получаем ID сообщения с приглашением
+    state_data = await state.get_data()
+    search_prompt_id = state_data.get("search_message_id")
+
     # Сохранение поискового запроса
     await state.update_data(search_query=query)
 
-    # Удаление сообщения с поисковым запросом
+    # Удаляем сообщение с приглашением, если оно существует
+    if search_prompt_id:
+        try:
+            await bot_manager.delete_message_by_id(chat_id=message.chat.id, message_id=search_prompt_id)
+            bot_logger.debug(f"🗑️ Deleted search prompt message {search_prompt_id}")
+        except Exception as e:
+            bot_logger.warning(f"⚠️ Could not delete search prompt: {e}")
+
+    # Очищаем ID, чтобы не пытаться удалить снова
+    await state.update_data(search_message_id=None)
+
+    # Удаление сообщения с поисковым запросом (сообщение пользователя)
     await bot_manager.delete_message_by_link(message)
 
-    # Отображение результата поиска
-    await show_users(event=message, state=state, page=0, search_query=query)
+    # Отображение результата поиска (страница 0)
+    await show_users(
+        event=message,
+        state=state,
+        page=0,
+        search_query=query,
+    )
+
+    bot_logger.info(f"🔍 Search query processed: '{query}' by user {message.from_user.id}")
 
 
 # ============================================================
@@ -446,6 +311,18 @@ async def handle_users_search_button(callback: CallbackQuery, state: FSMContext)
         await callback.answer("⛔ У вас нет прав.", show_alert=True)
         return
 
+    # Проверка авторизации
+    user_id = callback.from_user.id
+    if not await is_user_authenticated(user_id):
+        await bot_manager.send_toast(
+            text="🔐 **Требуется авторизация**\n\n"
+            "Для доступа к списку пользователей необходимо авторизоваться.\n"
+            "Используйте /start для начала авторизации.",
+            event=callback,
+            show_alert=True,
+        )
+        return
+
     await callback.answer("🔍 Введите поисковый запрос", show_alert=False)
 
     # Перевод в состояние поиска
@@ -454,7 +331,12 @@ async def handle_users_search_button(callback: CallbackQuery, state: FSMContext)
     # Сохранение текущей страницы, чтобы вернуться к ней при отмене
     data = await state.get_data()
     current_page = data.get("users_page", 0)
-    await state.update_data(users_page_before_search=current_page)
+
+    # Сохраняем ID сообщения с приглашением (пока None)
+    await state.update_data(
+        users_page_before_search=current_page,
+        search_message_id=None,
+    )
 
     # Удаление текущего сообщения со списком пользователей
     if callback.message:
@@ -465,7 +347,7 @@ async def handle_users_search_button(callback: CallbackQuery, state: FSMContext)
             bot_logger.warning(f"⚠️ Could not delete message: {e}")
 
     # Отправка сообщения с просьбой ввести поисковый запрос
-    await bot_manager.send_answer(
+    result = await bot_manager.send_answer(
         text="🔍 **Поиск пользователей**\n\n"
         "Введите имя, фамилию или номер телефона для поиска.\n"
         "Минимум 2 символа.\n\n"
@@ -476,6 +358,15 @@ async def handle_users_search_button(callback: CallbackQuery, state: FSMContext)
         parse_mode="Markdown",
         reply_markup=get_search_cancel_keyboard(),
     )
+
+    # Сохраняем ID сообщения с приглашением
+    if result and result.get("success"):
+        search_msg_id = result.get("message_id")
+        if search_msg_id:
+            await state.update_data(search_message_id=search_msg_id)
+            bot_logger.debug(f"💾 Saved search prompt message ID: {search_msg_id}")
+
+    bot_logger.info(f"🔍 Search mode activated for user {user_id}")
 
 
 # ============================================================
@@ -505,6 +396,7 @@ async def handle_cancel_search(callback: CallbackQuery, state: FSMContext) -> No
     await state.update_data(
         users_page_before_search=0,
         search_query=None,
+        search_message_id=None,
     )
 
     # Удаление сообщения с поиском
@@ -515,7 +407,7 @@ async def handle_cancel_search(callback: CallbackQuery, state: FSMContext) -> No
         except Exception as e:
             bot_logger.warning(f"⚠️ Could not delete message: {e}")
 
-    # Отправка нового сообщения со списком пользователей
+    # Отображение списка пользователей
     await show_users(
         event=callback,
         state=state,
@@ -535,10 +427,7 @@ async def handle_cancel_search(callback: CallbackQuery, state: FSMContext) -> No
 @router.callback_query(F.data.startswith("users_"))
 @log_exceptions(bot_logger)
 async def handle_users_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков списка пользователей.
-    Делегирует логику в UsersCallbackHandler.
-    """
+    """Обработка колбэков списка пользователей"""
     await users_callback_handler.handle(callback, state)
 
 
@@ -548,16 +437,13 @@ async def handle_users_callback(callback: CallbackQuery, state: FSMContext) -> N
 
 
 async def select_user(callback: CallbackQuery, state: FSMContext, user_id: int) -> None:
-    """
-    Обработка выбора пользователя.
-    Запускает /actions для выбранного пользователя.
-    """
+    """Обработка выбора пользователя. Запускает /actions для выбранного пользователя."""
     bot_manager = get_bot_manager()
 
     try:
-        # Получение информации о пользователе
+        # Получение информации о пользователе через репозиторий
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_avanpost_user_data(session, user_id)
+            user = await _user_repo.get_avanpost_user_data(session, user_id)
 
         if not user:
             await bot_manager.send_toast(
@@ -615,14 +501,16 @@ async def select_user(callback: CallbackQuery, state: FSMContext, user_id: int) 
             await bot_manager.delete_message_by_link(callback.message)
 
         # Отображение меню действий для выбранного пользователя
-        await show_menu(
-            event=callback,
-            group_id=group_id,
-            state=state,
-            is_callback=True,
-            _is_new=True,
-            user_display_name=user_name,
-        )
+        async with db_manager.get_session() as session:
+            await show_menu(
+                event=callback,
+                group_id=group_id,
+                state=state,
+                session=session,
+                is_callback=True,
+                _is_new=True,
+                user_display_name=user_name,
+            )
 
         bot_logger.info(f"✅ User {user_id} selected, showing actions menu with group {group_id}")
 
@@ -641,12 +529,7 @@ async def select_user(callback: CallbackQuery, state: FSMContext, user_id: int) 
 
 
 async def back_to_users(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Возврат к списку пользователей из меню действий.
-    Используется для обработки кнопки "К пользователям".
-
-    ВАЖНО: Очищает состояние перед показом списка!
-    """
+    """Возврат к списку пользователей из меню действий"""
     bot_manager = get_bot_manager()
 
     # Очистка состояния от выбранного пользователя
@@ -699,7 +582,6 @@ __all__ = [
     "router",
     "show_users",
     "cmd_users",
-    "get_users_page",
     "select_user",
     "back_to_users",
     "close_users_list",

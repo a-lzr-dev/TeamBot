@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.dependencies import get_bot_manager
 from app.bot.keyboards import AdminKeyboard
 from app.config import settings
-from app.db import ChatRepository, MessageRepository, db_manager
+from app.db import ChatRepository, MessageRepository, UserRepository, db_manager
 from app.exceptions import log_exceptions
 from app.logger import bot_logger
 from app.models import MessageActionType, MessageType
@@ -16,6 +16,11 @@ from app.services.avanpost_sync_service import AvanpostSyncService
 from app.services.seed_service import AvanpostSeedService
 
 router = Router(name="aiogram_admin")
+
+# Репозитории (создаем один раз на уровне модуля)
+_chat_repo = ChatRepository()
+_message_repo = MessageRepository()
+_user_repo = UserRepository()
 
 
 # ============================================================
@@ -67,9 +72,6 @@ async def cmd_broadcast(message: Message, state: FSMContext) -> None:
             delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
         )
         return
-
-    print(f"🔍 [DEBUG] cmd_broadcast from user: {message.from_user.id}")
-    print(f"🔍 [DEBUG] User: {message.from_user.first_name} (@{message.from_user.username})")
 
     await state.set_state(BroadcastStates.waiting_for_text)
 
@@ -123,7 +125,8 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
 
     # Получение количества чатов через репозиторий
     async with db_manager.get_session() as session:
-        chats = await ChatRepository.get_chats(session, is_active=True)
+        # ИСПОЛЬЗУЕМ chat_repo ДЛЯ ПОЛУЧЕНИЯ ЧАТОВ
+        chats = await _chat_repo.get_chats(session, is_active=True)
         chat_count = len(chats)
 
     if chat_count == 0:
@@ -145,13 +148,9 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
         sender_username=message.from_user.username,
     )
 
-    print(f"🔍 [DEBUG] broadcast_get_text - saved sender_user_id: {message.from_user.id}")
-
     await state.set_state(BroadcastStates.waiting_for_confirmation)
 
     keyboard = AdminKeyboard.get_broadcast_confirm_keyboard()
-    print(f"🔍 Keyboard: {keyboard}")
-    print(f"🔍 Keyboard inline_keyboard: {keyboard.inline_keyboard}")
 
     await bot_manager.send_answer(
         text=f"📊 **Подтверждение рассылки**\n\n"
@@ -165,7 +164,6 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
         parse_mode="Markdown",
         reply_markup=keyboard,
     )
-    print("✅ Сообщение отправлено через bot_manager")
 
 
 @router.message(BroadcastStates.waiting_for_confirmation)
@@ -202,9 +200,6 @@ async def broadcast_confirm(message: Message, state: FSMContext) -> None:
     sender_user_id = data.get("sender_user_id")
     sender_first_name = data.get("sender_first_name")
     sender_username = data.get("sender_username")
-
-    print(f"🔍 [DEBUG] broadcast_confirm - sender_user_id: {sender_user_id}")
-    print(f"🔍 [DEBUG] sender_first_name: {sender_first_name}, sender_username: {sender_username}")
 
     if not text:
         await state.clear()
@@ -480,10 +475,12 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
 
     try:
         async with db_manager.get_session() as session:
-            db_message = await MessageRepository.get_message_by_id(session, message_id)
+            # ИСПОЛЬЗУЕМ message_repo ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЯ
+            db_message = await _message_repo.get_message_by_id(session, message_id)
 
             if db_message:
-                deleted_count = await MessageRepository.mark_messages_as_deleted(
+                # ИСПОЛЬЗУЕМ message_repo ДЛЯ ОТМЕТКИ СООБЩЕНИЯ КАК УДАЛЕННОГО
+                deleted_count = await _message_repo.mark_messages_as_deleted(
                     session=session,
                     message_ids=[message_id],
                     deleted_by_type="admin",
@@ -520,6 +517,7 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
                     parse_mode="Markdown",
                 )
 
+            # Коммит выполняется внутри репозитория, но для надежности делаем явный
             await session.commit()
 
         # Пытаемся удалить из Telegram (если бот имеет права)
@@ -812,15 +810,12 @@ async def cmd_sync_base(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск синхронизации справочников...", event=message)
 
     try:
+        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
-        # Определение ID справочников (1-17, 101-108, 201-205)
-        base_ids = list(range(1, 18)) + list(range(101, 109)) + list(range(201, 206))
-        bot_logger.info(f"📊 Синхронизация справочников: {base_ids}")
-
         stats = await sync_service.sync_base_data(force=False)
-        stats_dict = stats.to_dict()
+        stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
         report = (
             f"✅ Синхронизация справочников завершена!\n"
@@ -855,15 +850,12 @@ async def cmd_sync_contacts(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск синхронизации контактов...", event=message)
 
     try:
+        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
-        # Определение ID контактов (301-303)
-        contact_ids = list(range(301, 304))
-        bot_logger.info(f"📊 Синхронизация контактов: {contact_ids}")
-
         stats = await sync_service.sync_base_data(force=False)
-        stats_dict = stats.to_dict()
+        stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
         # Фильтруем статистику только для контактов
         table_stats = stats_dict.get("table_stats", {})
@@ -927,11 +919,12 @@ async def cmd_sync_user(message: Message) -> None:
         user_id = int(parts[1])
         await bot_manager.send_answer(text=f"🔄 Запуск синхронизации для пользователя {user_id}...", event=message)
 
+        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
         stats = await sync_service.sync_user_data(user_id=user_id, force=False)
-        stats_dict = stats.to_dict()
+        stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
         report = (
             f"✅ Синхронизация пользователя {user_id} завершена!\n"
@@ -984,6 +977,7 @@ async def cmd_sync_all_users(message: Message) -> None:
     )
 
     try:
+        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
@@ -1024,6 +1018,7 @@ async def cmd_sync_light(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск стандартной синхронизации...", event=message)
 
     try:
+        # ИСПОЛЬЗУЕМ db_manager.sync_avanpost() ВМЕСТО ПРЯМОГО ВЫЗОВА
         result = await db_manager.sync_avanpost(force=False)
 
         if result.get("success"):
@@ -1060,10 +1055,12 @@ async def cmd_sync_force(message: Message) -> None:
 
     await bot_manager.delete_message_by_link(message)
     await bot_manager.send_answer(
-        text="🔄 Запуск полной синхронизации (Force)...\nЭто может занять длительное время.", event=message
+        text="🔄 Запуск полной синхронизации (Force)...\nЭто может занять длительное время.",
+        event=message,
     )
 
     try:
+        # ИСПОЛЬЗУЕМ db_manager.sync_avanpost() ВМЕСТО ПРЯМОГО ВЫЗОВА
         result = await db_manager.sync_avanpost(force=True)
 
         if result.get("success"):
@@ -1110,6 +1107,7 @@ async def cmd_sync_vehicles(message: Message) -> None:
     )
 
     try:
+        # ИСПОЛЬЗУЕМ AvanpostSeedService
         async with db_manager.get_session() as session:
             result = await AvanpostSeedService.seed_avanpost_users_all_vehicles(
                 session=session,

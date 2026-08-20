@@ -7,10 +7,13 @@ from ..bot.manager import bot_manager
 from ..config import settings
 from ..db.manager import db_manager
 from ..db.repositories import ReminderRepository
+from ..dtos.reminder import ReminderNotificationDTO
 from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import datetime_now
+from ..services.avanpost_sync_service import AvanpostSyncService
 from ..services.log_handler_service import log_handler_service
+from ..services.message_lifetime_service import message_lifetime_service
 from ..services.reminder_notification_service import reminder_notification_service
 
 
@@ -49,6 +52,9 @@ class ApplicationManager:
         self.db = db_manager
         self.api = api_manager
         self.bot = bot_manager
+
+        # Репозитории
+        self._reminder_repo = ReminderRepository()
 
         # Настройки из конфига с значениями по умолчанию
         self.REMINDER_CHECK_INTERVAL = getattr(settings, "REMINDER_CHECK_INTERVAL", 60)
@@ -134,7 +140,7 @@ class ApplicationManager:
         else:
             app_logger.warning(f"⚠️ Unknown component: {component}")
 
-    # ==================== ЗАПУСК БАЗЫ ДАННЫХ (ПОСЛЕДОВАТЕЛЬНАЯ СИНХРОНИЗАЦИЯ) ====================
+    # ==================== ЗАПУСК БАЗЫ ДАННЫХ ====================
 
     async def _start_database(self) -> None:
         """
@@ -173,7 +179,7 @@ class ApplicationManager:
 
                 app_logger.debug(f"🔄 Starting Avanpost base data sync (force={sync_force}, sync=True)...")
 
-                # ВАЖНО: Ждем завершения синхронизации справочников
+                # ИСПОЛЬЗУЕМ AvanpostSyncService ВМЕСТО ПРЯМОГО ВЫЗОВА
                 try:
                     await asyncio.wait_for(
                         self._sync_avanpost_base_data(force=sync_force),
@@ -197,7 +203,7 @@ class ApplicationManager:
                 sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
                 app_logger.debug("👤 Starting Avanpost users data sync...")
 
-                # Запуск в фоне, чтобы не блокировать старт
+                # ИСПОЛЬЗУЕМ AvanpostSyncService
                 task = asyncio.create_task(
                     self._sync_avanpost_users_in_background(force=sync_force), name="avanpost_users_sync"
                 )
@@ -208,6 +214,7 @@ class ApplicationManager:
 
         # 6. Инициализация LogHandlerService
         try:
+            # ИСПОЛЬЗУЕМ log_handler_service
             await log_handler_service.initialize()
             app_logger.info("✅ LogHandlerService initialized")
         except Exception as e:
@@ -219,8 +226,7 @@ class ApplicationManager:
     async def _sync_avanpost_base_data(force: bool = False) -> None:
         """Синхронизация базовых данных Avanpost (справочники)."""
         try:
-            from app.services.avanpost_sync_service import AvanpostSyncService
-
+            # ИСПОЛЬЗУЕМ AvanpostSyncService
             app_logger.debug(f"🔄 Syncing Avanpost base data (force={force})...")
             sync_service = AvanpostSyncService()
             await sync_service.initialize()
@@ -250,8 +256,7 @@ class ApplicationManager:
     async def _sync_avanpost_users(force: bool = False) -> None:
         """Синхронизация пользовательских данных Avanpost."""
         try:
-            from app.services.avanpost_sync_service import AvanpostSyncService
-
+            # ИСПОЛЬЗУЕМ AvanpostSyncService
             app_logger.debug(f"👤 Syncing Avanpost user data (force={force})...")
             sync_service = AvanpostSyncService()
             await sync_service.initialize()
@@ -314,8 +319,7 @@ class ApplicationManager:
 
         # Запуск сервиса времени жизни сообщений
         try:
-            from ..services.message_lifetime_service import message_lifetime_service
-
+            # ИСПОЛЬЗУЕМ message_lifetime_service
             await message_lifetime_service.start()
             app_logger.info("✅ MessageLifetimeService started")
         except Exception as e:
@@ -367,8 +371,8 @@ class ApplicationManager:
             app_logger.debug(f"⏰ Checking reminders at {now}")
 
             async with self.db.get_session() as session:
-                # Получаем активные напоминания
-                reminders = await ReminderRepository.get_active_reminders(
+                # ИСПОЛЬЗУЕМ reminder_repo ДЛЯ ПОЛУЧЕНИЯ АКТИВНЫХ НАПОМИНАНИЙ
+                reminders = await self._reminder_repo.get_active_reminders(
                     session=session,
                     before_time=now,
                     limit=self.REMINDER_BATCH_SIZE,
@@ -380,14 +384,12 @@ class ApplicationManager:
                 app_logger.info(f"⏰ Found {len(reminders)} reminders to process")
 
                 # Преобразование модели в DTO и отправление уведомления
-                from app.dtos.reminder import ReminderNotificationDTO
-
                 for reminder in reminders:
                     try:
-                        # Создание DTO из модели
+                        # ИСПОЛЬЗУЕМ DTO ДЛЯ ПЕРЕДАЧИ ДАННЫХ
                         reminder_dto = ReminderNotificationDTO.from_model(reminder)
 
-                        # Отправление уведомление через сервис с DTO
+                        # ИСПОЛЬЗУЕМ reminder_notification_service
                         await reminder_notification_service.send_notification(reminder=reminder_dto, session=session)
 
                     except Exception as e:
@@ -454,6 +456,7 @@ class ApplicationManager:
         """Остановка LogHandlerService"""
         app_logger.debug("🚀 Stopping LogHandlerService...")
         try:
+            # ИСПОЛЬЗУЕМ log_handler_service
             if hasattr(log_handler_service, "set_shutting_down"):
                 await log_handler_service.set_shutting_down(True)
 
@@ -485,8 +488,7 @@ class ApplicationManager:
 
         # Остановка сервиса времени жизни сообщений
         try:
-            from ..services.message_lifetime_service import message_lifetime_service
-
+            # ИСПОЛЬЗУЕМ message_lifetime_service
             if hasattr(message_lifetime_service, "stop") and callable(message_lifetime_service.stop):
                 await message_lifetime_service.stop()
                 app_logger.info("⛔ MessageLifetimeService stopped")

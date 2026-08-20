@@ -9,7 +9,12 @@ class ISyncService(ABC):
     """Интерфейс сервиса синхронизации"""
 
     @abstractmethod
-    async def sync_chat_members(self, chat_id: int, session: AsyncSession, force: bool = False) -> dict[str, Any]:
+    async def sync_chat_members(
+        self,
+        chat_id: int,
+        session: AsyncSession,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """Синхронизация участников конкретного чата"""
         pass
 

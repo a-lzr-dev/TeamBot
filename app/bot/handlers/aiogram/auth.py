@@ -16,10 +16,14 @@ from app.db import db_manager
 from app.db.repositories import AvanpostRepository, UserRepository
 from app.exceptions import log_exceptions
 from app.logger import bot_logger
-from app.models.base import ErrorCategory, MessageActionType, MessageType, datetime_now
+from app.models.base import ErrorCategory, MessageActionType, MessageType
 from app.services.error_service import error_service
 
 router = Router(name="aiogram_auth")
+
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+_avanpost_repo = AvanpostRepository()
 
 
 class AuthStates(StatesGroup):
@@ -37,7 +41,8 @@ async def is_user_authenticated(user_id: int) -> bool:
     """Проверка, авторизован ли пользователь (есть ли связь с AvanpostUser)"""
     try:
         async with db_manager.get_session() as session:
-            return await UserRepository.is_user_authenticated(session, user_id)
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ
+            return await _user_repo.is_user_authenticated(session, user_id)
     except Exception as e:
         bot_logger.error(f"❌ Failed to check authentication: {e}")
         return False
@@ -86,12 +91,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
         await state.set_state(AuthStates.authenticated)
 
-        # Обновление времени последней активности
+        # ИСПОЛЬЗУЕМ user_repo ДЛЯ ОБНОВЛЕНИЯ ВРЕМЕНИ АКТИВНОСТИ
         async with db_manager.get_session() as session:
-            user = await UserRepository.get_user_by_id(session, telegram_user_id)
-            if user:
-                user.FDateLastActivity = datetime_now()
-                await session.commit()
+            await _user_repo.update_last_activity(session, telegram_user_id)
         return
 
     # Запрос контакта
@@ -189,7 +191,12 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 
     try:
         # 1. Проверка пользователя через хранимую процедуру Avanpost
-        avanpost_user_id, menu_group_id, fk_contact = await check_user_by_phone_avanpost(phone_number)
+        async with db_manager.get_session("avanpost") as avanpost_session:
+            # ИСПОЛЬЗУЕМ avanpost_repo ДЛЯ ПРОВЕРКИ ПОЛЬЗОВАТЕЛЯ
+            avanpost_user_id, menu_group_id, fk_contact = await _avanpost_repo.check_user_by_phone(
+                session=avanpost_session,
+                phone_number=phone_number,
+            )
 
         if not avanpost_user_id:
             keyboard = AuthKeyboard.get_auth_request_keyboard()
@@ -209,8 +216,8 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 
         # 2. Сохранение информации о пользователе в БД
         async with db_manager.get_session("main") as session:
-            # Сохранение пользователя
-            user = await UserRepository.save_user(
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ
+            user = await _user_repo.save_user(
                 session=session,
                 user_id=telegram_user_id,
                 chat_id=message.chat.id,
@@ -231,8 +238,8 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 )
                 return
 
-            # Создание или обновление связи с AvanpostUser
-            success, avanpost_user = await UserRepository.create_or_update_avanpost_user_upsert(
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ СОЗДАНИЯ/ОБНОВЛЕНИЯ СВЯЗИ
+            success, avanpost_user = await _user_repo.create_or_update_avanpost_user_upsert(
                 session=session,
                 telegram_user_id=telegram_user_id,
                 avanpost_user_id=avanpost_user_id,
@@ -251,10 +258,10 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 )
                 return
 
+            # Коммит выполняется внутри репозитория, но для надежности делаем явный
             await session.commit()
 
         # 3. Обновление кеша авторизации
-        # ВАЖНО! Используем Telegram ID как ключ
         _auth_cache[telegram_user_id] = {
             "user_id": avanpost_user_id,
             "group_id": menu_group_id,
@@ -329,7 +336,8 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 
     try:
         async with db_manager.get_session() as session:
-            success = await UserRepository.logout_user(session, user_id)
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ВЫХОДА ИЗ СИСТЕМЫ
+            success = await _user_repo.logout_user(session, user_id)
 
             if success:
                 await session.commit()
@@ -337,7 +345,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
             else:
                 bot_logger.warning(f"⚠️ User {user_id} not found for logout")
 
-        # Очистка кешиа
+        # Очистка кеша
         _auth_cache.pop(user_id, None)
         bot_manager.clear_user_cache(user_id)
 
@@ -497,7 +505,8 @@ async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, i
         normalized_phone = normalize_phone(phone_number)
 
         async with db_manager.get_session("avanpost") as session:
-            return await AvanpostRepository.check_user_by_phone(
+            # ИСПОЛЬЗУЕМ avanpost_repo ДЛЯ ПРОВЕРКИ
+            return await _avanpost_repo.check_user_by_phone(
                 session=session,
                 phone_number=normalized_phone,
             )
@@ -511,6 +520,7 @@ async def get_user_group_id(user_id: int) -> int | None:
     Получение ID группы действий для пользователя.
 
     Поддерживает как Telegram ID, так и Avanpost ID.
+    Использует репозиторий вместо прямого доступа к модели.
     """
     # Проверка кеша по Telegram ID
     user_data = _auth_cache.get(user_id)
@@ -526,25 +536,17 @@ async def get_user_group_id(user_id: int) -> int | None:
 
     try:
         async with db_manager.get_session() as session:
-            # Сначала пробуем как Telegram ID
-            result = await UserRepository.get_user_group_id(session, user_id)
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПОЛУЧЕНИЯ ГРУППЫ
+            result = await _user_repo.get_user_group_id(session, user_id)
             if result is not None:
                 return result
 
-            # Если не нашли, пробуем как Avanpost ID
-            from app.models.avanpost import AvanpostUserModel
-
-            avanpost_user = await session.get(AvanpostUserModel, user_id)
-            if avanpost_user:
-                fk_menu_group = avanpost_user.FK_MenuGroup
-                if fk_menu_group is None:
-                    return None
-                if isinstance(fk_menu_group, int):
-                    return fk_menu_group
-                try:
-                    return int(fk_menu_group)
-                except (ValueError, TypeError):
-                    return None
+            # Если не нашли по Telegram ID, пробуем как Avanpost ID
+            avanpost_user_data = await _user_repo.get_avanpost_user_data(session, user_id)
+            if avanpost_user_data:
+                group_id = avanpost_user_data.get("FK_MenuGroup")
+                if group_id is not None and isinstance(group_id, int):
+                    return int(group_id)
 
             return None
     except Exception as e:
@@ -553,12 +555,15 @@ async def get_user_group_id(user_id: int) -> int | None:
     return None
 
 
-async def _sync_user_in_background(avanpost_user_id: int, **_kwargs: Any) -> None:
+async def _sync_user_in_background(
+    telegram_user_id: int,
+    avanpost_user_id: int,
+) -> None:
     """Фоновая синхронизация пользовательских данных из Avanpost"""
     try:
         from ....services import avanpost_sync_service
 
-        bot_logger.info(f"🔄 Background sync started for user {avanpost_user_id}")
+        bot_logger.info(f"🔄 Background sync started for user {avanpost_user_id} (telegram: {telegram_user_id})")
         await avanpost_sync_service.initialize()
         stats = await avanpost_sync_service.sync_user_data(avanpost_user_id, force=False)
 

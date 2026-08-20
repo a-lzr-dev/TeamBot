@@ -1,16 +1,23 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...bot.dependencies import get_bot_manager
 from ...db import UserRepository, db_manager
-from ...exceptions import DatabaseError, log_exceptions
+from ...db.repositories import StatsRepository
+from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
+from ..dependencies import get_session
 
 router = APIRouter(tags=["Admin"])
+
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+_stats_repo = StatsRepository()
 
 
 class HealthResponse(BaseModel):
@@ -95,7 +102,7 @@ async def readiness() -> JSONResponse:
 
     errors = []
 
-    # Проверка БД
+    # Проверка БД через db_manager
     try:
         is_connected = await db_manager.check_connection()
         if not is_connected:
@@ -138,6 +145,7 @@ async def database_health_check() -> JSONResponse:
     api_logger.debug("🔍 Database health check requested")
 
     try:
+        # ИСПОЛЬЗУЕМ db_manager.check_connection() ВМЕСТО ПРЯМОГО SQL
         is_connected = await db_manager.check_connection()
 
         if is_connected:
@@ -154,6 +162,9 @@ async def database_health_check() -> JSONResponse:
 
     except Exception as e:
         api_logger.error(f"❌ Database health check error: {e}", exc_info=True)
+        # ИСПОЛЬЗУЕМ DatabaseError ИЗ exceptions
+        from ...exceptions import DatabaseError
+
         raise DatabaseError(f"Database health check failed: {e}") from e
 
 
@@ -165,27 +176,29 @@ async def database_health_check() -> JSONResponse:
     tags=["Health"],
 )
 @log_exceptions(api_logger)
-async def full_health_check() -> dict[str, Any]:
+async def full_health_check(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     """Комплексная проверка всех сервисов"""
     api_logger.info("🔍 Full health check requested")
 
     # Статус API
     api_status = create_service_status("api", "ok", {"version": "1.0.0"})
 
-    # Статус БД
+    # Статус БД через db_manager
     db_details = {}
     db_status = "ok"
     try:
+        # ИСПОЛЬЗУЕМ db_manager.check_connection() ВМЕСТО ПРЯМОГО SQL
         is_connected = await db_manager.check_connection()
         if is_connected:
             try:
+                # Используем db_manager.get_stats() для получения статистики
                 stats = await db_manager.get_stats()
                 db_details.update(stats)
 
-                # Получение количества авторизованных пользователей через AvanpostUser
-
-                async with db_manager.get_session("main") as session:
-                    db_details["authorized_users"] = await UserRepository.get_authorized_users_count(session)
+                # Получение количества авторизованных пользователей через репозиторий
+                db_details["authorized_users"] = await _user_repo.get_authorized_users_count(session)
 
             except Exception as e:
                 api_logger.warning(f"Could not get DB stats: {e}")
@@ -256,15 +269,18 @@ async def full_health_check() -> dict[str, Any]:
     tags=["Stats"],
 )
 @log_exceptions(api_logger)
-async def get_stats() -> dict[str, Any]:
+async def get_stats(
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
     """Получение статистики всех сервисов"""
     api_logger.info("📊 Stats requested")
 
     stats = {"database": {}, "telegram": {}, "timestamp": get_timestamp()}
 
-    # Статистика БД
+    # Статистика БД через репозиторий
     try:
-        db_stats = await db_manager.get_stats()
+        # Используем StatsRepository для получения полной статистики
+        db_stats = await _stats_repo.get_full_stats(session)
         stats["database"] = db_stats
         api_logger.debug("✅ Database stats collected")
     except Exception as e:
@@ -275,11 +291,11 @@ async def get_stats() -> dict[str, Any]:
     try:
         bot_manager = get_bot_manager()
         bot_stats = await bot_manager.get_status()
-        stats["bot"] = bot_stats
+        stats["telegram"] = bot_stats
         api_logger.debug("✅ Bot stats collected")
     except Exception as e:
         api_logger.error(f"❌ Failed to get bot stats: {e}")
-        stats["bot"] = {"error": str(e)}
+        stats["telegram"] = {"error": str(e)}
 
     return stats
 

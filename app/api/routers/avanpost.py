@@ -1,16 +1,21 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...db import AvanpostRepository, db_manager
+from ...db import db_manager
+from ...db.repositories import AvanpostActionsRepository, AvanpostRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
+from ..dependencies import get_session
 
 router = APIRouter(prefix="/avanpost", tags=["Avanpost"])
+
+# Репозиторий для работы с меню действий
+_actions_repo = AvanpostActionsRepository()
 
 
 class CheckUserRequest(BaseModel):
@@ -128,12 +133,14 @@ def _validate_item_id(item_id: int) -> None:
 @log_exceptions(api_logger)
 async def check_user_by_phone(
     request: CheckUserRequest,
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
     Проверка пользователя по номеру телефона.
 
     Args:
         request: Запрос с номером телефона (уже провалидирован и нормализован)
+        session: Сессия БД (внедряется через Depends)
 
     Returns:
         CheckUserResponse: Результат проверки
@@ -143,11 +150,11 @@ async def check_user_by_phone(
     try:
         phone = request.phone_number
 
-        async with db_manager.get_session("avanpost") as session:
-            user_id, group_id, contact_id = await AvanpostRepository.check_user_by_phone(
-                session=session,
-                phone_number=phone,
-            )
+        # Используем репозиторий с переданной сессией
+        user_id, group_id, contact_id = await AvanpostRepository.check_user_by_phone(
+            session=session,
+            phone_number=phone,
+        )
 
         exists = user_id is not None
 
@@ -188,9 +195,14 @@ async def check_user_by_phone(
     description="Возвращает список всех групп действий из системы Avanpost",
 )
 @log_exceptions(api_logger)
-async def get_groups() -> JSONResponse:
+async def get_groups(
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
     """
     Получение списка групп действий.
+
+    Args:
+        session: Сессия БД (внедряется через Depends)
 
     Returns:
         GroupsResponse: Список групп
@@ -198,8 +210,9 @@ async def get_groups() -> JSONResponse:
     api_logger.info("📋 Getting groups from Avanpost")
 
     try:
-        async with db_manager.get_session("avanpost") as session:
-            groups_data = await AvanpostRepository.get_groups(session=session)
+        groups_data = await _actions_repo.get_groups(
+            session=session,
+        )
 
         groups = [
             GroupResponse(
@@ -246,6 +259,7 @@ async def get_menu_items(
         None,
         description="ID родительского элемента (None для корневого меню)",
     ),
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
     Получение списка действий для группы действий.
@@ -253,6 +267,7 @@ async def get_menu_items(
     Args:
         group_id: ID группы
         parent_item_id: ID родительского элемента (опционально)
+        session: Сессия БД (внедряется через Depends)
 
     Returns:
         MenuItemsResponse: Список пунктов меню
@@ -262,12 +277,12 @@ async def get_menu_items(
     _validate_group_id(group_id)
 
     try:
-        async with db_manager.get_session("avanpost") as session:
-            items_data = await AvanpostRepository.get_menu_items(
-                session=session,
-                group_id=group_id,
-                parent_item_id=parent_item_id,
-            )
+        items_data = await _actions_repo.get_menu_items(
+            session=session,
+            group_id=group_id,
+            parent_item_id=parent_item_id,
+            lang_code="ru",
+        )
 
         items = [
             MenuItemResponse(
@@ -317,6 +332,7 @@ async def get_menu_items(
 async def check_has_subitems(
     group_id: int,
     item_id: int,
+    session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
     Проверка наличия дочерних элементов у действия группы.
@@ -324,6 +340,7 @@ async def check_has_subitems(
     Args:
         group_id: ID группы
         item_id: ID пункта меню
+        session: Сессия БД (внедряется через Depends)
 
     Returns:
         CheckSubitemsResponse: Результат проверки
@@ -334,12 +351,11 @@ async def check_has_subitems(
     _validate_item_id(item_id)
 
     try:
-        async with db_manager.get_session("avanpost") as session:
-            has_subitems = await AvanpostRepository.has_subitems(
-                session=session,
-                group_id=group_id,
-                item_id=item_id,
-            )
+        has_subitems = await _actions_repo.has_subitems(
+            session=session,
+            group_id=group_id,
+            item_id=item_id,
+        )
 
         api_logger.info(f"✅ Subitems check completed: group={group_id}, item={item_id}, has_subitems={has_subitems}")
 
@@ -378,27 +394,39 @@ async def health_check_avanpost() -> JSONResponse:
     """
     Проверка доступности Avanpost.
 
+    Использует существующий метод db_manager.check_connection()
+    для проверки подключения к БД Avanpost.
+
     Returns:
         JSONResponse: Статус подключения
     """
     api_logger.info("🔍 Checking Avanpost health...")
 
     try:
-        async with db_manager.get_session("avanpost") as session:
-            from sqlalchemy import text
+        # Используем существующий метод db_manager для проверки соединения
+        is_connected = await db_manager.check_connection("avanpost")
 
-            result = await session.execute(text("SELECT 1"))
-            _ = result.fetchone()
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "status": "healthy",
-                "database": "avanpost",
-                "timestamp": get_timestamp(),
-            },
-        )
+        if is_connected:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "status": "healthy",
+                    "database": "avanpost",
+                    "timestamp": get_timestamp(),
+                },
+            )
+        else:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "success": False,
+                    "status": "unhealthy",
+                    "database": "avanpost",
+                    "error": "Connection failed",
+                    "timestamp": get_timestamp(),
+                },
+            )
 
     except Exception as e:
         api_logger.error(f"❌ Avanpost health check failed: {e}")
@@ -450,10 +478,11 @@ async def _build_menu_tree(
         }
 
         if item.get("has_subitems", False) and current_depth < max_depth - 1:
-            children = await AvanpostRepository.get_menu_items(
+            children = await _actions_repo.get_menu_items(
                 session=session,
                 group_id=group_id,
                 parent_item_id=item.get("id"),
+                lang_code="ru",
             )
 
             node["children"] = await _build_menu_tree(

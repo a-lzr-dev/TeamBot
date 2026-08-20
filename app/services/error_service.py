@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import db_manager
-from ..db.repositories import ErrorRepository, MessageRepository
+from ..db.repositories import AvanpostRepository, ErrorRepository, MessageRepository
 from ..dtos.error import CreateErrorDTO, ErrorNotificationDTO
 from ..exceptions import log_exceptions
 from ..logger import app_logger
@@ -16,6 +16,11 @@ from ..models import (
     ErrorStatus,
     MessageType,
 )
+
+# Репозитории (создаем один раз на уровне модуля)
+_error_repo = ErrorRepository()
+_message_repo = MessageRepository()
+_avanpost_repo = AvanpostRepository()
 
 
 class ErrorService:
@@ -116,7 +121,7 @@ class ErrorService:
         details = self._format_details(error, component, context)
         traceback_text = self._get_traceback(error)
 
-        error_model = await ErrorRepository.create_error(
+        error_model = await _error_repo.create_error(
             session=session,
             error_code=error_code,
             error_message=error_message,
@@ -126,12 +131,12 @@ class ErrorService:
             severity=severity_enum,
             user_id=user_id,
             details=details,
-            group_hash=ErrorRepository.create_group_hash(error_code, error_message, component),
+            group_hash=_error_repo.create_group_hash(error_code, error_message, component),
         )
 
         chat_message = None
-        if chat_id and await ErrorRepository.chat_exists(session, chat_id):
-            chat_message = await ErrorRepository.save_message(
+        if chat_id and await _error_repo.chat_exists(session, chat_id):
+            chat_message = await _error_repo.save_message(
                 session=session,
                 chat_id=chat_id,
                 error_type=error_type,
@@ -145,7 +150,7 @@ class ErrorService:
             )
 
         if error_model and chat_message:
-            await ErrorRepository.link_message(
+            await _error_repo.link_message(
                 session=session,
                 error_id=error_model.FID,
                 message_id=chat_message.FID,
@@ -221,14 +226,14 @@ class ErrorService:
         category_enum = self._validate_category(create_dto.category)
         severity_enum = self._validate_severity(create_dto.severity)
 
-        group_hash = ErrorRepository.create_group_hash(
+        group_hash = _error_repo.create_group_hash(
             create_dto.error_code,
             create_dto.error_message,
             create_dto.source_system,
         )
 
         # Поиск существующей ошибки через репозиторий
-        existing = await ErrorRepository.find_existing_error(
+        existing = await _error_repo.find_existing_error(
             session=session,
             group_hash=group_hash,
         )
@@ -238,7 +243,7 @@ class ErrorService:
             await self._cleanup_old_messages(session, existing)
 
             # Обновление существующей ошибки через репозиторий
-            updated_error = await ErrorRepository.increment_occurrences(
+            updated_error = await _error_repo.increment_occurrences(
                 session=session,
                 error_id=existing.FID,
                 details=create_dto.details,
@@ -246,7 +251,7 @@ class ErrorService:
 
             if updated_error is None:
                 app_logger.error(f"Failed to update error {existing.FID}, creating new one")
-                error = await ErrorRepository.create_error(
+                error = await _error_repo.create_error(
                     session=session,
                     error_code=create_dto.error_code,
                     error_message=create_dto.error_message,
@@ -281,7 +286,7 @@ class ErrorService:
                         is_repeat=True,
                     )
                     if message_id:
-                        await ErrorRepository.link_message(
+                        await _error_repo.link_message(
                             session=session,
                             error_id=existing.FID,
                             message_id=message_id,
@@ -298,7 +303,7 @@ class ErrorService:
             return existing
 
         # Создание новой ошибки через репозиторий
-        error = await ErrorRepository.create_error(
+        error = await _error_repo.create_error(
             session=session,
             error_code=create_dto.error_code,
             error_message=create_dto.error_message,
@@ -322,7 +327,7 @@ class ErrorService:
                     is_repeat=False,
                 )
                 if message_id:
-                    await ErrorRepository.link_message(
+                    await _error_repo.link_message(
                         session=session,
                         error_id=error.FID,
                         message_id=message_id,
@@ -425,7 +430,7 @@ class ErrorService:
         """
         Реализация проверки и решения ошибки.
         """
-        error = await ErrorRepository.get_error_by_id(session, error_id)
+        error = await _error_repo.get_error_by_id(session, error_id)
 
         if not error:
             return False, "Error not found"
@@ -435,10 +440,8 @@ class ErrorService:
 
         if check_procedure:
             try:
-                from ..db.repositories import AvanpostRepository
-
                 async with db_manager.get_session("avanpost") as mssql_session:
-                    exists = await AvanpostRepository.check_error_exists_by_procedure(
+                    exists = await _avanpost_repo.check_error_exists_by_procedure(
                         session=mssql_session,
                         error_code=error.FErrorCode,
                         check_procedure=check_procedure,
@@ -451,7 +454,7 @@ class ErrorService:
                 app_logger.error(f"Failed to check error via procedure: {e}")
                 return False, f"Check failed: {str(e)}"
 
-        return await ErrorRepository.resolve_error(
+        return await _error_repo.resolve_error(
             session=session,
             error_id=error_id,
             resolved_by=resolved_by,
@@ -468,9 +471,9 @@ class ErrorService:
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await ErrorRepository.reopen_error(session=new_session, error_id=error_id)
+                return await _error_repo.reopen_error(session=new_session, error_id=error_id)
         else:
-            return await ErrorRepository.reopen_error(session=session, error_id=error_id)
+            return await _error_repo.reopen_error(session=session, error_id=error_id)
 
     @log_exceptions(app_logger)
     async def delete_error_messages(
@@ -518,13 +521,13 @@ class ErrorService:
         }
 
         try:
-            error = await ErrorRepository.get_error_by_id(session, error_id)
+            error = await _error_repo.get_error_by_id(session, error_id)
             if not error:
                 result["errors"].append(f"Error {error_id} not found")
                 app_logger.warning(f"⚠️ Error {error_id} not found")
                 return result
 
-            messages = await ErrorRepository.get_linked_messages(session, error_id)
+            messages = await _error_repo.get_linked_messages(session, error_id)
 
             if not messages:
                 app_logger.info(f"ℹ️ No messages linked to error {error_id}")
@@ -541,7 +544,7 @@ class ErrorService:
 
             #  Использование репозитория для массового удаления в БД
             message_ids = [msg.FID for msg in messages]
-            db_deleted = await MessageRepository.mark_messages_deleted_by_ids(
+            db_deleted = await _message_repo.mark_messages_deleted_by_ids(
                 session=session,
                 message_ids=message_ids,
                 deleted_by_type="error_cleanup",
@@ -549,7 +552,7 @@ class ErrorService:
             result["messages_deleted_db"] = db_deleted
 
             # Удаление связей через репозиторий
-            links_deleted = await ErrorRepository.unlink_all_messages(session, error_id)
+            links_deleted = await _error_repo.unlink_all_messages(session, error_id)
             result["links_deleted"] = links_deleted
 
             await session.commit()
@@ -584,14 +587,14 @@ class ErrorService:
 
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await ErrorRepository.get_stats(
+                return await _error_repo.get_stats(
                     session=new_session,
                     start_date=start_date,
                     end_date=end_date,
                     category=category_enum,
                 )
         else:
-            return await ErrorRepository.get_stats(
+            return await _error_repo.get_stats(
                 session=session,
                 start_date=start_date,
                 end_date=end_date,
@@ -609,12 +612,12 @@ class ErrorService:
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await ErrorRepository.get_user_stats(
+                return await _error_repo.get_user_stats(
                     session=new_session,
                     user_id=user_id,
                 )
         else:
-            return await ErrorRepository.get_user_stats(
+            return await _error_repo.get_user_stats(
                 session=session,
                 user_id=user_id,
             )
@@ -701,7 +704,7 @@ class ErrorService:
         app_logger.info(f"🧹 Cleaning up old messages for existing error {error.FID}")
 
         try:
-            messages = await ErrorRepository.get_linked_messages(session, error.FID)
+            messages = await _error_repo.get_linked_messages(session, error.FID)
 
             if messages:
                 app_logger.info(f"📊 Found {len(messages)} old messages for error {error.FID}")
@@ -713,14 +716,14 @@ class ErrorService:
 
                 # Использование репозитория для массового удаления в БД
                 message_ids = [msg.FID for msg in messages]
-                db_deleted = await MessageRepository.mark_messages_deleted_by_ids(
+                db_deleted = await _message_repo.mark_messages_deleted_by_ids(
                     session=session,
                     message_ids=message_ids,
                     deleted_by_type="error_repeat_cleanup",
                 )
 
                 # Удаление связей через репозиторий
-                links_deleted = await ErrorRepository.unlink_all_messages(session, error.FID)
+                links_deleted = await _error_repo.unlink_all_messages(session, error.FID)
 
                 app_logger.info(
                     f"✅ Cleanup complete for error {error.FID}: "

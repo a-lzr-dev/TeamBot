@@ -3,6 +3,8 @@ from typing import Any
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from ...db import db_manager
+from ...db.repositories import MessageRepository
 from ...logger import bot_logger
 from ..dependencies import get_bot_manager
 from .base import BaseCallbackHandler, CallbackHandler
@@ -18,6 +20,8 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
     def __init__(self) -> None:
         super().__init__("admin")
+        # Репозиторий для работы с сообщениями
+        self._message_repo = MessageRepository()
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
         """Обработка колбэка администратора"""
@@ -110,8 +114,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(text="❌ Рассылка отменена.", event=callback)
 
-    @staticmethod
-    async def _handle_delete_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    async def _handle_delete_confirm(self, callback: CallbackQuery, state: FSMContext) -> None:
         """Подтверждение удаления"""
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(text="✅ Удаление подтверждено.", event=callback)
@@ -135,25 +138,36 @@ class AdminCallbackHandler(BaseCallbackHandler):
             # Выполнение удаления через бота
             await bot.delete_message(chat_id, message_id)
 
-            # Отмачание в БД
-            from ...db import db_manager
-            from ...models import ChatMessageModel, datetime_now
-
+            # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОТМЕТКИ УДАЛЕНИЯ В БД
             async with db_manager.get_session() as session:
-                db_message = await session.get(ChatMessageModel, message_id)
+                # Проверяем существование сообщения через репозиторий
+                db_message = await self._message_repo.get_message_by_id(session, message_id)
+
                 if db_message:
-                    db_message.FFlagDeleted = True
-                    db_message.FDateDeleted = datetime_now()
-                    if callback.message:
-                        db_message.FK_DeletedByMessage = callback.message.message_id
-                    db_message.FDeletedByType = "admin"
-                    await session.commit()
+                    # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОТМЕТКИ УДАЛЕНИЯ
+                    deleted_count = await self._message_repo.mark_messages_as_deleted(
+                        session=session,
+                        message_ids=[message_id],
+                        deleted_by_type="admin",
+                        deleted_by_message_id=callback.message.message_id if callback.message else None,
+                    )
+
+                    if deleted_count > 0:
+                        bot_logger.info(f"✅ Message {message_id} marked as deleted in DB by admin")
+                    else:
+                        bot_logger.warning(f"⚠️ Message {message_id} already deleted or not found")
+                else:
+                    bot_logger.warning(f"⚠️ Message {message_id} not found in DB")
+
+                await session.commit()
 
             await bot_manager.send_toast(
                 text=f"✅ Сообщение `{message_id}` успешно удалено из чата `{chat_id}`.",
                 event=callback,
             )
+
         except Exception as e:
+            bot_logger.error(f"❌ Failed to delete message {message_id}: {e}", exc_info=True)
             await bot_manager.send_toast(text=f"❌ Ошибка при удалении: {str(e)}", event=callback)
         finally:
             await state.clear()

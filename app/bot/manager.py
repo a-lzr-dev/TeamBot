@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon import TelegramClient
 
 from ..config import settings
-from ..db import ChatRepository, UserRepository, db_manager
+from ..db import ChatRepository, MessageRepository, ReminderRepository, UserRepository, db_manager
+from ..db.repositories import StatsRepository
 from ..exceptions import log_exceptions
 from ..logger import bot_logger
 from ..middlewares.bot.database import DatabaseMiddleware
@@ -69,6 +70,13 @@ class BotManager:
 
         # === Сервис синхронизации ===
         self._sync_service: SyncService = SyncService(self._telethon_client)
+
+        # === Репозитории ===
+        self._chat_repo = ChatRepository()
+        self._user_repo = UserRepository()
+        self._message_repo = MessageRepository()
+        self._reminder_repo = ReminderRepository()
+        self._stats_repo = StatsRepository()
 
         # === Состояние ===
         self._initialized: bool = False
@@ -163,33 +171,6 @@ class BotManager:
     ) -> dict[str, Any]:
         """
         Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни.
-
-        Args:
-            chat_id: ID чата
-            text: Текст сообщения
-            message_type: Тип сообщения
-            delete_message_id: ID сообщения для удаления
-            delete_by_type: Тип для очистки предыдущих сообщений
-            exclude_message_types: Типы для исключения из очистки
-            parse_mode: Режим парсинга (HTML, Markdown, MarkdownV2)
-            disable_web_page_preview: Отключить предпросмотр ссылок
-            disable_notification: Отключить уведомление
-            protect_content: Защитить содержимое от пересылки
-            reply_to_message_id: ID сообщения, на которое отвечаем
-            reply_markup: Клавиатура
-            user_id: ID пользователя
-            user_first_name: Имя пользователя
-            user_last_name: Фамилия пользователя
-            user_username: Username пользователя
-            user_is_bot: Является ли пользователь ботом
-            user_phone: Телефон пользователя
-            user_group_id: ID группы пользователя
-            lifetime_seconds: Время жизни сообщения в секундах
-            allow_sender: Разрешить отправку от имени пользователя
-            message_thread_id: ID топика для отправки (для супергрупп)
-
-        Returns:
-            Dict[str, Any]: Результат отправки
         """
         return await self._message_service.send_message(
             chat_id=chat_id,
@@ -232,26 +213,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Ответ на событие (сообщение или callback).
-
-        Args:
-            event: Объект Message или CallbackQuery
-            text: Текст ответа
-            message_type: Тип сообщения
-            delete_by_type: Тип для очистки предыдущих сообщений
-            exclude_message_types: Типы для исключения из очистки
-            parse_mode: Режим парсинга
-            reply_markup: Клавиатура
-            show_alert: Показывать как всплывающее окно (только для callback)
-            lifetime_seconds: Время жизни сообщения
-            delete_original: Удалить исходное сообщение
-            message_thread_id: ID топика для отправки
-            **kwargs: Дополнительные параметры
-
-        Returns:
-            Dict[str, Any]: Результат отправки
-        """
+        """Ответ на событие (сообщение или callback)"""
         return await self._message_service.send_answer(
             event=event,
             text=text,
@@ -307,24 +269,8 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Метод для отправки toast-уведомлений.
-
-        Работает с:
-        - Message: отправляет временное сообщение и удаляет его через duration секунд
-        - CallbackQuery: показывает всплывающее уведомление (toast)
-        - Если event не передан, но указан chat_id - отправляет временное сообщение в чат
-
-        Args:
-            event: Объект Message или CallbackQuery (опционально)
-            text: Текст уведомления
-            show_alert: Показывать как всплывающее окно (только для CallbackQuery)
-            duration: Время жизни сообщения в секундах (только для Message)
-            chat_id: ID чата (используется, если event не передан)
-            message_thread_id: ID топика для отправки
-        """
+        """Метод для отправки toast-уведомлений"""
         try:
-            # Обработка CallbackQuery
             if isinstance(event, CallbackQuery):
                 try:
                     await event.answer(text=text, show_alert=show_alert)
@@ -333,7 +279,6 @@ class BotManager:
                     bot_logger.warning(f"⚠️ Failed to show toast for callback: {e}")
                 return
 
-            # Обработка Message
             if isinstance(event, Message):
                 try:
                     sent_msg = await event.answer(text=text)
@@ -344,7 +289,6 @@ class BotManager:
                     bot_logger.warning(f"⚠️ Failed to show toast for message: {e}")
                 return
 
-            # Отправка в чат без события
             if chat_id is not None:
                 try:
                     result = await self.send_message(
@@ -366,7 +310,6 @@ class BotManager:
                     bot_logger.warning(f"⚠️ Failed to send toast to chat {chat_id}: {e}")
                 return
 
-            # Ничего не передано
             bot_logger.warning("⚠️ Cannot send toast: no event or chat_id provided")
 
         except Exception as e:
@@ -425,6 +368,7 @@ class BotManager:
     ) -> None:
         """Очистка всех предыдущих сообщений"""
         try:
+            # ИСПОЛЬЗУЕМ message_service ДЛЯ УДАЛЕНИЯ СООБЩЕНИЙ
             result = await self._message_service.delete_messages(
                 chat_id=chat_id,
                 message_types=message_types,
@@ -466,22 +410,7 @@ class BotManager:
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         message_thread_id: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Рассылка сообщения во все активные чаты.
-
-        Args:
-            text: Текст сообщения
-            parse_mode: Режим парсинга
-            disable_web_page_preview: Отключить предпросмотр ссылок
-            chat_types: Типы чатов для рассылки
-            exclude_chat_ids: ID чатов для исключения
-            only_active: Только активные чаты
-            sender_user_id: ID отправителя
-            sender_first_name: Имя отправителя
-            sender_username: Username отправителя
-            progress_callback: Callback для прогресса
-            message_thread_id: ID топика для отправки
-        """
+        """Рассылк сообщения во все активные чаты"""
         if not self._aiogram_client.bot:
             return {
                 "success": False,
@@ -494,7 +423,8 @@ class BotManager:
 
         try:
             async with db_manager.get_session() as session:
-                chats = await ChatRepository.get_chats(session, is_active=only_active)
+                # ИСПОЛЬЗУЕМ chat_repo ДЛЯ ПОЛУЧЕНИЯ ЧАТОВ
+                chats = await self._chat_repo.get_chats(session, is_active=only_active)
 
                 if chat_types:
                     chats = [c for c in chats if c.FType.value in chat_types]
@@ -1017,9 +947,9 @@ class BotManager:
                 except Exception as e:
                     bot_logger.warning(f"⚠️ Failed to set commands for admin {admin_id}: {e}")
 
-            # Обновление команд для всех авторизованных пользователей
+            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПОЛУЧЕНИЯ АВТОРИЗОВАННЫХ ПОЛЬЗОВАТЕЛЕЙ
             async with db_manager.get_session() as session:
-                authorized_users = await UserRepository.get_authorized_users(session)
+                authorized_users = await self._user_repo.get_authorized_users(session)
                 for user in authorized_users:
                     try:
                         is_admin = user.FID in getattr(settings, "ADMIN_IDS", [])
@@ -1064,8 +994,8 @@ class BotManager:
         """Внутренний метод для проверки авторизации пользователя"""
         try:
             async with db_manager.get_session() as session:
-                user = await UserRepository.get_user_by_id(session, user_id)
-                return user is not None and user.avanpost_user is not None
+                # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ
+                return await UserRepository.is_user_authenticated(session, user_id)
         except Exception as e:
             bot_logger.debug(f"⚠️ Failed to check user authorization: {e}")
             return False

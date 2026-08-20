@@ -16,8 +16,7 @@ from app.core.converters import (
     user_info_from_telethon,
 )
 from app.core.services.interfaces import ISyncService
-from app.db.repositories.chats import ChatRepository, normalize_chat_id
-from app.db.repositories.users import UserRepository
+from app.db.repositories import ChatRepository, UserRepository
 from app.exceptions import log_exceptions
 from app.logger import bot_logger
 from app.models import ChatMemberStatus, ChatModel, UserChatMemberModel, datetime_now
@@ -34,6 +33,10 @@ class SyncService(ISyncService):
         self._sync_engine = ChatSyncEngine()
         self._last_sync_time: datetime | None = None
         self._initialized = False
+
+        # Репозитории
+        self._chat_repo = ChatRepository()
+        self._user_repo = UserRepository()
 
         # Кеш для участников чатов
         self._cache: dict[int, tuple[datetime, list[dict[str, Any]]]] = {}
@@ -63,7 +66,12 @@ class SyncService(ISyncService):
         bot_logger.info("✅ Sync Service initialized")
 
     @log_exceptions(bot_logger)
-    async def sync_chat_members(self, chat_id: int, session: AsyncSession, force: bool = False) -> dict[str, Any]:  # type: ignore[override]
+    async def sync_chat_members(  # type: ignore[override]
+        self,
+        chat_id: int,
+        session: AsyncSession,
+        force: bool = False,
+    ) -> dict[str, Any]:
         """Синхронизация участников конкретного чата"""
         if not self._initialized:
             await self.initialize()
@@ -88,9 +96,13 @@ class SyncService(ISyncService):
         self._metrics["total_syncs"] += 1
 
         try:
-            # Делегирование ядру синхронизации
+            # Делегирование ядру синхронизации с передачей репозиториев
             result = await self._sync_engine.sync_chat_members(
-                client=self._client.client, chat_id=chat_id, session=session
+                client=self._client.client,
+                chat_id=chat_id,
+                session=session,
+                chat_repo=self._chat_repo,
+                user_repo=self._user_repo,
             )
 
             # Обновление метрик
@@ -158,9 +170,14 @@ class SyncService(ISyncService):
         self._metrics["total_syncs"] += 1
 
         try:
-            # Делегирование ядру синхронизации
+            # Делегирование ядру синхронизации с передачей репозиториев
             result = await self._sync_engine.sync_all_chats(
-                client=self._client.client, session=session, max_chats=max_chats, chat_types=chat_types
+                client=self._client.client,
+                session=session,
+                max_chats=max_chats,
+                chat_types=chat_types,
+                chat_repo=self._chat_repo,
+                user_repo=self._user_repo,
             )
 
             # Обновление метрик
@@ -278,8 +295,16 @@ class ChatSyncEngine:
 
     @staticmethod
     @log_exceptions(bot_logger)
-    async def sync_chat_members(client: TelegramClient, chat_id: int, session: AsyncSession) -> dict[str, Any]:
+    async def sync_chat_members(
+        client: TelegramClient,
+        chat_id: int,
+        session: AsyncSession,
+        chat_repo: ChatRepository,
+        user_repo: UserRepository,
+    ) -> dict[str, Any]:
         """Синхронизация участников чата"""
+        from ..db.repositories.chats import normalize_chat_id
+
         normalized_chat_id = normalize_chat_id(chat_id)
         bot_logger.debug(f"🔄 Syncing chat {chat_id} (normalized: {normalized_chat_id})...")
 
@@ -313,7 +338,8 @@ class ChatSyncEngine:
                 for member in members
             ]
 
-            deactivated_count = await ChatRepository.deactivate_missing_members(
+            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ДЕАКТИВАЦИИ УЧАСТНИКОВ
+            deactivated_count = await chat_repo.deactivate_missing_members(
                 session=session,
                 chat_id=normalized_chat_id,
                 active_user_ids=active_ids,
@@ -326,7 +352,8 @@ class ChatSyncEngine:
 
             for member in members:
                 try:
-                    await UserRepository.save_user(
+                    # ИСПОЛЬЗУЕМ UserRepository ДЛЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ
+                    await user_repo.save_user(
                         session=session,
                         user_id=member.FID,
                         is_bot=member.FFlagBot,
@@ -335,14 +362,15 @@ class ChatSyncEngine:
                         username=member.FUserName,
                     )
 
-                    # Проверка существования участника в чате
-                    existing = await ChatRepository.get_chat_member_by_keys(
+                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПРОВЕРКИ СУЩЕСТВОВАНИЯ УЧАСТНИКА
+                    existing = await chat_repo.get_chat_member_by_keys(
                         session=session,
                         user_id=member.FID,
                         chat_id=normalized_chat_id,
                     )
 
-                    await ChatRepository.save_chat_member(
+                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ СОХРАНЕНИЯ УЧАСТНИКА
+                    await chat_repo.save_chat_member(
                         session=session,
                         user_id=member.FID,
                         chat_id=normalized_chat_id,
@@ -361,7 +389,8 @@ class ChatSyncEngine:
             stats["processed"] = processed_count
             stats["added"] = added_count
 
-            await ChatRepository.update_sync_time(
+            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ОБНОВЛЕНИЯ ВРЕМЕНИ СИНХРОНИЗАЦИИ
+            await chat_repo.update_sync_time(
                 session=session,
                 chat_id=normalized_chat_id,
             )
@@ -393,7 +422,12 @@ class ChatSyncEngine:
     @staticmethod
     @log_exceptions(bot_logger)
     async def sync_all_chats(
-        client: TelegramClient, session: AsyncSession, max_chats: int | None = None, chat_types: list[str] | None = None
+        client: TelegramClient,
+        session: AsyncSession,
+        chat_repo: ChatRepository,
+        user_repo: UserRepository,
+        max_chats: int | None = None,
+        chat_types: list[str] | None = None,
     ) -> dict[str, Any]:
         """Синхронизация всех чатов"""
         bot_logger.debug("🚀 Syncing all chats...")
@@ -430,13 +464,14 @@ class ChatSyncEngine:
                 return stats
 
             # Получение чатов из БД
-            db_chats = await ChatRepository.get_chats(session, is_active=True)
+            db_chats = await chat_repo.get_chats(session, is_active=True)
             db_chats_ids = {chat.FID for chat in db_chats}
 
             # Активные ID чатов из Telegram
             active_ids = {chat.FID for chat in chats}
 
-            deactivated_chats = await ChatRepository.deactivate_missing_chats(
+            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ДЕАКТИВАЦИИ ЧАТОВ
+            deactivated_chats = await chat_repo.deactivate_missing_chats(
                 session=session,
                 active_chat_ids=active_ids,
             )
@@ -447,7 +482,8 @@ class ChatSyncEngine:
                 try:
                     is_new = chat.FID not in db_chats_ids
 
-                    await ChatRepository.save_chat(
+                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ СОХРАНЕНИЯ ЧАТА
+                    await chat_repo.save_chat(
                         session=session,
                         chat_id=chat.FID,
                         chat_type=chat_type_to_str(chat.FType),
@@ -466,7 +502,11 @@ class ChatSyncEngine:
                         if should_sync:
                             # Синхронизация участников
                             members_result = await ChatSyncEngine.sync_chat_members(
-                                client=client, chat_id=chat.FID, session=session
+                                client=client,
+                                chat_id=chat.FID,
+                                session=session,
+                                chat_repo=chat_repo,
+                                user_repo=user_repo,
                             )
 
                             if members_result.get("success", False):
@@ -525,6 +565,8 @@ class ChatSyncEngine:
     @staticmethod
     async def _get_chat_members_from_telegram(client: TelegramClient, chat_id: int) -> list[UserChatMemberModel]:
         """Получение участников чата из Telegram"""
+        from ..db.repositories.chats import normalize_chat_id
+
         normalized_chat_id = normalize_chat_id(chat_id)
 
         try:
@@ -679,7 +721,7 @@ class ChatSyncEngine:
             bot_logger.warning("⚠️ get_chats() called with bot account")
             return []
 
-        from ...bot.dependencies import get_bot_manager
+        from ..bot.dependencies import get_bot_manager
 
         bot_manager = get_bot_manager()
         bot = bot_manager.aiogram_client.bot
@@ -734,7 +776,7 @@ class ChatSyncEngine:
                             )
 
                     chat_model = ChatModel(
-                        FID=normalize_chat_id(dialog.id),
+                        FID=dialog.id,
                         FType=chat_type,
                         FTitle=dialog.name,
                         FCountMembers=count_members,
@@ -828,7 +870,7 @@ class ChatSyncEngine:
                             )
 
                     chat_model = ChatModel(
-                        FID=normalize_chat_id(dialog.id),
+                        FID=dialog.id,
                         FType=chat_type,
                         FTitle=dialog.name,
                         FCountMembers=count_members,

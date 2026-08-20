@@ -1,11 +1,11 @@
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_session
+from ...bot.dependencies import get_bot_manager
+from ...bot.manager import BotManager
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ChatType
@@ -86,20 +86,17 @@ class ClearCacheResponse(BaseModel):
 # ============ Вспомогательные функции ============
 
 
-async def get_bot_manager_instance() -> Any:
+async def _get_bot_manager_with_check() -> BotManager:
     """
-    Получение экземпляра BotManager.
+    Получение экземпляра BotManager с проверкой статуса.
 
     Returns:
-        Экземпляр BotManager
+        BotManager: Экземпляр BotManager
 
     Raises:
         HTTPException: Если бот недоступен
     """
     try:
-        from ...bot.dependencies import get_bot_manager
-
-        # ВЫЗЫВАЕМ функцию, чтобы получить экземпляр
         bot_manager = get_bot_manager()
         status = await bot_manager.get_status()
         if not status.get("is_running", False):
@@ -112,7 +109,7 @@ async def get_bot_manager_instance() -> Any:
         raise HTTPException(status_code=503, detail="Bot service unavailable") from e
 
 
-async def check_telethon_availability(bot_manager: Any) -> None:
+async def _check_telethon_availability(bot_manager: BotManager) -> None:
     """
     Проверка доступности Telethon клиента.
 
@@ -129,7 +126,7 @@ async def check_telethon_availability(bot_manager: Any) -> None:
         raise HTTPException(status_code=503, detail="Bot client not available. Telethon client is required for sync.")
 
 
-async def check_account_type(bot_manager: Any) -> str:
+async def _check_account_type(bot_manager: BotManager) -> str:
     """
     Проверка типа аккаунта.
 
@@ -173,8 +170,8 @@ async def sync_chat(
 
     try:
         # Получаем экземпляр BotManager
-        bot_manager = await get_bot_manager_instance()
-        await check_telethon_availability(bot_manager)
+        bot_manager = await _get_bot_manager_with_check()
+        await _check_telethon_availability(bot_manager)
 
         # Синхронизация чата
         result = await bot_manager.sync_chat(chat_id=request.chat_id, session=session, force=request.force)
@@ -255,13 +252,13 @@ async def sync_all_chats(
 
     try:
         # Получаем экземпляр BotManager
-        bot_manager = await get_bot_manager_instance()
+        bot_manager = await _get_bot_manager_with_check()
 
         # Проверка доступности клиента
-        await check_telethon_availability(bot_manager)
+        await _check_telethon_availability(bot_manager)
 
         # Проверка типа аккаунта
-        await check_account_type(bot_manager)
+        await _check_account_type(bot_manager)
 
         # Преобразование ChatType в строку
         chat_types_str: list[str] | None = None
@@ -354,7 +351,7 @@ async def get_sync_status() -> JSONResponse:
 
     try:
         # Получаем экземпляр BotManager
-        bot_manager = await get_bot_manager_instance()
+        bot_manager = await _get_bot_manager_with_check()
 
         status = await bot_manager.get_status()
         sync_status = status.get("sync", {})
@@ -393,7 +390,7 @@ async def clear_sync_cache(chat_id: int | None = None) -> JSONResponse:
 
     try:
         # Получаем экземпляр BotManager
-        bot_manager = await get_bot_manager_instance()
+        bot_manager = await _get_bot_manager_with_check()
         await bot_manager.clear_sync_cache(chat_id)
 
         return JSONResponse(

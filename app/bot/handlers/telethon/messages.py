@@ -20,11 +20,16 @@ from ...utils.converters import message_info_from_telethon, save_media_info_to_m
 if TYPE_CHECKING:
     from telethon.tl.types import TypeMessage
 
+# Репозитории (создаем один раз на уровне модуля)
+_user_repo = UserRepository()
+_chat_repo = ChatRepository()
+_message_repo = MessageRepository()
+
 
 @log_exceptions(bot_logger)
 async def handle_new_message(event: events.NewMessage.Event, client: TelegramClient) -> None:
     """Обработчик новых сообщений через Telethon"""
-    print("handle_new_message")
+    bot_logger.debug("handle_new_message")
 
     message: TypeMessage | None = event.message
 
@@ -62,7 +67,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
     async with db_manager.get_session() as session:
         try:
             # Проверка существования чата через репозиторий
-            existing_chat = await ChatRepository.get_chat_by_id(session, message.chat_id)
+            existing_chat = await _chat_repo.get_chat_by_id(session, message.chat_id)
 
             if existing_chat is None:
                 bot_logger.info(f"🆕 Creating new chat {message.chat_id} in database")
@@ -72,7 +77,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
 
                 from ....core.converters import chat_type_to_str
 
-                await ChatRepository.save_chat(
+                await _chat_repo.save_chat(
                     session=session,
                     chat_id=message.chat_id,
                     chat_type=chat_type_to_str(chat_type),
@@ -100,7 +105,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                     sender = await client.get_entity(user_id)
                     user_info = user_info_from_telethon(sender)
 
-                    await UserRepository.save_user(
+                    await _user_repo.save_user(
                         session=session,
                         user_id=user_info["user_id"],
                         is_bot=user_info["is_bot"],
@@ -116,7 +121,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                 user_id = None
 
             # Проверка существования сообщения через репозиторий
-            existing_message = await MessageRepository.get_message_by_id(session, message.id)
+            existing_message = await _message_repo.get_message_by_id(session, message.id)
             if existing_message:
                 if existing_message.FFlagDeleted:
                     bot_logger.debug(f"⏭️ Message {message.id} already marked as deleted, skipping")
@@ -126,7 +131,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
                 message_text = message.text or getattr(message, "caption", None) or ""
                 edit_date = message.edit_date.replace(tzinfo=None) if message.edit_date else None
 
-                await MessageRepository.update_message(
+                await _message_repo.update_message(
                     session=session,
                     message_id=message.id,
                     text=message_text,
@@ -173,7 +178,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
             # Получение времени жизни из настроек
             lifetime_seconds = settings.MESSAGE_LIFETIME_DEFAULT_SECONDS
 
-            chat_message = await MessageRepository.create_message(
+            chat_message = await _message_repo.create_message(
                 session=session,
                 message_id=message.id,
                 chat_id=message.chat_id,
@@ -222,7 +227,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
 @log_exceptions(bot_logger)
 async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramClient) -> None:
     """Обработчик редактирования сообщения"""
-    print("handle_edited_message")
+    bot_logger.debug("handle_edited_message")
 
     message: TypeMessage | None = event.message
 
@@ -234,7 +239,7 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
     async with db_manager.get_session() as session:
         try:
             # Получение сообщения через репозиторий
-            db_message = await MessageRepository.get_message_by_id(session, message.id)
+            db_message = await _message_repo.get_message_by_id(session, message.id)
 
             if db_message:
                 # Не обновляем удаленные сообщения
@@ -277,7 +282,7 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
 @log_exceptions(bot_logger)
 async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
     """Обработчик удаления сообщения"""
-    print("handle_deleted_message")
+    bot_logger.debug("handle_deleted_message")
 
     if not event.deleted_ids:
         return
@@ -301,7 +306,7 @@ async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
             deleted_count = 0
             for msg_id in event.deleted_ids:
                 # Получение сообщения через репозиторий
-                db_message = await MessageRepository.get_message_by_id(session, msg_id)
+                db_message = await _message_repo.get_message_by_id(session, msg_id)
                 if db_message and not db_message.FFlagDeleted:
                     db_message.FFlagDeleted = True
                     db_message.FDateDeleted = datetime_now()

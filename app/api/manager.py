@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
 from ..config import settings
+from ..db.repositories import MessageRepository
 from ..exceptions import AppError, DatabaseError, handle_exception, log_exceptions
 from ..logger import api_logger
 from ..middlewares.api import (
@@ -55,6 +56,9 @@ class APIManager:
         # Публичные свойства для информации о сервере
         self.host: str = settings.API_HOST
         self.port: int = settings.API_PORT
+
+        # Репозитории
+        self._message_repo = MessageRepository()
 
         api_logger.debug("✅ API Manager instance created")
         self._initialized = True
