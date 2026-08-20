@@ -3,12 +3,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import FloodWaitError
 
+from app.core.services.base import BaseService
+
 from ....db.repositories.users import UserRepository
 from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import UserModel
 from ...clients.telethon_client import TelethonClient
-from ..base import BaseService
 
 if TYPE_CHECKING:
     from telethon import TelegramClient

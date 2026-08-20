@@ -58,12 +58,8 @@ class ActionKeyboard:
             # Кнопка "В главное меню"
             nav_row.append(InlineKeyboardButton(text="🏠 В главное меню", callback_data="action_home"))
 
-        # Кнопка "К группам" (для администраторов)
-        if is_admin:
-            nav_row.append(InlineKeyboardButton(text="📋 К группам", callback_data="back_to_groups"))
-
-        # Кнопка "К списку пользователей" (если выбран пользователь через /users)
-        if show_back_to_users:
+        # Кнопка "К списку пользователей" (если выбран пользователь через /users или сис.админ)
+        if is_admin or show_back_to_users:
             nav_row.append(InlineKeyboardButton(text="👥 К пользователям", callback_data="back_to_users"))
 
         if nav_row:

@@ -6,12 +6,14 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile, CallbackQuery, InputFile, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...bot.dependencies import get_bot_manager
-from ...config import settings
-from ...db import ChatRepository, MessageRepository, UserRepository, db_manager
-from ...exceptions import log_exceptions
-from ...logger import bot_logger
-from ...models import (
+from app.bot.clients import AiogramClient, TelethonClient
+from app.bot.dependencies import get_bot_manager
+from app.config import settings
+from app.core.services.base import BaseService
+from app.db import ChatRepository, MessageRepository, UserRepository, db_manager
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import (
     ChatMessageModel,
     ChatModel,
     MessageSource,
@@ -19,8 +21,6 @@ from ...models import (
     UserModel,
     datetime_now,
 )
-from ..clients import AiogramClient, TelethonClient
-from .base import BaseService
 
 
 class UnifiedMessageService(BaseService):
@@ -648,7 +648,7 @@ class UnifiedMessageService(BaseService):
         Важно: message_thread_id не передается в edit_message_text,
         так как сообщение уже находится в топике и его ID уникален в рамках чата.
         """
-        from ..dependencies import get_bot_manager
+        from ..bot.dependencies import get_bot_manager
 
         bot_manager = get_bot_manager()
         bot = bot_manager.aiogram_client.bot

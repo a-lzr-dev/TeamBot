@@ -143,26 +143,26 @@ class SyncStatistics:
         for table_name in self._current_table_has_error:
             self.table_stats[table_name]["users_err"] += 1
 
-        # Сбрас флагов
+        # Сброс флагов
         self._current_table_has_changes.clear()
         self._current_table_has_error.clear()
 
     def add_processed_user(self) -> None:
-        """Увеличивает счетчик обработанных пользователей."""
+        """Увеличивание счетчика обработанных пользователей"""
         self.total_users_processed += 1
 
     def add_failed_user(self, user_id: int) -> None:
-        """Добавляет ID пользователя, синхронизация которого завершилась ошибкой."""
+        """Добавление ID пользователя, синхронизация которого завершилась ошибкой"""
         if user_id not in self.failed_user_ids:
             self.failed_user_ids.append(user_id)
 
     def _mark_table_change(self, table_name: str) -> None:
-        """Отметить, что в таблице были изменения для текущего пользователя"""
+        """Отмечание, что в таблице были изменения для текущего пользователя"""
         if self._current_user_id:
             self._current_table_has_changes.add(table_name)
 
     def _mark_table_error(self, table_name: str) -> None:
-        """Отметить, что в таблице была ошибка для текущего пользователя"""
+        """Отмечание, что в таблице была ошибка для текущего пользователя"""
         if self._current_user_id:
             self._current_table_has_error.add(table_name)
 
@@ -180,7 +180,7 @@ class SyncStatistics:
             self.table_stats[table_name]["received_delete"] += delete_count
 
     def add_insert(self, table_name: str, count: int = 1) -> None:
-        """Добавление реально ВСТАВЛЕННЫХ записей (INSERT) -> Ins"""
+        """Добавление реально вставленных записей (INSERT) -> Ins"""
         if count > 0:
             self.tables_with_inserts.add(table_name)
             self.total_inserted += count
@@ -188,7 +188,7 @@ class SyncStatistics:
             self._mark_table_change(table_name)
 
     def add_update(self, table_name: str, count: int = 1) -> None:
-        """Добавление реально ОБНОВЛЕННЫХ записей (UPDATE) -> Upd"""
+        """Добавление реально обновленных записей (UPDATE) -> Upd"""
         if count > 0:
             self.tables_with_updates.add(table_name)
             self.total_updated += count
@@ -196,7 +196,7 @@ class SyncStatistics:
             self._mark_table_change(table_name)
 
     def add_delete(self, table_name: str, count: int = 1) -> None:
-        """Добавление реально УДАЛЕННЫХ записей (DELETE) -> Del"""
+        """Добавление реально удаленных записей (DELETE) -> Del"""
         if count > 0:
             self.tables_with_deletes.add(table_name)
             self.total_deleted += count
@@ -831,10 +831,10 @@ class AvanpostSyncService:
                             app_logger.warning(f"⚠️ No model found for DataTypeId {dt_id_val_delete}")
                             continue
 
-                        # Получаем имена колонок первичного ключа
+                        # Получение имен колонок первичного ключа
                         pk_columns = [col.name for col in model.__table__.primary_key.columns]
 
-                        # Оставляем только колонки первичного ключа
+                        # Оставление только колонок первичного ключа
                         clean_records = []
                         for rec in records:
                             if not isinstance(rec, dict):
@@ -850,7 +850,6 @@ class AvanpostSyncService:
                             continue
 
                         try:
-                            # Используем GenericRepository.delete_records_bulk для удаления
                             deleted, unchanged, errors = await GenericRepository.delete_records_bulk(
                                 session=session,
                                 model=model,
@@ -1185,12 +1184,11 @@ class AvanpostSyncService:
                         if dt_id_raw is None:
                             continue
 
-                        # Отмечаем, что этот тип данных был обработан (даже если records пуст)
+                        # Отмечание, что этот тип данных был обработан (даже если records пуст)
                         processed_data_types.add(dt_id_raw)
 
                         if not records:
                             # Нет данных для обработки, но это не ошибка
-                            # Добавляем тип в список успешных (ошибок не было)
                             successfully_processed_types.add(dt_id_raw)
                             app_logger.debug(f"ℹ️ No data for DataTypeId {dt_id_raw}, marking as successful")
                             continue
@@ -1286,7 +1284,7 @@ class AvanpostSyncService:
                                 # Пропуск оставшихся чанков при ошибке
                                 break
 
-                        # Если таблица обработана без ошибок, добавляем её в список успешных
+                        # Добавление таблицы в список успещно, если она обработана без ошибок
                         if not table_has_error:
                             successfully_processed_types.add(dt_id_raw)
 
@@ -1313,22 +1311,16 @@ class AvanpostSyncService:
                                 f"⚠️ Table {table_name} failed: {table_errors} chunks with errors, {table_error_records} skipped records"
                             )
                         else:
-                            # Нет изменений и нет ошибок
                             app_logger.debug(f"ℹ️ Table {table_name}: no changes detected")
 
-                # ============================================================
-                # ⚠️ ВАЖНО: Добавляем ВСЕ запрошенные типы, которые НЕ БЫЛИ обработаны,
-                # но и не вызвали ошибок (типы, по которым не пришло данных)
-                # ============================================================
+                # Обработка типов, по которым не пришло данных
                 for dt_id in all_requested_types:
                     if dt_id not in processed_data_types and dt_id not in successfully_processed_types:
-                        # Этот тип данных не пришел в ответе, но ошибок не было
-                        # Отмечаем его как успешно обработанный (данных нет, но это нормально)
+                        # Помечание как успешно обработанный (данных нет, но это нормально)
                         successfully_processed_types.add(dt_id)
                         app_logger.debug(f"ℹ️ No data received for DataTypeId {dt_id}, marking as successful")
 
-                # Обновляем время синхронизации ДЛЯ ВСЕХ типов данных,
-                # которые были обработаны без ошибок (включая те, по которым не было данных)
+                # Обновление времени синхронизации для всех успешно обработанных типов данных
                 if successfully_processed_types:
                     current_time = datetime_now()
                     sync_times: dict[int, datetime] = {}
@@ -1343,7 +1335,7 @@ class AvanpostSyncService:
                             f"for user {user_id}"
                         )
 
-                # Логируем типы, которые были пропущены из-за ошибок
+                # Логирование типов, которые были пропущены из-за ошибок
                 failed_types = all_requested_types - successfully_processed_types
                 if failed_types:
                     app_logger.warning(

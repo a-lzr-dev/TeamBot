@@ -1165,8 +1165,6 @@ class AvanpostUserOrderModel(BaseModel):
 
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     FK_User: Mapped[int] = mapped_column(Integer, nullable=False)
-    FName: Mapped[str] = mapped_column(String(100), nullable=False)
-    FInfo: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     FPosition: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
 
 

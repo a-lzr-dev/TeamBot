@@ -136,7 +136,7 @@ class GenericRepository:
         for record in records_list:
             if not isinstance(record, dict):
                 continue
-            # Извлекаем ТОЛЬКО первичные ключи
+            # Извлечение только первичных ключей
             if all(pk in record for pk in primary_keys):
                 if len(primary_keys) == 1:
                     pk_value = record[primary_keys[0]]
@@ -262,7 +262,6 @@ class GenericRepository:
         select_chunk_size = min(safe_chunk_size, 1000)
 
         # 3. Загрузка существующих записей из БД
-        # Использование словаря с нормализованными ключами
         existing_records: dict[Any, Any] = {}
 
         if len(primary_keys) == 1:
@@ -367,7 +366,6 @@ class GenericRepository:
                                     break
 
                 if not found or db_rec is None:
-                    # Запись не найдена → INSERT
                     insert_records.append(rec)
                     continue
 
@@ -386,7 +384,7 @@ class GenericRepository:
                         has_changes = True
                         break
 
-                    # Для строк — обрезаем пробелы
+                    # Обрезание пробелов
                     if isinstance(new_val, str) and isinstance(old_val, str):
                         new_val = new_val.strip()
                         old_val = old_val.strip()
@@ -430,7 +428,6 @@ class GenericRepository:
 
         # 6.2. UPDATE (записи с изменениями)
         if update_records:
-            # Для UPDATE используем ON CONFLICT DO UPDATE
             update_fields = [col for col in model_columns if col not in primary_keys]
             for i in range(0, len(update_records), safe_chunk_size):
                 batch = update_records[i : i + safe_chunk_size]
@@ -533,7 +530,7 @@ class GenericRepository:
             operation_type="upsert",
         )
 
-        # Получаем первичные ключи модели
+        # Получение первичных ключей модели
         primary_keys = [col.name for col in model.__table__.primary_key.columns]
 
         delete_records = []
@@ -546,7 +543,7 @@ class GenericRepository:
             flag_expire = rec.get("FlagExpire")
 
             if flag_expire == 1 or flag_expire is True:
-                # Для удаления используем ТОЛЬКО первичные ключи
+                # Использоватение только первичных ключей для удаления
                 if primary_keys:
                     clean_delete_record = {}
                     for pk in primary_keys:
@@ -591,7 +588,13 @@ class GenericRepository:
                         if commit_chunks:
                             await session.commit()
                     except Exception as e:
-                        db_logger.warning(f"⚠️ DELETE chunk failed for {model.__tablename__}: {e}")
+                        LogHelper.log_batch_error_fast(
+                            logger=db_logger,
+                            operation="DELETE",
+                            table=model.__tablename__,
+                            error=e,
+                            batch_size=len(chunk),
+                        )
                         await session.rollback()
                         if raise_on_error:
                             raise
@@ -635,7 +638,13 @@ class GenericRepository:
                         if commit_chunks:
                             await session.commit()
                     except Exception as e:
-                        db_logger.warning(f"⚠️ UPSERT chunk failed for {model.__tablename__}: {e}")
+                        LogHelper.log_batch_error_fast(
+                            logger=db_logger,
+                            operation="UPSERT",
+                            table=model.__tablename__,
+                            error=e,
+                            batch_size=len(chunk),
+                        )
                         await session.rollback()
                         total_error_records += len(chunk)
                         if raise_on_error:

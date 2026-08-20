@@ -11,10 +11,11 @@ from aiogram.types import (
     ChatMemberRestricted,
 )
 
+from app.core.services.base import BaseService
+
 from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ...clients import AiogramClient
-from ..base import BaseService
 
 
 class AiogramBotService(BaseService):

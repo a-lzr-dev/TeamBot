@@ -68,6 +68,7 @@ class LogHelper:
         table: str,
         error: Exception,
         batch_size: int | None = None,
+        max_length: int = 2000,
     ) -> None:
         """
         Быстрое логирование ошибки пакета (без JSON).
@@ -78,8 +79,9 @@ class LogHelper:
             table: Имя таблицы
             error: Ошибка
             batch_size: Размер пакета (опционально)
+            max_length: Максимальная длина
         """
-        error_msg = LogHelper.truncate_error(error, 1000)
+        error_msg = LogHelper.truncate_error(error, max_length)
         logger.warning(f"⚠️ {operation} failed for batch: {error_msg}")
 
         if hasattr(logger, "isEnabledFor") and logger.isEnabledFor(logging.DEBUG):

@@ -55,7 +55,6 @@ from .manager import (
 )
 from .services import (
     AiogramBotService,
-    BaseService,
     ChatSyncEngine,
     SyncService,
     TelethonChatService,
@@ -103,7 +102,6 @@ __all__ = [
     "AiogramClient",
     "TelethonClient",
     # Сервисы
-    "BaseService",
     "AiogramBotService",
     "TelethonChatService",
     "TelethonUserService",

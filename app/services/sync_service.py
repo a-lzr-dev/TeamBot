@@ -8,19 +8,19 @@ from telethon.errors import FloodWaitError
 from telethon.tl.functions.channels import GetParticipantsRequest
 from telethon.tl.functions.messages import GetFullChatRequest
 
-from ...config import settings
-from ...core.converters import (
+from app.config import settings
+from app.core.converters import (
     chat_type_from_dialog,
     chat_type_to_str,
     member_status_from_telethon,
     user_info_from_telethon,
 )
-from ...db.repositories.chats import ChatRepository, normalize_chat_id
-from ...db.repositories.users import UserRepository
-from ...exceptions import log_exceptions
-from ...logger import bot_logger
-from ...models import ChatMemberStatus, ChatModel, UserChatMemberModel, datetime_now
-from .interfaces import ISyncService
+from app.core.services.interfaces import ISyncService
+from app.db.repositories.chats import ChatRepository, normalize_chat_id
+from app.db.repositories.users import UserRepository
+from app.exceptions import log_exceptions
+from app.logger import bot_logger
+from app.models import ChatMemberStatus, ChatModel, UserChatMemberModel, datetime_now
 
 SyncStats = dict[str, bool | int | str | list | dict | None]
 
