@@ -5,9 +5,9 @@ from aiogram import enums
 from sqlalchemy import and_, delete, func, not_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
-from ...models import AvanpostDirSysDataTypeModel, ChatMessageModel, MessageSource, MessageType, datetime_now
+from ...models import ChatMessageModel, MessageSource, MessageType, datetime_now
+from ...utils.decorators import log_exceptions
 
 
 class MessageRepository:
@@ -70,6 +70,8 @@ class MessageRepository:
         Returns:
             ChatMessageModel: Созданное сообщение
         """
+        db_logger.info(f"🆕 [create_message] Creating message {message_id} in chat {chat_id}, type={message_type}")
+
         now = datetime_now()
 
         # Проверка времени жизни
@@ -116,7 +118,7 @@ class MessageRepository:
         await session.flush()
         await session.refresh(message)
 
-        db_logger.debug(f"✅ Created message {message.FID} in chat {chat_id}")
+        db_logger.info(f"✅ [create_message] Created message {message.FID} in chat {chat_id}")
         return message
 
     @staticmethod
@@ -142,16 +144,18 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Обновленное сообщение или None
         """
+        db_logger.info(f"🔄 [update_message] Updating message {message_id}")
+
         message = await MessageRepository.get_message_by_id(session, message_id)
 
         if not message:
-            db_logger.warning(f"⚠️ Message {message_id} not found for update")
+            db_logger.warning(f"⚠️ [update_message] Message {message_id} not found for update")
             return None
 
         # Не обновляем удаленные сообщения
         if message.FFlagDeleted:
-            db_logger.debug(f"⏭️ Message {message_id} is deleted, skipping update")
-            return message
+            db_logger.debug(f"⏭️ [update_message] Message {message_id} is deleted, skipping update")
+            return message  # type: ignore[no-any-return]
 
         updated = False
 
@@ -170,9 +174,9 @@ class MessageRepository:
         if updated:
             await session.flush()
             await session.refresh(message)
-            db_logger.debug(f"✅ Updated message {message_id}")
+            db_logger.info(f"✅ [update_message] Updated message {message_id}")
 
-        return message
+        return message  # type: ignore[no-any-return]
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -207,6 +211,8 @@ class MessageRepository:
         Returns:
             tuple[ChatMessageModel, bool]: (сообщение, created)
         """
+        db_logger.info(f"🔄 [create_or_update_message] Creating or updating message {message_id}")
+
         # Проверяем существование
         existing = await MessageRepository.get_message_by_id(session, message_id)
 
@@ -226,7 +232,7 @@ class MessageRepository:
             if updated:
                 await session.flush()
                 await session.refresh(existing)
-                db_logger.debug(f"✅ Updated existing message {message_id}")
+                db_logger.info(f"✅ [create_or_update_message] Updated existing message {message_id}")
 
             return existing, False
 
@@ -272,12 +278,21 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Найденное сообщение или None
         """
+        db_logger.info(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
+
         stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        result_scalar = result.scalar_one_or_none()
-        if result_scalar is not None and not isinstance(result_scalar, AvanpostDirSysDataTypeModel):
-            return None
-        return result_scalar
+        message = result.scalar_one_or_none()
+
+        if message:
+            db_logger.info(f"✅ [get_message_by_id] Found message {message_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_message_by_id] Message {message_id} not found")
+
+        return message  # type: ignore[no-any-return]
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -297,7 +312,10 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(f"📋 [get_messages_by_ids] Getting {len(message_ids)} messages by IDs")
+
         if not message_ids:
+            db_logger.debug("ℹ️ [get_messages_by_ids] No message IDs provided")
             return []
 
         stmt = select(ChatMessageModel).where(ChatMessageModel.FID.in_(message_ids))
@@ -305,8 +323,13 @@ class MessageRepository:
         if not include_deleted:
             stmt = stmt.where(ChatMessageModel.FFlagDeleted.is_(False))
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_messages_by_ids] Found {len(messages)} messages")
+        return messages
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -326,6 +349,8 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(f"📋 [get_messages_by_chat] Getting messages for chat {chat_id}")
+
         stmt = select(ChatMessageModel).where(ChatMessageModel.FK_Chat == chat_id)
 
         if not include_deleted:
@@ -334,8 +359,13 @@ class MessageRepository:
         stmt = stmt.order_by(ChatMessageModel.FDateSent.desc())
         stmt = stmt.limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_messages_by_chat] Found {len(messages)} messages for chat {chat_id}")
+        return messages
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -361,6 +391,10 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(
+            f"📋 [get_messages_by_filter] Getting messages with filters: chat_id={chat_id}, before_minutes={before_minutes}"
+        )
+
         cutoff_time = datetime_now() - timedelta(minutes=before_minutes)
 
         conditions = [ChatMessageModel.FDateSent < cutoff_time, ChatMessageModel.FFlagDeleted.is_(False)]
@@ -382,8 +416,13 @@ class MessageRepository:
         if limit:
             stmt = stmt.limit(limit)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_messages_by_filter] Found {len(messages)} messages")
+        return messages
 
     # ==================== СТАТИСТИКА ====================
 
@@ -400,13 +439,21 @@ class MessageRepository:
         Returns:
             int: Количество сообщений
         """
+        db_logger.info(f"📊 [get_message_count_by_chat] Getting message count for chat {chat_id}")
+
         stmt = (
             select(func.count())
             .select_from(ChatMessageModel)
             .where(ChatMessageModel.FK_Chat == chat_id, ChatMessageModel.FFlagDeleted.is_(False))
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return result.scalar() or 0
+        count = result.scalar() or 0
+
+        db_logger.info(f"✅ [get_message_count_by_chat] Chat {chat_id} has {count} messages")
+        return count
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -421,6 +468,8 @@ class MessageRepository:
         Returns:
             dict: Статистика по времени жизни
         """
+        db_logger.info(f"📊 [get_message_lifetime_stats] Getting lifetime stats for chat {chat_id or 'all'}")
+
         stmt = select(
             func.count(ChatMessageModel.FID).label("total"),
             func.count(ChatMessageModel.FID).filter(ChatMessageModel.FFlagDeleted.is_(True)).label("deleted"),
@@ -439,16 +488,21 @@ class MessageRepository:
         if chat_id is not None:
             stmt = stmt.where(ChatMessageModel.FK_Chat == chat_id)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         stats = result.first()
 
-        return {
+        stats_dict = {
             "total": stats.total or 0 if stats else 0,
             "deleted": stats.deleted or 0 if stats else 0,
             "with_expiration": stats.with_expiration or 0 if stats else 0,
             "expired_not_deleted": stats.expired_not_deleted or 0 if stats else 0,
             "expiration_rate": (stats.with_expiration / stats.total * 100) if stats and stats.total else 0,
         }
+
+        db_logger.info(f"✅ [get_message_lifetime_stats] Stats: {stats_dict}")
+        return stats_dict
 
     # ==================== УПРАВЛЕНИЕ ВРЕМЕНЕМ ЖИЗНИ ====================
 
@@ -466,13 +520,19 @@ class MessageRepository:
         Returns:
             bool: Успешно ли установлено
         """
+        db_logger.info(f"⏰ [set_message_lifetime] Setting lifetime for message {message_id}: {lifetime_seconds}s")
+
         stmt = select(ChatMessageModel).where(
             and_(ChatMessageModel.FID == message_id, ChatMessageModel.FFlagDeleted.is_(False))
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         message = result.scalar_one_or_none()
 
         if not message:
+            db_logger.warning(f"⚠️ [set_message_lifetime] Message {message_id} not found or deleted")
             return False
 
         now = datetime_now()
@@ -480,6 +540,8 @@ class MessageRepository:
         message.FExpiresAt = now + timedelta(seconds=lifetime_seconds)
 
         await session.commit()
+
+        db_logger.info(f"✅ [set_message_lifetime] Lifetime set for message {message_id}")
         return True
 
     @staticmethod
@@ -498,6 +560,8 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список истекших сообщений
         """
+        db_logger.info(f"🔍 [get_expired_messages] Getting expired messages for chat {chat_id or 'all'}")
+
         now = datetime_now()
 
         stmt = select(ChatMessageModel).where(
@@ -513,8 +577,13 @@ class MessageRepository:
 
         stmt = stmt.limit(limit)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_expired_messages] Found {len(messages)} expired messages")
+        return messages
 
     # ==================== УДАЛЕНИЕ СООБЩЕНИЙ ====================
 
@@ -539,7 +608,12 @@ class MessageRepository:
             int: Количество отмеченных сообщений
         """
         if not message_ids:
+            db_logger.debug("ℹ️ [mark_messages_as_deleted] No message IDs provided")
             return 0
+
+        db_logger.info(
+            f"🗑️ [mark_messages_as_deleted] Marking {len(message_ids)} messages as deleted by {deleted_by_type}"
+        )
 
         now = datetime_now()
 
@@ -554,10 +628,15 @@ class MessageRepository:
             )
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
 
-        return result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+        rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+
+        db_logger.info(f"✅ [mark_messages_as_deleted] Marked {rowcount} messages as deleted")
+        return rowcount
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -576,7 +655,12 @@ class MessageRepository:
             int: Количество отмеченных сообщений
         """
         if not message_ids:
+            db_logger.debug("ℹ️ [mark_messages_deleted_by_ids] No message IDs provided")
             return 0
+
+        db_logger.info(
+            f"🗑️ [mark_messages_deleted_by_ids] Marking {len(message_ids)} messages as deleted by {deleted_by_type}"
+        )
 
         now = datetime_now()
 
@@ -586,10 +670,15 @@ class MessageRepository:
             .values(FFlagDeleted=True, FDateDeleted=now, FDeletedByType=deleted_by_type)
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
 
-        return result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+        rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+
+        db_logger.info(f"✅ [mark_messages_deleted_by_ids] Marked {rowcount} messages as deleted")
+        return rowcount
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -611,7 +700,7 @@ class MessageRepository:
         Returns:
             int: Количество удаленных сообщений
         """
-        return await MessageRepository.mark_messages_as_deleted(
+        return await MessageRepository.mark_messages_as_deleted(  # type: ignore[no-any-return]
             session=session,
             message_ids=message_ids,
             deleted_by_type=deleted_by_type,
@@ -632,12 +721,16 @@ class MessageRepository:
         Returns:
             bool: Успешно ли восстановлено
         """
+        db_logger.info(f"🔄 [restore_deleted_message] Restoring message {message_id}")
+
         try:
             query = select(ChatMessageModel).where(
                 ChatMessageModel.FID == message_id, ChatMessageModel.FFlagDeleted.is_(True)
             )
             if chat_id is not None:
                 query = query.where(ChatMessageModel.FK_Chat == chat_id)
+
+            db_logger.debug(f"📝 SQL: {query.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(query)
             message: ChatMessageModel | None = result.scalar_one_or_none()
@@ -648,13 +741,14 @@ class MessageRepository:
                 message.FK_DeletedByMessage = None
                 message.FDeletedByType = None
                 await session.commit()
-                db_logger.info(f"✅ Message {message_id} restored")
+                db_logger.info(f"✅ [restore_deleted_message] Message {message_id} restored")
                 return True
 
+            db_logger.warning(f"⚠️ [restore_deleted_message] Deleted message {message_id} not found")
             return False
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to restore message {message_id}: {e}")
+            db_logger.error(f"❌ [restore_deleted_message] Failed to restore message {message_id}: {e}")
             await session.rollback()
             raise
 
@@ -686,6 +780,8 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(f"📋 [get_messages_by_date_range] Getting messages from {start_date} to {end_date}")
+
         conditions = []
 
         if chat_id is not None:
@@ -707,8 +803,13 @@ class MessageRepository:
         stmt = stmt.order_by(ChatMessageModel.FDateSent.desc())
         stmt = stmt.limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_messages_by_date_range] Found {len(messages)} messages")
+        return messages
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -732,6 +833,8 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(f"📋 [get_messages_by_type] Getting messages by type: {message_type}")
+
         conditions = [ChatMessageModel.FK_MessageType == message_type, ChatMessageModel.FFlagDeleted.is_(False)]
 
         if chat_id is not None:
@@ -741,8 +844,13 @@ class MessageRepository:
         stmt = stmt.order_by(ChatMessageModel.FDateSent.desc())
         stmt = stmt.limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_messages_by_type] Found {len(messages)} messages of type {message_type}")
+        return messages
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -757,15 +865,26 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Последнее сообщение или None
         """
+        db_logger.info(f"🔍 [get_last_message_in_chat] Getting last message for chat {chat_id}")
+
         stmt = (
             select(ChatMessageModel)
             .where(ChatMessageModel.FK_Chat == chat_id, ChatMessageModel.FFlagDeleted.is_(False))
             .order_by(ChatMessageModel.FDateSent.desc())
             .limit(1)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        scalar: ChatMessageModel | None = result.scalar_one_or_none()
-        return scalar
+        message: ChatMessageModel | None = result.scalar_one_or_none()
+
+        if message:
+            db_logger.info(f"✅ [get_last_message_in_chat] Found last message {message.FID} for chat {chat_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_last_message_in_chat] No messages found for chat {chat_id}")
+
+        return message
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -783,14 +902,22 @@ class MessageRepository:
         Returns:
             int: Количество сообщений
         """
+        db_logger.info(f"📊 [get_message_count_by_type] Getting count for type {message_type}")
+
         conditions = [ChatMessageModel.FK_MessageType == message_type, ChatMessageModel.FFlagDeleted.is_(False)]
 
         if chat_id is not None:
             conditions.append(ChatMessageModel.FK_Chat == chat_id)
 
         stmt = select(func.count()).select_from(ChatMessageModel).where(and_(*conditions))
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return result.scalar() or 0
+        count = result.scalar() or 0
+
+        db_logger.info(f"✅ [get_message_count_by_type] Found {count} messages of type {message_type}")
+        return count
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -805,6 +932,8 @@ class MessageRepository:
         Returns:
             dict: Статистика по типам сообщений
         """
+        db_logger.info("📊 [get_all_message_types_stats] Getting stats for all message types")
+
         stats = {}
         for msg_type in MessageType:
             count = await MessageRepository.get_message_count_by_type(
@@ -812,6 +941,7 @@ class MessageRepository:
             )
             stats[msg_type.value] = count
 
+        db_logger.info(f"✅ [get_all_message_types_stats] Stats: {stats}")
         return stats
 
     @staticmethod
@@ -828,13 +958,22 @@ class MessageRepository:
             int: Количество удаленных сообщений
         """
         if not message_ids:
+            db_logger.debug("ℹ️ [delete_messages_permanently] No message IDs provided")
             return 0
 
+        db_logger.info(f"🗑️ [delete_messages_permanently] Permanently deleting {len(message_ids)} messages")
+
         stmt = delete(ChatMessageModel).where(ChatMessageModel.FID.in_(message_ids))
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
 
-        return result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+        rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
+
+        db_logger.info(f"✅ [delete_messages_permanently] Permanently deleted {rowcount} messages")
+        return rowcount
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -849,6 +988,8 @@ class MessageRepository:
         Returns:
             dict: Статистика очистки
         """
+        db_logger.info(f"🧹 [cleanup_expired_messages] Starting cleanup with batch size {batch_size}")
+
         total_deleted = 0
         total_found = 0
 
@@ -866,9 +1007,13 @@ class MessageRepository:
             )
             total_deleted += deleted
 
-            db_logger.debug(f"🧹 Cleaned {deleted} expired messages (total: {total_deleted})")
+            db_logger.debug(
+                f"🧹 [cleanup_expired_messages] Cleaned {deleted} expired messages (total: {total_deleted})"
+            )
 
-        return {"found": total_found, "deleted": total_deleted}
+        result = {"found": total_found, "deleted": total_deleted}
+        db_logger.info(f"✅ [cleanup_expired_messages] Cleanup complete: found {total_found}, deleted {total_deleted}")
+        return result
 
 
 __all__ = ["MessageRepository"]

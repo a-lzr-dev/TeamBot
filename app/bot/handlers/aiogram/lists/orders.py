@@ -1,3 +1,5 @@
+# app/bot/handlers/aiogram/lists/orders.py
+
 from typing import Any
 
 from aiogram import Router
@@ -11,18 +13,13 @@ from .....db.repositories import AvanpostUserRepository
 from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
-from ..actions import SubMenuStates
+from ..states import CarrierOrderStates, SubMenuStates
 
 # Создание роутера
 router = Router(name="aiogram_orders_list")
 
 # Репозиторий
 _avanpost_user_repo = AvanpostUserRepository()
-
-
-# ============================================================
-# ОБРАБОТЧИК СПИСКА ЗАКАЗОВ
-# ============================================================
 
 
 class OrdersListHandler(GenericListCallbackHandler):
@@ -107,6 +104,8 @@ class OrdersListHandler(GenericListCallbackHandler):
         # Получение avanpost_user_id из состояния
         state_data = await state.get_data()
         avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
 
         if not avanpost_user_id:
             await bot_manager.send_message(
@@ -168,14 +167,21 @@ class OrdersListHandler(GenericListCallbackHandler):
             builder = ListKeyboardBuilder(
                 callback_prefix="orders",
                 buttons_per_row=2,
-                item_icon="📌",
+                item_icon="📦",
                 max_name_length=30,
             )
 
             parent_item_id = state_data.get("parent_item_id")
             extra_buttons = []
+
+            # Кнопка "Назад к действиям"
             if parent_item_id:
                 extra_buttons.append(("🔙 Назад к действиям", f"action_back_{parent_item_id}"))
+
+            # Кнопка "В главное меню" - всегда показываем, если есть group_id
+            group_id = state_data.get("group_id")
+            if group_id:
+                extra_buttons.append(("🏠 В главное меню", "action_home"))
 
             keyboard = builder.build(
                 items=items,
@@ -191,6 +197,8 @@ class OrdersListHandler(GenericListCallbackHandler):
                 **{
                     state_keys["page"]: current_page,
                     state_keys["search_query"]: search_query,
+                    "selected_user_id": selected_user_id,
+                    "selected_user_name": selected_user_name,
                 }
             )
 
@@ -220,11 +228,59 @@ class OrdersListHandler(GenericListCallbackHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """Обработка выбора заказа"""
+        """Обработка выбора заказа заказчика - открываем заказы перевозчика"""
         bot_manager = get_bot_manager()
+
+        # Получение ID пользователя из состояния
+        state_data = await state.get_data()
+        bot_logger.debug(f"🔍 [orders.on_select] state_data keys: {list(state_data.keys())}")
+        bot_logger.debug(f"🔍 [orders.on_select] parent_item_id: {state_data.get('parent_item_id')}")
+
+        avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
+        parent_item_id = state_data.get("parent_item_id")
+        group_id = state_data.get("group_id")
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        # Сохранение ID заказа заказчика в состоянии
+        selected_order_id = item_id
+        await state.update_data(
+            selected_order_id=selected_order_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+            group_id=group_id,
+        )
+
         await bot_manager.send_toast(
-            text=f"📋 Выбран заказ #{item_id}",
+            text=f"🚚 Загрузка заказов перевозчика для заказа #{selected_order_id}...",
             event=callback,
+        )
+
+        # Переключение состояния на просмотр заказов перевозчика
+        await state.set_state(CarrierOrderStates.viewing_orders)
+        await state.update_data(
+            carrier_orders_page=0,
+            carrier_orders_search_query=None,
+            parent_item_id=parent_item_id,
+            avanpost_user_id=avanpost_user_id,
+            group_id=group_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+        )
+
+        # Отображение заказов перевозчика
+        from .carrier_orders import show_carrier_orders_list
+
+        await show_carrier_orders_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            order_id=selected_order_id,
+            page=0,
         )
 
     async def get_state_keys(self) -> dict[str, str]:
@@ -249,23 +305,33 @@ class OrdersListHandler(GenericListCallbackHandler):
             return int(chat_id) if chat_id is not None else None
         return None
 
-    def get_back_keyboard(self, state: FSMContext) -> Any:
+    @staticmethod
+    def get_back_keyboard(state: FSMContext) -> Any:
         """Клавиатура с кнопкой назад"""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        return InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="orders_back")]]
-        )
+        state_data = state.get_data()
+        group_id = state_data.get("group_id")
+        parent_item_id = state_data.get("parent_item_id")
+
+        buttons = []
+
+        if parent_item_id:
+            buttons.append(
+                InlineKeyboardButton(text="🔙 Назад к действиям", callback_data=f"action_back_{parent_item_id}")
+            )
+
+        if group_id:
+            buttons.append(InlineKeyboardButton(text="🏠 В главное меню", callback_data="action_home"))
+
+        if not buttons:
+            buttons.append(InlineKeyboardButton(text="❌ Закрыть", callback_data="orders_close"))
+
+        return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
 
-# Создание экземпляра обработчика
 orders_handler = OrdersListHandler()
 orders_search_handler = GenericSearchHandler(orders_handler)
-
-
-# ============================================================
-# ФУНКЦИЯ ДЛЯ ВНЕШНЕГО ВЫЗОВА
-# ============================================================
 
 
 async def show_orders_list(
@@ -280,6 +346,66 @@ async def show_orders_list(
 
 
 # Регистрация обработчиков в роутере
+@router.callback_query(lambda c: c.data == "orders_back")
+async def handle_orders_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Возврат к списку заказов."""
+    bot_manager = get_bot_manager()
+    await bot_manager.send_toast(text="🔙 Возврат к заказам...", event=callback)
+
+    # Получение данных из состояния
+    state_data = await state.get_data()
+    avanpost_user_id = state_data.get("avanpost_user_id")
+    #    group_id = state_data.get("group_id")
+
+    if not avanpost_user_id:
+        await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+        return
+
+    # Возврат к списку заказов
+    await show_orders_list(event=callback, state=state, avanpost_user_id=avanpost_user_id, page=0)
+
+
+@router.callback_query(lambda c: c.data == "orders_back_to_list")
+async def handle_orders_back_to_list(callback: CallbackQuery, state: FSMContext) -> None:
+    """Обработчик для кнопки 'Назад к заказам'"""
+    bot_manager = get_bot_manager()
+    bot_logger.debug("🔍 [handle_orders_back_to_list] START")
+
+    await bot_manager.send_toast(text="🔙 Возврат к заказам...", event=callback)
+
+    state_data = await state.get_data()
+    avanpost_user_id = state_data.get("avanpost_user_id")
+    parent_item_id = state_data.get("parent_item_id")
+    group_id = state_data.get("group_id")
+    selected_user_id = state_data.get("selected_user_id")
+    selected_user_name = state_data.get("selected_user_name")
+
+    bot_logger.debug(f"🔍 [handle_orders_back_to_list] parent_item_id={parent_item_id}")
+
+    if not avanpost_user_id:
+        await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+        return
+
+    await state.set_state(SubMenuStates.viewing_orders)
+    await state.update_data(
+        orders_page=0,
+        orders_search_query=None,
+        parent_item_id=parent_item_id,
+        avanpost_user_id=avanpost_user_id,
+        selected_order_id=None,
+        group_id=group_id,
+        selected_user_id=selected_user_id,
+        selected_user_name=selected_user_name,
+    )
+
+    await show_orders_list(
+        event=callback,
+        state=state,
+        avanpost_user_id=avanpost_user_id,
+        page=0,
+    )
+
+
 @router.callback_query(lambda c: c.data.startswith("orders_"))
 async def handle_orders_callback(callback: CallbackQuery, state: FSMContext) -> None:
     """Обработка колбэков для заказов"""

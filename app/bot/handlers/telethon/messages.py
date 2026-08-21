@@ -7,7 +7,6 @@ from ....config import settings
 from ....core.converters import chat_type_from_telethon, user_info_from_telethon
 from ....db.manager import db_manager
 from ....db.repositories import ChatRepository, MessageRepository, UserRepository
-from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import (
     ErrorCategory,
@@ -15,6 +14,7 @@ from ....models import (
     MessageType,
     datetime_now,
 )
+from ....utils.decorators import log_exceptions
 from ...utils import message_info_from_telethon, save_media_info_to_model
 
 if TYPE_CHECKING:

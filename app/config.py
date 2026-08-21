@@ -39,9 +39,10 @@ class Settings(BaseSettings):
     # ============ AVANPOST SYNC ============
 
     # Автоматические действия при старте приложения
-    AVANPOST_AUTO_ADD_USERS_ON_START: list[int] = Field(default_factory=lambda: [])
-    AVANPOST_AUTO_ADD_VEHICLES_ON_START: bool = True
+    AVANPOST_AUTO_ADD_USERS_ALL_ON_START: bool = True
+    AVANPOST_AUTO_ADD_USERS_IDS_ON_START: list[int] = Field(default_factory=lambda: [])
     AVANPOST_AUTO_SYNC_ON_START: bool = True
+    AVANPOST_AUTO_ADD_VEHICLES_ON_START: bool = False
 
     # Принудительная полная синхронизация (игнорировать кеш)
     AVANPOST_SYNC_FORCE: bool = False
@@ -49,8 +50,16 @@ class Settings(BaseSettings):
     # Режим синхронизации (True - фоновая, False - синхронная)
     AVANPOST_SYNC_ASYNC: bool = True
 
-    # Синхронизация пользовательских данных
-    AVANPOST_SYNC_USERS: bool = True
+    # Синхронизация пользовательских данных (Общие данные)
+    AVANPOST_SYNC_USERS_BASE: bool = True
+
+    # Синхронизация пользовательских данных (Персональные данные)
+    AVANPOST_SYNC_USERS_DETAILS: bool = True
+
+    # Ручной список синхронизации пользовательских данных (Персональные данные)
+    AVANPOST_SYNC_USERS_DETAILS_IDS: list[int] | None = Field(default_factory=lambda: [])
+
+    AVANPOST_SYNC_USER_IDS: list[int] = Field(default_factory=lambda: [])
 
     # Требовать успешную синхронизацию для старта приложения
     AVANPOST_SYNC_REQUIRED: bool = False
@@ -308,7 +317,7 @@ class Settings(BaseSettings):
                 return []
         return []
 
-    @field_validator("AVANPOST_AUTO_ADD_USERS_ON_START", mode="before")
+    @field_validator("AVANPOST_AUTO_ADD_USERS_IDS_ON_START", mode="before")
     @classmethod
     def parse_avanpost_users_list(cls, v: str | list[int] | None) -> list[int]:
         """Парсинг списка пользователей Avanpost из строки в список"""
@@ -337,15 +346,55 @@ class Settings(BaseSettings):
                 return []
         return []
 
+    @field_validator("AVANPOST_SYNC_USER_IDS", mode="before")
+    @classmethod
+    def parse_avanpost_sync_user_ids(cls, v: str | list[int] | None) -> list[int]:
+        """Парсинг списка пользователей для синхронизации из строки в список"""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                if v.startswith("[") and v.endswith("]"):
+                    parsed = ast.literal_eval(v)
+                    if isinstance(parsed, list):
+                        parsed_result: list[int] = []
+                        for x in parsed:
+                            if isinstance(x, int):
+                                parsed_result.append(x)
+                            elif isinstance(x, str) and x.isdigit():
+                                parsed_result.append(int(x))
+                        return parsed_result
+                elif "," in v:
+                    parts = v.split(",")
+                    sync_ids: list[int] = []
+                    for part in parts:
+                        part = part.strip()
+                        if part:
+                            try:
+                                sync_ids.append(int(part))
+                            except ValueError:
+                                continue
+                    return sync_ids
+            except (ValueError, SyntaxError):
+                return []
+        return []
+
     @field_validator("AVANPOST_AUTO_ADD_VEHICLES_ON_START", mode="before")
     @classmethod
     def validate_auto_add_vehicles(cls, v: bool | str | None) -> bool:
+        """Валидация и преобразование флага загрузки транспорта."""
+        # Обработка None
         if v is None:
             return False
+        # Если уже bool, возвращаем как есть
         if isinstance(v, bool):
             return v
+        # Если строка, приводим к нижнему регистру и проверяем на истинность
         if isinstance(v, str):
             return v.lower() in ("true", "1", "yes", "on")
+        # Для всех остальных типов возвращаем False
         return False
 
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")
@@ -612,6 +661,14 @@ class Settings(BaseSettings):
     def avanpost_sync_is_required(self) -> bool:
         """Является ли синхронизация обязательной"""
         return self.AVANPOST_SYNC_REQUIRED
+
+    @property
+    def avanpost_sync_user_ids(self) -> list[int]:
+        """
+        Получение списка пользователей для синхронизации.
+        Возвращает список ID пользователей или пустой список.
+        """
+        return self.AVANPOST_SYNC_USER_IDS
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).parent.parent / ".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"

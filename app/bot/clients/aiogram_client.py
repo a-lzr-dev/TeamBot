@@ -1,3 +1,22 @@
+"""
+Реализация клиента Telegram на основе Aiogram.
+
+Этот модуль предоставляет обертку над библиотекой Aiogram,
+реализующую интерфейс BaseBotClient.
+
+Основные компоненты:
+    - AiogramClient: Обертка для Aiogram бота
+
+Функциональность:
+    - Инициализация бота с токеном из настроек
+    - Запуск и остановка
+    - Отправка сообщений
+    - Проверка подключения
+    - Получение информации о боте
+    - Обработка ошибок Telegram API
+    - Защита от флуда при закрытии
+"""
+
 import contextlib
 from typing import Any
 
@@ -11,16 +30,38 @@ from .base import BaseBotClient
 
 
 class AiogramClient(BaseBotClient):
-    """Обертка для Aiogram бота"""
+    """
+    Обертка для Aiogram бота.
+
+    Реализует интерфейс BaseBotClient для работы с Telegram через
+    библиотеку Aiogram. Управляет жизненным циклом бота,
+    отправкой сообщений и проверкой состояния.
+
+    Атрибуты:
+        _bot (Bot | None): Экземпляр Aiogram бота
+        _session (AiohttpSession | None): HTTP сессия
+        _is_running (bool): Флаг запуска
+        _initialized (bool): Флаг инициализации
+    """
 
     def __init__(self) -> None:
+        """Инициализация клиента Aiogram."""
         self._bot: Bot | None = None
         self._session: AiohttpSession | None = None
         self._is_running = False
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Инициализация бота"""
+        """
+        Инициализация Aiogram бота.
+
+        Создает экземпляр Bot с токеном из настроек,
+        настраивает HTTP сессию и проверяет работоспособность.
+
+        Raises:
+            ValueError: Если BOT_TOKEN не настроен
+            Exception: При ошибках инициализации
+        """
         if self._initialized:
             return
 
@@ -28,22 +69,29 @@ class AiogramClient(BaseBotClient):
             raise ValueError("BOT_TOKEN is not configured")
 
         try:
+            # Создание HTTP сессии и бота
             self._session = AiohttpSession()
             self._bot = Bot(token=settings.BOT_TOKEN, session=self._session)
             self._initialized = True
 
-            # Проверка работы бота
+            # Проверка работоспособности бота
             await self._bot.get_me()
             bot_logger.info("✅ Aiogram client initialized successfully")
         except Exception as err:
             bot_logger.error(f"❌ Failed to initialize Aiogram client: {err}")
+            # Закрытие сессии в случае ошибки
             if self._bot:
                 with contextlib.suppress(Exception):
                     await self._bot.session.close()
             raise
 
     async def start(self) -> None:
-        """Запуск бота"""
+        """
+        Запуск бота.
+
+        Устанавливает флаг запуска. Поллинг обрабатывается
+        менеджером бота, а не этим клиентом.
+        """
         if not self._initialized:
             await self.initialize()
 
@@ -51,12 +99,17 @@ class AiogramClient(BaseBotClient):
         bot_logger.debug("✅ Aiogram client started (polling will be handled by manager)")
 
     async def stop(self) -> None:
-        """Остановка бота"""
+        """
+        Остановка бота.
+
+        Закрывает сессию и освобождает ресурсы.
+        Устойчив к ошибкам флуда при закрытии.
+        """
         self._is_running = False
 
         if self._bot:
             try:
-                # Пытаемся закрыть бота, но игнорируем ошибки флуда
+                # Закрытие бота с игнорированием ошибок флуда
                 try:
                     if hasattr(self._bot, "close"):
                         await self._bot.close()
@@ -69,7 +122,7 @@ class AiogramClient(BaseBotClient):
                 except Exception as err:
                     bot_logger.debug(f"ℹ️ Bot close error (ignored): {err}")
 
-                # Закрываем сессию
+                # Закрытие HTTP сессии
                 if hasattr(self._bot, "session") and self._bot.session:
                     await self._bot.session.close()
                     bot_logger.debug("⛔ Aiogram session closed")
@@ -83,7 +136,12 @@ class AiogramClient(BaseBotClient):
         bot_logger.info("⛔ Aiogram client stopped")
 
     async def is_connected(self) -> bool:
-        """Проверка подключения"""
+        """
+        Проверка подключения к Telegram.
+
+        Returns:
+            bool: True если бот подключен и работает
+        """
         if not self._bot or not self._is_running:
             return False
         try:
@@ -95,7 +153,12 @@ class AiogramClient(BaseBotClient):
             return False
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса клиента"""
+        """
+        Получение статуса клиента.
+
+        Returns:
+            dict: Информация о состоянии клиента
+        """
         connected = False
         bot_id = None
 
@@ -122,7 +185,17 @@ class AiogramClient(BaseBotClient):
         }
 
     async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
-        """Отправка сообщения"""
+        """
+        Отправка сообщения через Aiogram.
+
+        Args:
+            chat_id: ID чата в Telegram
+            text: Текст сообщения
+            **kwargs: Дополнительные параметры Aiogram (parse_mode, reply_to, и т.д.)
+
+        Returns:
+            dict: Результат отправки с полями success, message_id, chat_id, date, error
+        """
         if not self._bot:
             return {"success": False, "error": "Bot not initialized", "chat_id": chat_id}
 
@@ -150,7 +223,17 @@ class AiogramClient(BaseBotClient):
             }
 
     async def get_me(self) -> dict[str, Any]:
-        """Получение информации о боте"""
+        """
+        Получение информации о боте.
+
+        Returns:
+            dict: Информация о боте (id, username, first_name, и т.д.)
+
+        Raises:
+            RuntimeError: Если бот не инициализирован
+            TelegramAPIError: При ошибках API
+            Exception: При неожиданных ошибках
+        """
         if not self._bot:
             raise RuntimeError("Bot not initialized")
 
@@ -175,22 +258,22 @@ class AiogramClient(BaseBotClient):
 
     @property
     def client_type(self) -> str:
-        """Тип клиента"""
+        """Тип клиента (bot)."""
         return "bot"
 
     @property
     def is_initialized(self) -> bool:
-        """Проверка инициализации"""
+        """Проверка инициализации клиента."""
         return self._initialized
 
     @property
     def is_running(self) -> bool:
-        """Проверка запуска"""
+        """Проверка запуска клиента."""
         return self._is_running
 
     @property
     def bot(self) -> Bot | None:
-        """Получение экземпляра Bot"""
+        """Получение экземпляра Aiogram Bot."""
         return self._bot
 
 

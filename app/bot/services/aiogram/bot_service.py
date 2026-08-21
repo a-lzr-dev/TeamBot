@@ -13,8 +13,8 @@ from aiogram.types import (
 
 from app.core.services.base import BaseService
 
-from ....exceptions import log_exceptions
 from ....logger import bot_logger
+from ....utils.decorators import log_exceptions
 from ...clients import AiogramClient
 
 

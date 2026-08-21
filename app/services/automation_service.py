@@ -1,3 +1,14 @@
+"""
+Сервис автоматизации задач.
+
+Отвечает за:
+1. Конвертацию документов DOC/DOCX в PDF с использованием различных методов
+2. Создание и управление заявками на автоматизацию
+3. Отправку уведомлений о новых заявках
+4. Сбор статистики конвертаций
+5. Управление временными файлами
+"""
+
 import asyncio
 import contextlib
 import sys
@@ -11,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..bot.dependencies import get_bot_manager
 from ..config import settings
 from ..db import AutomationRequestRepository, UserRepository, db_manager
-from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import (
     MessageType,
@@ -19,8 +29,13 @@ from ..models import (
     UserRequestAutomationStatus,
     datetime_now,
 )
+from ..utils.decorators import log_exceptions
 
-# Проверка, что на Windows
+# ============================================================
+# ПРОВЕРКА ПЛАТФОРМЫ И ДОСТУПНОСТИ БИБЛИОТЕК
+# ============================================================
+
+# Определение операционной системы
 IS_WINDOWS = sys.platform == "win32"
 
 # Импорт pywin32 (только для Windows)
@@ -80,35 +95,58 @@ if HAS_SUBPROCESS and subprocess is not None:
     except Exception as check_error:
         app_logger.warning(f"⚠️ LibreOffice check failed: {check_error}")
 
-# Репозитории (создаем один раз на уровне модуля)
-_request_repo = AutomationRequestRepository()
-_user_repo = UserRepository()
+# ============================================================
+# РЕПОЗИТОРИИ (СИНГЛТОНЫ)
+# ============================================================
+
+# Репозитории создаются один раз на уровне модуля для переиспользования
+_request_repo = AutomationRequestRepository()  # Репозиторий для заявок
+_user_repo = UserRepository()  # Репозиторий для пользователей
 
 
 class AutomationService:
-    """Сервис для автоматизации задач"""
+    """
+    Сервис для автоматизации задач.
+
+    Предоставляет методы для:
+    - Конвертации документов DOC/DOCX в PDF
+    - Создания и управления заявками на автоматизацию
+    - Сбора статистики
+    - Управления временными файлами
+    """
 
     def __init__(self) -> None:
-        self._initialized = False
-        self._temp_dir = Path(tempfile.gettempdir()) / "teambot_automation"
+        """
+        Инициализация сервиса автоматизации.
+
+        Создает временную директорию и инициализирует статистику.
+        """
+        self._initialized: bool = False
+        self._temp_dir: Path = Path(tempfile.gettempdir()) / "teambot_automation"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Статистика конвертаций
         self._conversion_stats: dict[str, Any] = {
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "by_method": {},
+            "total": 0,  # Всего конвертаций
+            "success": 0,  # Успешных конвертаций
+            "failed": 0,  # Неудачных конвертаций
+            "by_method": {},  # Статистика по методам
             "enabled": getattr(settings, "AUTOMATION_STATS_ENABLED", True),
             "max_entries": getattr(settings, "AUTOMATION_STATS_MAX_ENTRIES", 1000),
         }
 
     @property
     def is_initialized(self) -> bool:
+        """Проверка, инициализирован ли сервис."""
         return self._initialized
 
     async def initialize(self) -> None:
-        """Инициализация сервиса"""
+        """
+        Инициализация сервиса.
+
+        Проверяет доступность всех методов конвертации
+        и выводит информацию о платформе.
+        """
         if self._initialized:
             return
 
@@ -120,6 +158,7 @@ class AutomationService:
             if not IS_WINDOWS:
                 app_logger.info("ℹ️ Running on non-Windows platform. Consider using docx2pdf with LibreOffice.")
 
+        # Вывод информации о состоянии
         app_logger.info("✅ AutomationService initialized")
         app_logger.info(f"📁 Temp directory: {self._temp_dir}")
         app_logger.info(f"🖥️ Platform: {sys.platform}")
@@ -127,7 +166,9 @@ class AutomationService:
         app_logger.info(f"📦 comtypes available: {HAS_COMTYPES}")
         app_logger.info(f"📦 LibreOffice available: {HAS_LIBREOFFICE}")
 
-    # ============ ОСНОВНОЙ МЕТОД КОНВЕРТАЦИИ ============
+    # ============================================================
+    # ОСНОВНОЙ МЕТОД КОНВЕРТАЦИИ
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def convert_doc_to_pdf(
@@ -140,6 +181,11 @@ class AutomationService:
         """
         Конвертация DOC/DOCX в PDF.
 
+        Поддерживает три метода конвертации:
+        1. pywin32 (Windows, использует Microsoft Word)
+        2. comtypes (Windows, альтернатива pywin32)
+        3. LibreOffice (Linux/macOS, кроссплатформенный)
+
         Args:
             doc_content: Содержимое документа (bytes или BytesIO)
             filename: Имя файла
@@ -147,16 +193,23 @@ class AutomationService:
             method: Метод конвертации (auto, pywin32, comtypes, libreoffice)
 
         Returns:
-            Dict с результатом
+            dict[str, Any]: Результат конвертации с полями:
+                - success: bool
+                - pdf_content: bytes | None
+                - pdf_filename: str | None
+                - file_size: int | None
+                - conversion_method: str | None
+                - error: str | None
         """
         if method is None:
             method = settings.AUTOMATION_CONVERSION_METHOD
 
+        # Обновление статистики
         self._conversion_stats["total"] = self._conversion_stats.get("total", 0) + 1
 
         app_logger.info(f"🔄 Converting DOC to PDF: {filename} (user={user_id}, method={method})")
 
-        # Проверка расширения
+        # Проверка расширения файла
         file_ext = Path(filename).suffix.lower()
         if file_ext not in [".doc", ".docx"]:
             return {
@@ -167,7 +220,7 @@ class AutomationService:
                 "file_size": None,
             }
 
-        # Определение метода
+        # Автоматический выбор метода
         if method == "auto":
             if HAS_PYWIN32 and IS_WINDOWS:
                 method = "pywin32"
@@ -186,10 +239,12 @@ class AutomationService:
 
         app_logger.debug(f"🔄 Using conversion method: {method}")
 
-        temp_doc_path = None
-        temp_pdf_path = None
+        # Переменные для временных файлов
+        temp_doc_path: Path | None = None
+        temp_pdf_path: Path | None = None
 
         try:
+            # Подготовка содержимого документа
             if hasattr(doc_content, "read"):
                 # Это BytesIO или подобный объект
                 content_bytes = doc_content.read()
@@ -257,6 +312,7 @@ class AutomationService:
 
             file_size = len(pdf_content)
 
+            # Обновление статистики успеха
             self._conversion_stats["success"] = self._conversion_stats.get("success", 0) + 1
 
             # Обновление статистики по методам
@@ -290,11 +346,25 @@ class AutomationService:
             # Очистка временных файлов
             await self._cleanup_temp_files(temp_doc_path, temp_pdf_path)
 
-    # ============ МЕТОДЫ КОНВЕРТАЦИИ ============
+    # ============================================================
+    # МЕТОДЫ КОНВЕРТАЦИИ
+    # ============================================================
 
     @staticmethod
     async def _convert_with_pywin32(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """Конвертация через pywin32 (использует Microsoft Word)"""
+        """
+        Конвертация через pywin32 (использует Microsoft Word).
+
+        Доступен только на Windows. Использует COM-объект Word.Application
+        для открытия документа и сохранения в PDF.
+
+        Args:
+            doc_path: Путь к DOC/DOCX файлу
+            pdf_path: Путь для сохранения PDF
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
+        """
         if not HAS_PYWIN32 or win32com is None:
             return False, "pywin32 not available"
 
@@ -323,8 +393,8 @@ class AutomationService:
 
                     return True, None
 
-                except Exception as pywin32_error:
-                    return False, str(pywin32_error)
+                except Exception as pywin32_err:
+                    return False, str(pywin32_err)
 
                 finally:
                     # Закрытие Word
@@ -349,7 +419,19 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_comtypes(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """Конвертация через comtypes (альтернатива pywin32)"""
+        """
+        Конвертация через comtypes (альтернатива pywin32).
+
+        Доступен только на Windows. Использует COM-объект Word.Application
+        через библиотеку comtypes.
+
+        Args:
+            doc_path: Путь к DOC/DOCX файлу
+            pdf_path: Путь для сохранения PDF
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
+        """
         if not HAS_COMTYPES or comtypes is None:
             return False, "comtypes not available"
 
@@ -373,8 +455,8 @@ class AutomationService:
 
                     return True, None
 
-                except Exception as comtypes_error:
-                    return False, str(comtypes_error)
+                except Exception as comtypes_err:
+                    return False, str(comtypes_err)
 
             success, error = await asyncio.to_thread(convert_in_thread)
 
@@ -388,7 +470,19 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_libreoffice(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """Конвертация через LibreOffice (для Linux/macOS)"""
+        """
+        Конвертация через LibreOffice (для Linux/macOS).
+
+        Использует утилиту командной строки soffice для конвертации
+        документа в PDF без графического интерфейса (headless mode).
+
+        Args:
+            doc_path: Путь к DOC/DOCX файлу
+            pdf_path: Путь для сохранения PDF
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
+        """
         if not HAS_LIBREOFFICE or subprocess is None:
             return False, "LibreOffice not available"
 
@@ -420,7 +514,15 @@ class AutomationService:
 
     @staticmethod
     async def _cleanup_temp_files(doc_path: Path | None, pdf_path: Path | None) -> None:
-        """Очистка временных файлов"""
+        """
+        Очистка временных файлов.
+
+        Удаляет временные DOC и PDF файлы после завершения конвертации.
+
+        Args:
+            doc_path: Путь к временному DOC файлу
+            pdf_path: Путь к временному PDF файлу
+        """
         for path in [doc_path, pdf_path]:
             if path and path.exists():
                 try:
@@ -429,7 +531,9 @@ class AutomationService:
                 except Exception as cleanup_error:
                     app_logger.warning(f"⚠️ Could not delete temp file {path}: {cleanup_error}")
 
-    # ============ ЗАЯВКИ НА АВТОМАТИЗАЦИЮ (БД) ============
+    # ============================================================
+    # ЗАЯВКИ НА АВТОМАТИЗАЦИЮ (БД)
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def create_automation_request(
@@ -454,7 +558,11 @@ class AutomationService:
             session: Сессия БД
 
         Returns:
-            dict: Результат операции
+            dict[str, Any]: Результат операции с полями:
+                - success: bool
+                - request_id: int | None
+                - request: dict | None
+                - error: str | None
         """
         app_logger.info(f"📝 Creating automation request from user {user_id}: {title}")
 
@@ -526,11 +634,11 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            list[dict]: Список заявок
+            list[dict[str, Any]]: Список отформатированных заявок
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.get_requests(
+                return await self.get_requests(  # type: ignore[no-any-return]
                     user_id=user_id,
                     status=status,
                     priority=priority,
@@ -555,7 +663,7 @@ class AutomationService:
             except ValueError as priority_error:
                 app_logger.warning(f"⚠️ Invalid priority: {priority}, error: {priority_error}")
 
-        # Используем репозиторий вместо прямого запроса
+        # Получение заявок через репозиторий
         requests = await _request_repo.get_all(
             session=session,
             status=status_enum,
@@ -566,6 +674,7 @@ class AutomationService:
             load_user=True,
         )
 
+        # Явное приведение типа для mypy
         return [self._format_request(req) for req in requests]
 
     @log_exceptions(app_logger)
@@ -582,18 +691,19 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            dict | None: Заявка или None
+            dict[str, Any] | None: Отформатированная заявка или None
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.get_request_by_id(request_id, new_session)
+                return await self.get_request_by_id(request_id, new_session)  # type: ignore[no-any-return]
 
-        # Используем репозиторий вместо прямого запроса
+        # Получение заявки через репозиторий
         request = await _request_repo.get_by_id(session, request_id)
 
         if not request:
             return None
 
+        # Явное приведение типа для mypy
         return self._format_request(request)
 
     @log_exceptions(app_logger)
@@ -616,11 +726,14 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            dict: Результат операции
+            dict[str, Any]: Результат операции с полями:
+                - success: bool
+                - request: dict | None
+                - error: str | None
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.update_request_status(
+                return await self.update_request_status(  # type: ignore[no-any-return]
                     request_id=request_id,
                     status=status,
                     note=note,
@@ -635,6 +748,7 @@ class AutomationService:
             return {"success": False, "error": f"Неверный статус: {status}, error: {status_error}"}
 
         try:
+            # Обновление статуса через репозиторий
             success, request = await _request_repo.update_status(
                 session=session,
                 request_id=request_id,
@@ -653,6 +767,7 @@ class AutomationService:
             # Получаем обновленную заявку через репозиторий
             updated_request = await _request_repo.get_by_id(session, request_id)
 
+            # Явное приведение типа для mypy
             return {
                 "success": True,
                 "request": self._format_request(updated_request) if updated_request else None,
@@ -680,11 +795,14 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            dict: Результат операции
+            dict[str, Any]: Результат операции с полями:
+                - success: bool
+                - request: dict | None
+                - error: str | None
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.update_request_priority(
+                return await self.update_request_priority(  # type: ignore[no-any-return]
                     request_id=request_id,
                     priority=priority,
                     session=new_session,
@@ -697,6 +815,7 @@ class AutomationService:
             return {"success": False, "error": f"Неверный приоритет: {priority}, error: {priority_error}"}
 
         try:
+            # Обновление приоритета через репозиторий
             success, request = await _request_repo.update_priority(
                 session=session,
                 request_id=request_id,
@@ -713,6 +832,7 @@ class AutomationService:
             # Получаем обновленную заявку через репозиторий
             updated_request = await _request_repo.get_by_id(session, request_id)
 
+            # Явное приведение типа для mypy
             return {
                 "success": True,
                 "request": self._format_request(updated_request) if updated_request else None,
@@ -742,11 +862,11 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            dict: Статистика
+            dict[str, Any]: Статистика по заявкам
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.get_stats(
+                return await self.get_stats(  # type: ignore[no-any-return]
                     user_id=user_id,
                     start_date=start_date,
                     end_date=end_date,
@@ -769,7 +889,8 @@ class AutomationService:
             except ValueError as end_error:
                 app_logger.warning(f"⚠️ Invalid end_date: {end_date}, error: {end_error}")
 
-        return await _request_repo.get_stats(
+        # Получение статистики через репозиторий
+        return await _request_repo.get_stats(  # type: ignore[no-any-return]
             session=session,
             user_id=user_id,
             start_date=start_dt,
@@ -792,11 +913,14 @@ class AutomationService:
             session: Сессия БД (опционально)
 
         Returns:
-            dict: Результат операции
+            dict[str, Any]: Результат операции с полями:
+                - success: bool
+                - message: str | None
+                - error: str | None
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await self.delete_request(
+                return await self.delete_request(  # type: ignore[no-any-return]
                     request_id=request_id,
                     soft=soft,
                     session=new_session,
@@ -837,7 +961,9 @@ class AutomationService:
             await session.rollback()
             return {"success": False, "error": str(delete_error)}
 
-    # ============ СТАТИСТИКА КОНВЕРТАЦИЙ ============
+    # ============================================================
+    # СТАТИСТИКА КОНВЕРТАЦИЙ
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def get_conversion_stats(self) -> dict[str, Any]:
@@ -845,7 +971,17 @@ class AutomationService:
         Получение статистики конвертаций.
 
         Returns:
-            dict: Статистика конвертаций
+            dict[str, Any]: Статистика конвертаций с полями:
+                - total: int
+                - success: int
+                - failed: int
+                - success_rate: float
+                - by_method: dict
+                - platform: str
+                - pywin32_available: bool
+                - comtypes_available: bool
+                - libreoffice_available: bool
+                - enabled: bool
         """
         total = self._conversion_stats.get("total", 0)
         success = self._conversion_stats.get("success", 0)
@@ -866,7 +1002,9 @@ class AutomationService:
             "enabled": self._conversion_stats.get("enabled", True),
         }
 
-    # ============ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ============
+    # ============================================================
+    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # ============================================================
 
     @staticmethod
     async def _send_request_notification(request: Any) -> None:
@@ -951,7 +1089,7 @@ class AutomationService:
             request: Модель заявки
 
         Returns:
-            dict: Отформатированная заявка
+            dict[str, Any]: Отформатированная заявка
         """
         return {
             "id": request.FID,
@@ -969,10 +1107,24 @@ class AutomationService:
             "updated_at": request.FUpdatedAt.isoformat() + "Z",
         }
 
-    # ============ СТАТУС И ЗДОРОВЬЕ ============
+    # ============================================================
+    # СТАТУС И ЗДОРОВЬЕ
+    # ============================================================
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса"""
+        """
+        Получение статуса сервиса.
+
+        Returns:
+            dict[str, Any]: Статус сервиса с полями:
+                - initialized: bool
+                - temp_dir: str
+                - conversion_stats: dict
+                - platform: str
+                - pywin32_available: bool
+                - comtypes_available: bool
+                - libreoffice_available: bool
+        """
         return {
             "initialized": self._initialized,
             "temp_dir": str(self._temp_dir),
@@ -984,7 +1136,12 @@ class AutomationService:
         }
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса"""
+        """
+        Проверка здоровья сервиса.
+
+        Returns:
+            bool: True если сервис инициализирован
+        """
         return self._initialized
 
 

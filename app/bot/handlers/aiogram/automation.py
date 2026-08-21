@@ -1,3 +1,25 @@
+"""
+Модуль обработчиков для автоматизации.
+
+Этот модуль предоставляет функциональность автоматизации в Telegram боте:
+- Конвертация DOC/DOCX в PDF
+- Создание заявок на автоматизацию
+- Просмотр статуса заявок
+
+Основные компоненты:
+    - Команда /automation для вызова меню автоматизации
+    - Обработчики колбэков для навигации по меню
+    - Обработчики файлов для конвертации
+    - Обработчики текстовых сообщений для создания заявок
+
+Состояния FSM:
+    - waiting_for_file: Ожидание файла для конвертации
+    - waiting_for_request_title: Ожидание названия заявки
+    - waiting_for_request_description: Ожидание описания заявки
+    - waiting_for_request_priority: Ожидание выбора приоритета
+    - waiting_for_request_confirm: Ожидание подтверждения заявки
+"""
+
 from typing import Any
 
 from aiogram import F, Router
@@ -6,30 +28,30 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from app.bot.dependencies import get_bot_manager
-from app.bot.keyboards import AutomationKeyboard
-from app.db import db_manager
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
-from app.models import MessageActionType, MessageType
-from app.services.automation_service import automation_service
-
+from ....bot.dependencies import get_bot_manager
+from ....bot.keyboards import AutomationKeyboard
+from ....db import db_manager
+from ....logger import bot_logger
+from ....models import MessageActionType, MessageType
+from ....services.automation_service import automation_service
+from ....utils.decorators import log_exceptions
 from .auth import is_user_authenticated
 
+# Создание роутера для автоматизации
 router = Router(name="aiogram_automation")
 
 
-# ============ Состояния ============
+# ============ Состояния FSM ============
 
 
 class AutomationStates(StatesGroup):
-    """Состояния для автоматизации"""
+    """Состояния для процесса автоматизации."""
 
-    waiting_for_file = State()
-    waiting_for_request_title = State()
-    waiting_for_request_description = State()
-    waiting_for_request_priority = State()
-    waiting_for_request_confirm = State()
+    waiting_for_file = State()  # Ожидание файла для конвертации
+    waiting_for_request_title = State()  # Ожидание названия заявки
+    waiting_for_request_description = State()  # Ожидание описания заявки
+    waiting_for_request_priority = State()  # Ожидание выбора приоритета
+    waiting_for_request_confirm = State()  # Ожидание подтверждения заявки
 
 
 # ============ Хранилище временных данных ============
@@ -38,14 +60,27 @@ _temp_data: dict[int, dict[str, Any]] = {}
 
 
 def get_temp_data(user_id: int) -> dict[str, Any]:
-    """Получение временных данных пользователя"""
+    """
+    Получение временных данных пользователя.
+
+    Args:
+        user_id: ID пользователя Telegram
+
+    Returns:
+        dict: Словарь с временными данными
+    """
     if user_id not in _temp_data:
         _temp_data[user_id] = {}
     return _temp_data[user_id]
 
 
 def clear_temp_data(user_id: int) -> None:
-    """Очистка временных данных пользователя"""
+    """
+    Очистка временных данных пользователя.
+
+    Args:
+        user_id: ID пользователя Telegram
+    """
     _temp_data.pop(user_id, None)
 
 
@@ -55,7 +90,13 @@ def clear_temp_data(user_id: int) -> None:
 @router.message(Command("automation"))
 @log_exceptions(bot_logger)
 async def cmd_automation(message: Message, **_kwargs: Any) -> None:
-    """Команда для вызова меню автоматизации"""
+    """
+    Команда для вызова меню автоматизации.
+
+    Args:
+        message: Сообщение от пользователя
+        **_kwargs: Дополнительные аргументы
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -69,7 +110,7 @@ async def cmd_automation(message: Message, **_kwargs: Any) -> None:
 
     user_id = message.from_user.id
 
-    # Проверка авторизации
+    # Проверка авторизации пользователя
     if not await is_user_authenticated(user_id):
         await bot_manager.send_answer(
             text="🔐 **Требуется авторизация**\n\n"
@@ -81,10 +122,10 @@ async def cmd_automation(message: Message, **_kwargs: Any) -> None:
         )
         return
 
-    # Очистка временных данных
+    # Очистка временных данных при входе в меню
     clear_temp_data(user_id)
 
-    # Отправка меню
+    # Отправка главного меню
     keyboard = AutomationKeyboard.get_main_menu_keyboard()
     result = await bot_manager.send_answer(
         text="🤖 **Меню автоматизации**\n\n"
@@ -111,7 +152,20 @@ async def cmd_automation(message: Message, **_kwargs: Any) -> None:
 @router.callback_query(F.data.startswith("automation_"))
 @log_exceptions(bot_logger)
 async def handle_automation_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков автоматизации"""
+    """
+    Обработка колбэков автоматизации.
+
+    Обрабатывает все колбэки с префиксом "automation_":
+    - Навигация по меню
+    - Конвертация документов
+    - Создание заявок
+    - Просмотр заявок
+    - Управление состояниями
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not callback.from_user:
@@ -123,12 +177,13 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 
     await bot_manager.send_toast(event=callback)
 
-    # --- Главное меню ---
+    # --- 1. Главное меню ---
     if data == "automation_menu":
         await show_automation_menu(callback, state)
 
-    # --- Конвертация ---
+    # --- 2. Конвертация DOC в PDF ---
     elif data == "automation_convert":
+        # Переход в режим ожидания файла
         await bot_manager.edit_callback_message(
             callback,
             "📄 **Преобразование DOC в PDF**\n\n"
@@ -141,6 +196,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
         await state.set_state(AutomationStates.waiting_for_file)
 
     elif data == "automation_convert_confirm":
+        # Подтверждение конвертации
         temp_data = get_temp_data(user_id)
         doc_content = temp_data.get("doc_content")
         filename = temp_data.get("filename")
@@ -154,7 +210,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             )
             return
 
-        # Конвертация
+        # Начало конвертации
         await bot_manager.edit_callback_message(
             callback,
             "🔄 **Конвертация...**\n\nПожалуйста, подождите, идет преобразование документа.",
@@ -175,7 +231,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 )
                 return
 
-            # Отправка PDF-файла
+            # Отправка PDF-файла пользователю
             pdf_file = BufferedInputFile(file=result["pdf_content"], filename=result["pdf_filename"])
 
             await bot_manager.send_answer(
@@ -196,7 +252,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             # Очистка временных данных
             clear_temp_data(user_id)
 
-            # Возврат в меню
+            # Возврат в главное меню
             await show_automation_menu(callback, state)
 
         except Exception as e:
@@ -208,8 +264,9 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 reply_markup=AutomationKeyboard.get_back_keyboard(),
             )
 
-    # --- Заявка ---
+    # --- 3. Создание заявки ---
     elif data == "automation_request":
+        # Начало создания заявки - запрос названия
         await bot_manager.edit_callback_message(
             callback,
             "📝 **Новая заявка на автоматизацию**\n\n"
@@ -220,6 +277,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
         await state.set_state(AutomationStates.waiting_for_request_title)
 
     elif data == "automation_request_confirm":
+        # Подтверждение создания заявки
         temp_data = get_temp_data(user_id)
         title = temp_data.get("request_title")
         description = temp_data.get("request_description")
@@ -234,7 +292,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             )
             return
 
-        # Создание заявки
+        # Создание заявки в базе данных
         async with db_manager.get_session() as session:
             result = await automation_service.create_automation_request(
                 user_id=user_id,
@@ -254,7 +312,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             )
             return
 
-        # Успех
+        # Успешное создание заявки
         priority_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(priority, "🟡")
 
         await bot_manager.edit_callback_message(
@@ -274,7 +332,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
         clear_temp_data(user_id)
 
     elif data == "automation_request_edit":
-        # Возврат к редактированию
+        # Возврат к редактированию названия заявки
         await bot_manager.edit_callback_message(
             callback,
             "✏️ **Редактирование заявки**\n\nВведите новое **название** заявки:",
@@ -283,7 +341,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
         )
         await state.set_state(AutomationStates.waiting_for_request_title)
 
-    # --- Приоритет ---
+    # --- 4. Выбор приоритета ---
     elif data and data.startswith("automation_priority_"):
         priority = data.replace("automation_priority_", "")
         valid_priorities = ["low", "medium", "high", "critical"]
@@ -295,15 +353,15 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             title = temp_data.get("request_title")
             description = temp_data.get("request_description")
 
-            # Проверка на None
+            # Безопасное получение строк
             title_str = title or "Без названия"
             description_str = description or ""
 
             priority_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(priority, "🟡")
 
-            # Безопасное обрезание описания
             description_preview = description_str[:300] + "..." if len(description_str) > 300 else description_str
 
+            # Отображение подтверждения с выбранным приоритетом
             await bot_manager.edit_callback_message(
                 callback,
                 f"📝 **Подтверждение заявки**\n\n"
@@ -316,8 +374,9 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             )
             await state.set_state(AutomationStates.waiting_for_request_confirm)
 
-    # --- Мои заявки ---
+    # --- 5. Просмотр заявок ---
     elif data == "automation_my_requests":
+        # Получение списка заявок пользователя
         async with db_manager.get_session() as session:
             requests = await automation_service.get_requests(user_id=user_id, session=session)
 
@@ -332,10 +391,11 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             )
             return
 
+        # Формирование списка заявок
         status_emoji = {"new": "🆕", "in_progress": "🔄", "completed": "✅", "cancelled": "❌", "rejected": "⛔"}
 
         text = "📋 **Ваши заявки на автоматизацию**\n\n"
-        for req in requests[-5:]:  # Последние 5
+        for req in requests[-5:]:  # Последние 5 заявок
             emoji = status_emoji.get(req["status"], "📌")
             priority_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(
                 req.get("priority", "medium"), "🟡"
@@ -356,14 +416,15 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             reply_markup=AutomationKeyboard.get_back_keyboard(),
         )
 
-    # --- Отмена ---
+    # --- 6. Отмена и возврат ---
     elif data == "automation_cancel":
+        # Полная отмена операции
         clear_temp_data(user_id)
         await state.clear()
         await show_automation_menu(callback, state)
 
-    # --- Назад ---
     elif data == "automation_back":
+        # Возврат в главное меню
         await state.clear()
         await show_automation_menu(callback, state)
 
@@ -374,7 +435,16 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 @router.message(AutomationStates.waiting_for_file, F.document)
 @log_exceptions(bot_logger)
 async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
-    """Обработка документа для конвертации"""
+    """
+    Обработка документа для конвертации.
+
+    Принимает DOC или DOCX файл, проверяет его и сохраняет
+    для последующей конвертации.
+
+    Args:
+        message: Сообщение с документом
+        **_kwargs: Дополнительные аргументы
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -426,7 +496,7 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
         )
         return
 
-    # Проверка размера
+    # Проверка размера файла
     file_size = document.file_size
     if file_size is None:
         await bot_manager.send_answer(
@@ -465,6 +535,7 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
             )
             return
 
+        # Скачивание файла
         file = await bot.get_file(document.file_id)
         if file.file_path is None:
             await bot_manager.send_answer(
@@ -483,7 +554,7 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
         temp_data["doc_content"] = doc_content
         temp_data["filename"] = document.file_name
 
-        # Подтверждение
+        # Подтверждение загрузки
         file_size_kb = document.file_size // 1024 if document.file_size else 0
         await bot_manager.send_answer(
             text=f"✅ **Файл загружен**\n\n"
@@ -511,7 +582,12 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
 @router.message(AutomationStates.waiting_for_file)
 @log_exceptions(bot_logger)
 async def handle_invalid_document(message: Message) -> None:
-    """Обработка невалидного ввода для документа"""
+    """
+    Обработка невалидного ввода для документа.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     await bot_manager.send_answer(
@@ -527,7 +603,13 @@ async def handle_invalid_document(message: Message) -> None:
 @router.message(AutomationStates.waiting_for_request_title)
 @log_exceptions(bot_logger)
 async def handle_request_title(message: Message, state: FSMContext) -> None:
-    """Обработка названия заявки"""
+    """
+    Обработка названия заявки.
+
+    Args:
+        message: Сообщение с названием
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -542,6 +624,7 @@ async def handle_request_title(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
     title = message.text
 
+    # Валидация названия
     if not title or len(title.strip()) < 3:
         await bot_manager.send_answer(
             text="❌ **Название слишком короткое**\n\nПожалуйста, введите название заявки (минимум 3 символа):",
@@ -581,7 +664,13 @@ async def handle_request_title(message: Message, state: FSMContext) -> None:
 @router.message(AutomationStates.waiting_for_request_description)
 @log_exceptions(bot_logger)
 async def handle_request_description(message: Message, state: FSMContext) -> None:
-    """Обработка описания заявки"""
+    """
+    Обработка описания заявки.
+
+    Args:
+        message: Сообщение с описанием
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -596,6 +685,7 @@ async def handle_request_description(message: Message, state: FSMContext) -> Non
     user_id = message.from_user.id
     description = message.text
 
+    # Валидация описания
     if not description or len(description.strip()) < 10:
         await bot_manager.send_answer(
             text="❌ **Описание слишком короткое**\n\nПожалуйста, опишите заявку подробнее (минимум 10 символов):",
@@ -635,7 +725,12 @@ async def handle_request_description(message: Message, state: FSMContext) -> Non
 @router.message(AutomationStates.waiting_for_request_priority)
 @log_exceptions(bot_logger)
 async def handle_request_priority_text(message: Message) -> None:
-    """Обработка текстового ввода приоритета (если не используется клавиатура)"""
+    """
+    Обработка текстового ввода приоритета.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     await bot_manager.send_answer(
@@ -651,7 +746,13 @@ async def handle_request_priority_text(message: Message) -> None:
 
 
 async def show_automation_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    """Отображение главного меню автоматизации"""
+    """
+    Отображение главного меню автоматизации.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
     await state.clear()
 

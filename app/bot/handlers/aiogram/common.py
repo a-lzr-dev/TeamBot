@@ -1,3 +1,18 @@
+"""
+Модуль общих функций для отображения меню и навигации.
+
+Этот модуль предоставляет основные функции для работы с меню действий:
+- Отображение иерархического меню действий
+- Формирование заголовков и клавиатур
+- Навигация по меню (возврат, переход в главное меню)
+- Управление состоянием выбранного пользователя
+
+Основные компоненты:
+    - show_menu: Отображение меню действий
+    - back_to_users: Возврат к списку пользователей
+    - show_users_list: Отображение списка пользователей
+"""
+
 from typing import Any
 
 from aiogram.fsm.context import FSMContext
@@ -6,12 +21,13 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from ....bot.dependencies import get_bot_manager
 from ....config import settings
 from ....db.repositories import AvanpostActionRepository
-from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import ErrorCategory, MessageActionType, MessageType
 from ....services.error_service import error_service
+from ....utils.decorators import log_exceptions
 from ...keyboards import ListKeyboardBuilder
 
+# Количество кнопок в ряду из настроек
 BUTTONS_PER_ROW = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 3)
 
 
@@ -29,12 +45,26 @@ async def show_menu(
 ) -> None:
     """
     Отображение меню действий с использованием ListKeyboardBuilder.
+
+    Загружает пункты меню для указанной группы действий и родительского элемента,
+    формирует заголовок и клавиатуру, отправляет сообщение пользователю.
+
+    Args:
+        event: Сообщение или CallbackQuery
+        group_id: ID группы действий
+        state: Состояние FSM
+        session: Сессия БД
+        parent_item_id: ID родительского элемента (для подменю)
+        is_callback: Является ли событие CallbackQuery
+        _is_new: Флаг нового меню (для удаления предыдущего)
+        user_display_name: Имя выбранного пользователя
     """
     bot_manager = get_bot_manager()
     _actions_repo = AvanpostActionRepository()
 
     user_id = None
     try:
+        # Получение ID пользователя из состояния или события
         state_data = await state.get_data()
         user_id = state_data.get("user_id")
         selected_user_id = state_data.get("selected_user_id")
@@ -51,10 +81,11 @@ async def show_menu(
             await bot_manager.send_toast(text="❌ Не удалось определить пользователя", event=event)
             return
 
+        # Сохранение прав администратора
         is_admin = user_id in settings.ADMIN_IDS
         await state.update_data(user_id=user_id, is_admin=is_admin)
 
-        # Получение данных меню
+        # Получение данных меню из репозитория
         lang_code = "RU"
         menu_data = await _actions_repo.get_menu_items_with_parent(
             session=session,
@@ -67,7 +98,7 @@ async def show_menu(
         parent_name = menu_data.get("parent_name")
         parent_id = menu_data.get("parent_id")
 
-        # Если нет элементов
+        # Обработка пустого меню
         if not menu_items:
             empty_text = "📋 Нет доступных действий."
             keyboard = _get_empty_menu_keyboard(
@@ -84,11 +115,11 @@ async def show_menu(
         builder = ListKeyboardBuilder(
             callback_prefix="action",
             buttons_per_row=BUTTONS_PER_ROW,
-            item_icon="▶️",
+            item_icon="",
             max_name_length=25,
         )
 
-        # Формирование extra_buttons
+        # Формирование дополнительных кнопок
         extra_buttons = []
 
         # Кнопка "Назад" для подменю
@@ -99,11 +130,11 @@ async def show_menu(
         if parent_item_id is not None:
             extra_buttons.append(("🏠 В главное меню", "action_home"))
 
-        # Кнопка "К пользователям" для админов
+        # Кнопка "К пользователям" для администраторов
         if is_admin or state_data.get("selected_user_id"):
             extra_buttons.append(("👥 К пользователям", "back_to_users"))
 
-        # Строим клавиатуру
+        # Построение клавиатуры
         keyboard = builder.build(
             items=menu_items,
             current_page=0,
@@ -113,7 +144,7 @@ async def show_menu(
             item_name_formatter=lambda item: _format_item_name(item),
         )
 
-        # Отправка сообщения
+        # Отправка сообщения меню
         await _send_menu_message(event, header_text, keyboard, bot_manager, state, is_callback, _is_new)
 
     except Exception as e:
@@ -131,7 +162,17 @@ async def show_menu(
 
 
 def _format_item_name(item: dict[str, Any]) -> str:
-    """Форматирование названия пункта меню"""
+    """
+    Форматирование названия пункта меню.
+
+    Добавляет иконку в зависимости от наличия подменю.
+
+    Args:
+        item: Данные пункта меню
+
+    Returns:
+        str: Отформатированное название
+    """
     name = item.get("name", "Без названия")
     has_subitems = item.get("has_subitems", False)
     prefix = "▶️ " if has_subitems else "• "
@@ -143,12 +184,24 @@ def _build_menu_header(
     parent_name: str | None,
     user_display_name: str | None,
 ) -> str:
-    """Формирование заголовка меню"""
+    """
+    Формирование заголовка меню.
+
+    Args:
+        parent_item_id: ID родительского элемента
+        parent_name: Название родительского элемента
+        user_display_name: Имя выбранного пользователя
+
+    Returns:
+        str: Отформатированный заголовок
+    """
     header = "✨ 📋 **МЕНЮ ДЕЙСТВИЙ**"
 
+    # Добавление имени пользователя
     if user_display_name:
         header += f" 👤 {user_display_name}"
 
+    # Добавление названия подменю
     if parent_item_id is not None:
         header += f" • 📂 {parent_name or 'Подменю'} ✨"
     else:
@@ -162,14 +215,25 @@ def _get_empty_menu_keyboard(
     parent_item_id: int | None,
     show_back_to_users: bool,
 ) -> InlineKeyboardMarkup | None:
-    """Получение клавиатуры для пустого меню"""
+    """
+    Получение клавиатуры для пустого меню.
+
+    Args:
+        parent_item_id: ID родительского элемента
+        show_back_to_users: Показывать кнопку "К пользователям"
+
+    Returns:
+        InlineKeyboardMarkup | None: Клавиатура или None
+    """
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     buttons = []
 
+    # Кнопка "Назад"
     if parent_item_id is not None:
         buttons.append(InlineKeyboardButton(text="🔙 Назад", callback_data=f"action_back_{parent_item_id}"))
 
+    # Кнопка "К пользователям"
     if show_back_to_users:
         buttons.append(InlineKeyboardButton(text="👥 К пользователям", callback_data="back_to_users"))
 
@@ -188,9 +252,21 @@ async def _send_menu_message(
     is_callback: bool = False,
     _is_new: bool = False,
 ) -> None:
-    """Отправка сообщения меню"""
+    """
+    Отправка сообщения меню.
+
+    Args:
+        event: Сообщение или CallbackQuery
+        text: Текст сообщения
+        keyboard: Клавиатура
+        bot_manager: Экземпляр BotManager
+        state: Состояние FSM (опционально)
+        is_callback: Является ли событие CallbackQuery
+        _is_new: Флаг нового меню
+    """
 
     def _get_chat_id(e: Message | CallbackQuery) -> int:
+        """Получение ID чата из события."""
         if isinstance(e, Message):
             chat_id = e.chat.id
             return int(chat_id) if chat_id is not None else 0
@@ -199,10 +275,12 @@ async def _send_menu_message(
             return int(chat_id) if chat_id is not None else 0
         return 0
 
+    # Обработка CallbackQuery - удаляем старое сообщение
     if is_callback and isinstance(event, CallbackQuery):
         if event.message:
             await bot_manager.delete_message_by_link(event.message)
 
+        # Отправка нового сообщения
         result = await bot_manager.send_message(
             chat_id=event.message.chat.id if event.message else 0,
             text=text,
@@ -214,6 +292,7 @@ async def _send_menu_message(
         if result.get("success") and state:
             await state.update_data(last_action_message_id=result.get("message_id"))
     else:
+        # Обработка Message
         chat_id = _get_chat_id(event)
         if chat_id:
             await bot_manager.send_message(
@@ -232,7 +311,12 @@ async def back_to_users(
 ) -> None:
     """
     Возврат к списку пользователей из меню действий.
+
     Очищает состояние выбранного пользователя и показывает список.
+
+    Args:
+        event: CallbackQuery от пользователя
+        state: Состояние FSM
     """
     bot_manager = get_bot_manager()
 
@@ -280,8 +364,17 @@ async def show_users_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """Публичная функция для отображения списка пользователей"""
-    from .users import users_handler  # отложенный импорт
+    """
+    Публичная функция для отображения списка пользователей.
+
+    Args:
+        event: Сообщение или CallbackQuery
+        state: Состояние FSM
+        page: Номер страницы
+        search_query: Поисковый запрос
+        **kwargs: Дополнительные параметры
+    """
+    from .users import users_handler
 
     await users_handler.show_list(event, state, page, search_query, **kwargs)
 

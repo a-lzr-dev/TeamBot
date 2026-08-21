@@ -4,10 +4,11 @@ import asyncio
 import contextlib
 from typing import Any
 
-from ..db import MessageRepository, db_manager
-from ..exceptions import log_exceptions
+from ..db import db_manager
+from ..db.repositories import MessageRepository
 from ..logger import app_logger
 from ..models import datetime_now
+from ..utils.decorators import log_exceptions
 
 # Репозитории (создаем один раз на уровне модуля)
 _message_repo = MessageRepository()
@@ -77,7 +78,6 @@ class MessageLifetimeService:
 
         async with db_manager.get_session() as session:
             try:
-                # Используем репозиторий для получения истекших сообщений
                 expired_messages = await _message_repo.get_expired_messages(
                     session=session,
                     limit=self.BATCH_SIZE,
@@ -125,7 +125,6 @@ class MessageLifetimeService:
 
                 self._stats["total_bot_deleted"] = self._stats.get("total_bot_deleted", 0) + bot_deleted
 
-                # Используем репозиторий для отметки сообщений как удаленных
                 deleted_count = await _message_repo.mark_messages_as_deleted(
                     session=session,
                     message_ids=message_ids,
@@ -155,7 +154,6 @@ class MessageLifetimeService:
     @log_exceptions(app_logger)
     async def get_stats(self) -> dict[str, Any]:
         async with db_manager.get_session() as session:
-            # Используем репозиторий для получения статистики
             stats = await _message_repo.get_message_lifetime_stats(session)
 
         last_check = self._stats.get("last_check")
@@ -181,7 +179,6 @@ class MessageLifetimeService:
         app_logger.info("🔄 Force check expired messages...")
 
         async with db_manager.get_session() as session:
-            # Используем репозиторий для получения истекших сообщений с увеличенным лимитом
             expired_messages = await _message_repo.get_expired_messages(
                 session=session,
                 limit=self.BATCH_SIZE * 10,
@@ -213,7 +210,6 @@ class MessageLifetimeService:
             except Exception as e:
                 app_logger.error(f"❌ Failed to delete expired messages by Bot: {e}")
 
-            # Используем репозиторий для отметки сообщений как удаленных
             deleted_count = await _message_repo.mark_messages_as_deleted(
                 session=session,
                 message_ids=message_ids,

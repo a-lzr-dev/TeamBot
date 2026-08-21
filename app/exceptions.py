@@ -1,9 +1,4 @@
-import asyncio
-from collections.abc import Awaitable, Callable
-from functools import wraps
-from typing import Any, TypeVar
-
-from .logger import LoggerProtocol, app_logger
+from typing import TypeVar
 
 R = TypeVar("R")
 
@@ -62,85 +57,8 @@ class PyWin32Error(ConversionError):
     pass
 
 
-def log_exceptions(
-    logger: LoggerProtocol = app_logger,
-) -> Callable[[Callable[..., Awaitable[R]]], Callable[..., Awaitable[R]]]:
-    """
-    Декоратор для логирования исключений в асинхронных функциях.
-
-    Args:
-        logger: Логгер, реализующий LoggerProtocol (ExtendedLogger или logging.Logger)
-
-    Returns:
-        Декорированная функция
-    """
-
-    def decorator(func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
-        @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> R:
-            try:
-                return await func(*args, **kwargs)
-            except asyncio.CancelledError:
-                logger.debug(f"Task {func.__name__} was cancelled")
-                raise
-            except Exception as e:
-                logger.error(f"Exception in {func.__name__}: {e}", exc_info=True)
-                raise
-
-        return wrapper
-
-    return decorator
-
-
-def log_exceptions_sync(
-    logger: LoggerProtocol = app_logger,
-) -> Callable[[Callable[..., R]], Callable[..., R]]:
-    """
-    Декоратор для логирования исключений в синхронных функциях.
-
-    Args:
-        logger: Логгер, реализующий LoggerProtocol (ExtendedLogger или logging.Logger)
-
-    Returns:
-        Декорированная функция
-    """
-
-    def decorator(func: Callable[..., R]) -> Callable[..., R]:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> R:
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"Exception in {func.__name__}: {e}", exc_info=True)
-                raise
-
-        return wrapper
-
-    return decorator
-
-
-async def handle_exception(
-    exception: Exception,
-    logger: LoggerProtocol = app_logger,
-) -> None:
-    """
-    Глобальный обработчик исключений.
-
-    Args:
-        exception: Исключение для обработки
-        logger: Логгер, реализующий LoggerProtocol
-    """
-    if isinstance(exception, DatabaseError):
-        logger.error(f"Database error: {exception}")
-    elif isinstance(exception, TelegramError):
-        logger.error(f"Telegram error: {exception}")
-    elif isinstance(exception, ValidationError):
-        logger.warning(f"Validation error: {exception}")
-    else:
-        logger.critical(f"Unexpected error: {exception}", exc_info=True)
-
-
 __all__ = [
+    # Классы исключений
     "AppError",
     "DatabaseError",
     "TelegramError",
@@ -150,7 +68,4 @@ __all__ = [
     "AutomationError",
     "ConversionError",
     "PyWin32Error",
-    "log_exceptions",
-    "log_exceptions_sync",
-    "handle_exception",
 ]

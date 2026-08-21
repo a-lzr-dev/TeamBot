@@ -1,3 +1,15 @@
+"""
+Обработчик колбэков для административных действий.
+
+Этот модуль предоставляет обработчики для административных колбэков:
+- Подтверждение/отмена массовой рассылки (broadcast)
+- Подтверждение/отмена удаления сообщений
+- Управление состояниями FSM для административных операций
+
+Все обработчики интегрируются с BotManager для выполнения операций
+и с репозиториями для работы с базой данных.
+"""
+
 from typing import Any
 
 from aiogram.fsm.context import FSMContext
@@ -11,7 +23,19 @@ from .base import BaseCallbackHandler, CallbackHandler
 
 
 class AdminCallbackHandler(BaseCallbackHandler):
-    """Обработчик колбэков для администратора"""
+    """
+    Обработчик колбэков для административных действий.
+
+    Обрабатывает:
+        - Подтверждение и отмену массовой рассылки
+        - Подтверждение и отмену удаления сообщений
+
+    Префиксы колбэков:
+        - broadcast_confirm: Подтверждение рассылки
+        - broadcast_cancel: Отмена рассылки
+        - delete_confirm: Подтверждение удаления
+        - delete_cancel: Отмена удаления
+    """
 
     PREFIX_BROADCAST_CONFIRM = "broadcast_confirm"
     PREFIX_BROADCAST_CANCEL = "broadcast_cancel"
@@ -19,12 +43,25 @@ class AdminCallbackHandler(BaseCallbackHandler):
     PREFIX_DELETE_CANCEL = "delete_cancel"
 
     def __init__(self) -> None:
+        """Инициализация обработчика административных колбэков."""
         super().__init__("admin")
         # Репозиторий для работы с сообщениями
         self._message_repo = MessageRepository()
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """Обработка колбэка администратора"""
+        """
+        Основной метод обработки административного колбэка.
+
+        Определяет тип колбэка и вызывает соответствующий обработчик.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            Any: Результат обработки
+        """
         callback_data = callback.data
 
         if callback_data == self.PREFIX_BROADCAST_CONFIRM:
@@ -42,7 +79,16 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
     @staticmethod
     async def _handle_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-        """Подтверждение рассылки через callback"""
+        """
+        Подтверждение массовой рассылки.
+
+        Выполняет рассылку сообщения во все активные чаты,
+        формирует отчет и отображает результат.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM с данными для рассылки
+        """
         # Ответ на колбэк (показываем Toast)
         await CallbackHandler.answer(callback, "✅ Рассылка подтверждена")
 
@@ -54,14 +100,16 @@ class AdminCallbackHandler(BaseCallbackHandler):
         sender_first_name = data.get("sender_first_name")
         sender_username = data.get("sender_username")
 
-        print(f"🔍 [DEBUG] _handle_broadcast_confirm - sender_user_id from state: {sender_user_id}")
+        bot_logger.debug(f"🔍 [DEBUG] _handle_broadcast_confirm - sender_user_id from state: {sender_user_id}")
 
+        # Использование пользователя из шаблона, если отправитель не указан
         if not sender_user_id and callback.from_user:
             sender_user_id = callback.from_user.id
             sender_first_name = callback.from_user.first_name
             sender_username = callback.from_user.username
-            print(f"🔍 [DEBUG] Using callback user as sender: {sender_user_id}")
+            bot_logger.debug(f"🔍 [DEBUG] Using callback user as sender: {sender_user_id}")
 
+        # Проверка наличия текста
         if not text:
             await state.clear()
             if callback.message and hasattr(callback.message, "edit_text"):
@@ -72,7 +120,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
         if callback.message and hasattr(callback.message, "edit_text"):
             await callback.message.edit_text("🔄 Начинаю рассылку...")
 
-        # Выполнение рассылки
+        # Выполнение рассылки через BotManager
         bot_manager = get_bot_manager()
         result = await bot_manager.broadcast_message(
             text=text,
@@ -92,6 +140,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
             f"• 📈 Успешность: {result['successful'] * 100 // result['total'] if result['total'] > 0 else 0}%\n"
         )
 
+        # Добавление информации об ошибках (первые 5)
         if result.get("failed_chats"):
             report += "\n**❌ Чаты с ошибками:**\n"
             for failed in result["failed_chats"][:5]:
@@ -100,22 +149,39 @@ class AdminCallbackHandler(BaseCallbackHandler):
             if len(result["failed_chats"]) > 5:
                 report += f"• ... и еще {len(result['failed_chats']) - 5} чатов\n"
 
-        # Обновление сообщение с результатом
+        # Обновление сообщения с результатом
         if callback.message and hasattr(callback.message, "edit_text"):
             await callback.message.edit_text(report, parse_mode="Markdown")
 
+        # Очистка состояния
         await state.clear()
         bot_logger.info(f"✅ Broadcast completed via callback: {result['successful']}/{result['total']}")
 
     @staticmethod
     async def _handle_broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-        """Отмена рассылки"""
+        """
+        Отмена массовой рассылки.
+
+        Очищает состояние FSM и уведомляет пользователя об отмене.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+        """
         await state.clear()
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(text="❌ Рассылка отменена.", event=callback)
 
     async def _handle_delete_confirm(self, callback: CallbackQuery, state: FSMContext) -> None:
-        """Подтверждение удаления"""
+        """
+        Подтверждение удаления сообщения.
+
+        Удаляет сообщение из Telegram и помечает его как удаленное в БД.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM с данными для удаления
+        """
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(text="✅ Удаление подтверждено.", event=callback)
 
@@ -130,21 +196,22 @@ class AdminCallbackHandler(BaseCallbackHandler):
             return
 
         try:
+            # Получение бота из колбэка
             bot = callback.bot
             if not bot:
                 await bot_manager.send_toast(text="❌ Бот не инициализирован.", event=callback)
                 return
 
-            # Выполнение удаления через бота
+            # Удаление сообщения через Telegram Bot API
             await bot.delete_message(chat_id, message_id)
 
-            # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОТМЕТКИ УДАЛЕНИЯ В БД
+            # Отметка сообщения как удаленного в БД
             async with db_manager.get_session() as session:
-                # Проверяем существование сообщения через репозиторий
+                # Проверка существования сообщения в БД
                 db_message = await self._message_repo.get_message_by_id(session, message_id)
 
                 if db_message:
-                    # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ОТМЕТКИ УДАЛЕНИЯ
+                    # Отметка как удаленного с указанием инициатора
                     deleted_count = await self._message_repo.mark_messages_as_deleted(
                         session=session,
                         message_ids=[message_id],
@@ -161,6 +228,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
                 await session.commit()
 
+            # Уведомление об успешном удалении
             await bot_manager.send_toast(
                 text=f"✅ Сообщение `{message_id}` успешно удалено из чата `{chat_id}`.",
                 event=callback,
@@ -170,22 +238,48 @@ class AdminCallbackHandler(BaseCallbackHandler):
             bot_logger.error(f"❌ Failed to delete message {message_id}: {e}", exc_info=True)
             await bot_manager.send_toast(text=f"❌ Ошибка при удалении: {str(e)}", event=callback)
         finally:
+            # Очистка состояния в любом случае
             await state.clear()
 
     @staticmethod
     async def _handle_delete_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-        """Отмена удаления"""
+        """
+        Отмена удаления сообщения.
+
+        Очищает состояние FSM и уведомляет пользователя об отмене.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+        """
         await state.clear()
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(text="❌ Удаление отменено.", event=callback)
 
-    # Методы для совместимости с Message (если нужно)
+    # Методы для совместимости с Message
+
     async def handle_broadcast(self, message: Message, state: FSMContext) -> None:
-        """Обработка колбэка для рассылки (для Message)"""
+        """
+        Обработка колбэка для рассылки (для Message).
+
+        Заглушка для совместимости с интерфейсом Message.
+
+        Args:
+            message: Сообщение
+            state: Состояние FSM
+        """
         pass
 
     async def handle_delete(self, message: Message, state: FSMContext) -> None:
-        """Обработка колбэка для удаления (для Message)"""
+        """
+        Обработка колбэка для удаления (для Message).
+
+        Заглушка для совместимости с интерфейсом Message.
+
+        Args:
+            message: Сообщение
+            state: Состояние FSM
+        """
         pass
 
 

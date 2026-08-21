@@ -1,3 +1,20 @@
+"""
+Модуль типов и протоколов для Telegram бота.
+
+Этот модуль содержит общие типы данных, протоколы и перечисления,
+используемые в различных компонентах системы управления Telegram ботом.
+
+Основные компоненты:
+    - TelegramAccountType: Типы аккаунтов (бот/пользователь)
+    - ClientStatus: Статусы клиентов Telegram
+    - TelegramClientProtocol: Протокол для клиентов Telegram
+    - MessageMediaInfo: Информация о медиа-файлах в сообщениях
+    - ChatInfo: Информация о чатах
+    - UserInfo: Информация о пользователях
+    - SyncResult: Результаты синхронизации
+    - ServiceStatus: Статус сервисов
+"""
+
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -12,22 +29,29 @@ if TYPE_CHECKING:
 
 
 class TelegramAccountType(StrEnum):
-    """Тип аккаунта Telegram"""
+    """Тип аккаунта Telegram.
 
-    BOT = "bot"
-    USER = "user"
+    Определяет, является ли аккаунт ботом или обычным пользователем.
+    Влияет на доступные функции и возможности синхронизации.
+    """
+
+    BOT = "bot"  # Бот-аккаунт (ограниченные возможности синхронизации)
+    USER = "user"  # Пользовательский аккаунт (полный доступ к синхронизации)
 
 
 class ClientStatus(StrEnum):
-    """Статус клиента"""
+    """Статус клиента Telegram.
 
-    INITIALIZED = "initialized"
-    STARTING = "starting"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    STOPPED = "stopped"
-    ERROR = "error"
-    DISCONNECTED = "disconnected"
+    Используется для отслеживания состояния подключения к Telegram API.
+    """
+
+    INITIALIZED = "initialized"  # Клиент инициализирован, но не запущен
+    STARTING = "starting"  # Процесс запуска клиента
+    RUNNING = "running"  # Клиент работает и готов к использованию
+    STOPPING = "stopping"  # Процесс остановки клиента
+    STOPPED = "stopped"  # Клиент остановлен
+    ERROR = "error"  # Клиент в состоянии ошибки
+    DISCONNECTED = "disconnected"  # Соединение потеряно
 
 
 # ============ Протоколы для клиентов ============
@@ -35,48 +59,77 @@ class ClientStatus(StrEnum):
 
 @runtime_checkable
 class TelegramClientProtocol(Protocol):
-    """Протокол для Telegram клиентов"""
+    """
+    Протокол для Telegram клиентов.
 
-    async def initialize(self, *args: Any, **kwargs: Any) -> None: ...
+    Определяет интерфейс, которому должны соответствовать все реализации
+    клиентов Telegram (Aiogram, Telethon и т.д.).
+    """
 
-    async def start(self) -> None: ...
+    async def initialize(self, *args: Any, **kwargs: Any) -> None:
+        """Инициализация клиента."""
+        ...
 
-    async def stop(self) -> None: ...
+    async def start(self) -> None:
+        """Запуск клиента."""
+        ...
 
-    async def is_connected(self) -> bool: ...
+    async def stop(self) -> None:
+        """Остановка клиента."""
+        ...
 
-    async def get_status(self) -> dict[str, Any]: ...
+    async def is_connected(self) -> bool:
+        """Проверка подключения к Telegram."""
+        ...
 
-    async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]: ...  # ← добавлен Any
+    async def get_status(self) -> dict[str, Any]:
+        """Получение статуса клиента."""
+        ...
 
-    async def get_me(self) -> dict[str, Any]: ...
+    async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
+        """Отправка сообщения в чат."""
+        ...
+
+    async def get_me(self) -> dict[str, Any]:
+        """Получение информации о текущем аккаунте."""
+        ...
 
     @property
-    def client_type(self) -> str: ...
+    def client_type(self) -> str:
+        """Тип клиента (aiogram, telethon и т.д.)."""
+        ...
 
     @property
-    def is_initialized(self) -> bool: ...
+    def is_initialized(self) -> bool:
+        """Инициализирован ли клиент."""
+        ...
 
     @property
-    def is_running(self) -> bool: ...
+    def is_running(self) -> bool:
+        """Запущен ли клиент."""
+        ...
 
 
 # ============ Типы для сервисов ============
 
 
 class ServiceStatus:
-    """Статус сервиса"""
+    """
+    Статус сервиса.
+
+    Используется для мониторинга состояния различных сервисов системы.
+    """
 
     def __init__(
         self, initialized: bool = False, client_available: bool = False, service: str = "unknown", **extra: Any
     ) -> None:
-        self.initialized = initialized
-        self.client_available = client_available
-        self.service = service
-        self.extra = extra
+        self.initialized = initialized  # Инициализирован ли сервис
+        self.client_available = client_available  # Доступен ли клиент
+        self.service = service  # Название сервиса
+        self.extra = extra  # Дополнительные параметры
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование статуса в словарь для ответов API."""
         return {
             "initialized": self.initialized,
             "client_available": self.client_available,
@@ -89,7 +142,11 @@ class ServiceStatus:
 
 
 class MessageMediaInfo:
-    """Информация о медиа-файле в сообщении"""
+    """
+    Информация о медиа-файле в сообщении.
+
+    Содержит метаданные о прикрепленных файлах (изображения, видео, документы).
+    """
 
     def __init__(
         self,
@@ -101,16 +158,16 @@ class MessageMediaInfo:
         height: int | None = None,
         duration: int | None = None,
     ) -> None:
-        self.file_id = file_id
-        self.file_unique_id = file_unique_id
-        self.file_size = file_size
-        self.mime_type = mime_type
-        self.width = width
-        self.height = height
-        self.duration = duration
+        self.file_id = file_id  # ID файла в Telegram
+        self.file_unique_id = file_unique_id  # Уникальный ID файла
+        self.file_size = file_size  # Размер файла в байтах
+        self.mime_type = mime_type  # MIME тип файла
+        self.width = width  # Ширина изображения/видео
+        self.height = height  # Высота изображения/видео
+        self.duration = duration  # Длительность аудио/видео (сек)
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование информации о медиа в словарь."""
         return {
             "file_id": self.file_id,
             "file_unique_id": self.file_unique_id,
@@ -122,7 +179,7 @@ class MessageMediaInfo:
         }
 
     def apply_to_model(self, chat_message: "ChatMessageModel") -> None:
-        """Применение информации о медиа к модели сообщения"""
+        """Применение информации о медиа к модели сообщения в БД."""
         from ..models import ChatMessageModel
 
         if not isinstance(chat_message, ChatMessageModel):
@@ -138,7 +195,11 @@ class MessageMediaInfo:
 
 
 class ChatInfo:
-    """Информация о чате"""
+    """
+    Информация о чате.
+
+    Содержит основные данные о чате в Telegram.
+    """
 
     def __init__(
         self,
@@ -149,15 +210,15 @@ class ChatInfo:
         participants_count: int | None = None,
         is_active: bool = True,
     ) -> None:
-        self.chat_id = chat_id
-        self.title = title
-        self.chat_type = chat_type
-        self.username = username
-        self.participants_count = participants_count
-        self.is_active = is_active
+        self.chat_id = chat_id  # ID чата в Telegram
+        self.title = title  # Название чата
+        self.chat_type = chat_type  # Тип чата (private, group, supergroup, channel)
+        self.username = username  # Username чата (если есть)
+        self.participants_count = participants_count  # Количество участников
+        self.is_active = is_active  # Активен ли чат
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование информации о чате в словарь."""
         return {
             "chat_id": self.chat_id,
             "title": self.title,
@@ -172,7 +233,11 @@ class ChatInfo:
 
 
 class UserInfo:
-    """Информация о пользователе"""
+    """
+    Информация о пользователе Telegram.
+
+    Содержит основные данные о пользователе в Telegram.
+    """
 
     def __init__(
         self,
@@ -183,15 +248,15 @@ class UserInfo:
         is_bot: bool = False,
         phone: str | None = None,
     ) -> None:
-        self.user_id = user_id
-        self.username = username
-        self.first_name = first_name
-        self.last_name = last_name
-        self.is_bot = is_bot
-        self.phone = phone
+        self.user_id = user_id  # ID пользователя в Telegram
+        self.username = username  # Username пользователя
+        self.first_name = first_name  # Имя пользователя
+        self.last_name = last_name  # Фамилия пользователя
+        self.is_bot = is_bot  # Является ли пользователь ботом
+        self.phone = phone  # Номер телефона (если доступен)
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование информации о пользователе в словарь."""
         return {
             "user_id": self.user_id,
             "username": self.username,
@@ -203,7 +268,7 @@ class UserInfo:
 
     @property
     def full_name(self) -> str:
-        """Полное имя пользователя"""
+        """Полное имя пользователя для отображения."""
         if self.first_name and self.last_name:
             return f"{self.first_name} {self.last_name}"
         elif self.first_name:
@@ -219,7 +284,12 @@ class UserInfo:
 
 
 class SyncResult:
-    """Результат синхронизации"""
+    """
+    Результат синхронизации данных с Telegram.
+
+    Содержит статистику и ошибки, возникшие в процессе синхронизации
+    чатов и участников.
+    """
 
     def __init__(self) -> None:
         self.processed: dict[str, int] = {"chats": 0, "members": 0}
@@ -230,45 +300,45 @@ class SyncResult:
         self._error_messages: list[str] = []
 
     def add_processed_chat(self) -> None:
-        """Добавление обработанного чата"""
+        """Увеличение счетчика обработанных чатов."""
         self.processed["chats"] += 1
 
     def add_processed_member(self) -> None:
-        """Добавление обработанного участника"""
+        """Увеличение счетчика обработанных участников."""
         self.processed["members"] += 1
 
     def add_added_chat(self) -> None:
-        """Добавление созданного чата"""
+        """Увеличение счетчика добавленных чатов."""
         self.added["chats"] += 1
 
     def add_added_member(self) -> None:
-        """Добавление созданного участника"""
+        """Увеличение счетчика добавленных участников."""
         self.added["members"] += 1
 
     def add_deactivated_chat(self) -> None:
-        """Добавление деактивированного чата"""
+        """Увеличение счетчика деактивированных чатов."""
         self.deactivated["chats"] += 1
 
     def add_deactivated_member(self) -> None:
-        """Добавление деактивированного участника"""
+        """Увеличение счетчика деактивированных участников."""
         self.deactivated["members"] += 1
 
     def add_error_chat(self, error: str) -> None:
-        """Добавление ошибки чата"""
+        """Увеличение счетчика ошибок чатов с сохранением сообщения."""
         self.errors["chats"] += 1
         self._error_messages.append(f"Chat error: {error}")
 
     def add_error_member(self, error: str) -> None:
-        """Добавление ошибки участника"""
+        """Увеличение счетчика ошибок участников с сохранением сообщения."""
         self.errors["members"] += 1
         self._error_messages.append(f"Member error: {error}")
 
     def add_skipped(self) -> None:
-        """Добавление пропущенного элемента"""
+        """Увеличение счетчика пропущенных элементов."""
         self.skipped += 1
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование результата синхронизации в словарь."""
         result: dict[str, Any] = {
             "processed": self.processed,
             "added": self.added,
@@ -278,12 +348,12 @@ class SyncResult:
         }
 
         if self._error_messages:
-            result["error_messages"] = self._error_messages[:10]  # Только первые 10
+            result["error_messages"] = self._error_messages[:10]  # Только первые 10 ошибок
 
         return result
 
     def reset(self) -> None:
-        """Сброс всех счетчиков."""
+        """Сброс всех счетчиков результата синхронизации."""
         self.processed = {"chats": 0, "members": 0}
         self.added = {"chats": 0, "members": 0}
         self.deactivated = {"chats": 0, "members": 0}
@@ -316,23 +386,33 @@ class SyncResult:
 
 
 class MessageConverterProtocol(Protocol):
-    """Протокол для конвертеров сообщений"""
+    """Протокол для конвертеров сообщений из разных библиотек."""
 
     @staticmethod
-    def get_content_type(message: Any) -> str: ...  # ← добавлен Any
+    def get_content_type(message: Any) -> str:
+        """Определение типа содержимого сообщения."""
+        ...
 
     @staticmethod
-    def get_media_info(message: Any) -> MessageMediaInfo: ...  # ← добавлен Any
+    def get_media_info(message: Any) -> MessageMediaInfo:
+        """Извлечение информации о медиа из сообщения."""
+        ...
 
     @staticmethod
-    def get_message_text(message: Any) -> str | None: ...  # ← добавлен Any
+    def get_message_text(message: Any) -> str | None:
+        """Извлечение текста из сообщения."""
+        ...
 
 
 # ============ Утилиты ============
 
 
-def safe_datetime_convert(dt: Any) -> datetime | None:  # ← добавлен тип для аргумента
-    """Безопасное преобразование даты"""
+def safe_datetime_convert(dt: Any) -> datetime | None:
+    """
+    Безопасное преобразование даты в объект datetime без часового пояса.
+
+    Используется для нормализации дат из разных источников.
+    """
     if dt is None:
         return None
 
@@ -342,9 +422,6 @@ def safe_datetime_convert(dt: Any) -> datetime | None:  # ← добавлен �
         return dt  # type: ignore[no-any-return]
     except Exception:
         return None
-
-
-# get_timestamp УДАЛЕН отсюда - используем из app.utils.datetime
 
 
 __all__ = [

@@ -1,11 +1,20 @@
-from typing import Any
+"""
+Репозиторий для работы с пользователями Telegram (TUsers) и их связями с Avanpost.
+
+Содержит методы для:
+1. Базовых операций с пользователями (создание, обновление, поиск)
+2. Работы со связями пользователей с Avanpost
+3. Проверки авторизации и аутентификации
+4. Статистики пользователей
+"""
+
+from typing import Any, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import (
     AvanpostUserModel,
@@ -14,12 +23,15 @@ from ...models import (
     UserModel,
     datetime_now,
 )
+from ...utils.decorators import log_exceptions
 
 
 class UserRepository:
-    """Репозиторий для работы с пользователями"""
+    """
+    Репозиторий для работы с пользователями.
+    """
 
-    # ==================== ОСНОВНЫЕ МЕТОДЫ ====================
+    # ==================== 1. БАЗОВЫЕ ОПЕРАЦИИ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -33,12 +45,32 @@ class UserRepository:
         is_bot: bool = False,
         phone: str | None = None,
     ) -> UserModel:
-        """Сохранение пользователя и возврат модели"""
+        """
+        Сохранение пользователя (создание или обновление).
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя в Telegram
+            chat_id: ID чата (опционально)
+            first_name: Имя
+            last_name: Фамилия
+            username: Username
+            is_bot: Является ли ботом
+            phone: Номер телефона
+
+        Returns:
+            UserModel: Сохраненная модель пользователя
+
+        Raises:
+            ValueError: Если user_id невалидный
+        """
         if not user_id or user_id <= 0:
             raise ValueError(f"Invalid user_id: {user_id}")
 
         if not username:
             username = f"user_{user_id}"
+
+        db_logger.info(f"💾 [save_user] Saving user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
 
@@ -72,9 +104,9 @@ class UserRepository:
             if updated:
                 user.FDateUpdated = datetime_now()
                 await session.flush()
-                db_logger.debug(f"✅ Updated user {user_id}")
+                db_logger.info(f"✅ [save_user] Updated user {user_id}")
             else:
-                db_logger.debug(f"ℹ️ User {user_id} already exists")
+                db_logger.debug(f"ℹ️ [save_user] User {user_id} already exists")
         else:
             user = UserModel(
                 FID=user_id,
@@ -90,21 +122,81 @@ class UserRepository:
             )
             session.add(user)
             await session.flush()
-            db_logger.info(f"✅ Created new user {user_id}")
+            db_logger.info(f"✅ [save_user] Created new user {user_id}")
 
         return user
 
-    # ==================== МЕТОДЫ ПОИСКА ====================
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_user_by_id(session: AsyncSession, user_id: int) -> UserModel | None:
+        """
+        Получение пользователя по ID.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+
+        Returns:
+            UserModel | None: Найденный пользователь или None
+        """
+        if not user_id or user_id <= 0:
+            return None
+
+        db_logger.info(f"🔍 [get_user_by_id] Getting user by ID: {user_id}")
+
+        user: UserModel | None = await session.get(UserModel, user_id)
+
+        if user:
+            db_logger.info(f"✅ [get_user_by_id] Found user {user_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_user_by_id] User {user_id} not found")
+
+        return user
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_all_avanpost_users(
-        session: AsyncSession,
-        limit: int | None = 10,
-        offset: int = 0,
-    ) -> list[AvanpostUserModel]:
+    async def get_user_by_phone(session: AsyncSession, phone: str) -> UserModel | None:
         """
-        Получение всех пользователей Avanpost (TAvanpostUsers).
+        Получение пользователя по номеру телефона.
+
+        Args:
+            session: Сессия БД
+            phone: Номер телефона
+
+        Returns:
+            UserModel | None: Найденный пользователь или None
+        """
+        if not phone:
+            db_logger.debug("ℹ️ [get_user_by_phone] No phone provided")
+            return None
+
+        db_logger.info(f"🔍 [get_user_by_phone] Getting user by phone: {phone}")
+
+        stmt = select(UserModel).where(UserModel.FPhone == phone)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+        result: Result = await session.execute(stmt)
+        user: UserModel | None = result.scalar_one_or_none()
+
+        if user:
+            db_logger.info(f"✅ [get_user_by_phone] Found user {user.FID} for phone {phone}")
+        else:
+            db_logger.warning(f"⚠️ [get_user_by_phone] No user found for phone {phone}")
+
+        return user
+
+    # ==================== 2. ПОИСК И СПИСКИ ПОЛЬЗОВАТЕЛЕЙ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_all_users(
+        session: AsyncSession,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[UserModel]:
+        """
+        Получение списка всех пользователей.
 
         Args:
             session: Сессия БД
@@ -112,198 +204,44 @@ class UserRepository:
             offset: Смещение
 
         Returns:
-            list[AvanpostUserModel]: Список пользователей Avanpost
+            list[UserModel]: Список пользователей
         """
-        stmt = (
-            select(AvanpostUserModel)
-            .options(selectinload(AvanpostUserModel.user_link))
-            #            .where(AvanpostUserModel.FID == 954)
-            .order_by(AvanpostUserModel.FID)
-            .offset(offset)
-        )
+        db_logger.info(f"📋 [get_all_users] Getting all users (limit={limit}, offset={offset})")
 
+        stmt = select(UserModel).order_by(UserModel.FID).offset(offset)
         if limit:
             stmt = stmt.limit(limit)
 
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def get_avanpost_users_page(
-        session: AsyncSession,
-        page: int = 0,
-        page_size: int = 10,
-        search_query: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Получение списка пользователей Avanpost с пагинацией и поиском.
-
-        Args:
-            session: Сессия БД (main)
-            page: Номер страницы (начиная с 0)
-            page_size: Количество пользователей на странице
-            search_query: Поисковый запрос (имя, фамилия, телефон)
-
-        Returns:
-            dict: {
-                "users": list[dict],
-                "total": int,
-                "page": int,
-                "total_pages": int,
-                "has_prev": bool,
-                "has_next": bool,
-                "search_query": str | None
-            }
-        """
-        try:
-            from sqlalchemy import func, or_, select
-            from sqlalchemy.orm import selectinload
-
-            from ...models import AvanpostUserLinkModel, AvanpostUserModel, UserModel
-
-            # Базовый запрос с подгрузкой связанных моделей
-            stmt = (
-                select(AvanpostUserModel)
-                .options(selectinload(AvanpostUserModel.user_link).selectinload(AvanpostUserLinkModel.telegram_user))
-                .order_by(AvanpostUserModel.FID)
-            )
-
-            # Применение поискового фильтра
-            if search_query and len(search_query) >= 2:
-                search_pattern = f"%{search_query}%"
-
-                conditions = [
-                    AvanpostUserModel.FName.ilike(search_pattern),
-                    AvanpostUserModel.FPhone.ilike(search_pattern),
-                ]
-
-                # Поиск по связанному Telegram пользователю
-                subquery = (
-                    select(AvanpostUserLinkModel.FK_Parent)
-                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
-                    .where(
-                        or_(
-                            UserModel.FFirstName.ilike(search_pattern),
-                            UserModel.FLastName.ilike(search_pattern),
-                            UserModel.FUserName.ilike(search_pattern),
-                        )
-                    )
-                    .scalar_subquery()
-                )
-                conditions.append(AvanpostUserModel.FID.in_(subquery))
-
-                stmt = stmt.where(or_(*conditions))
-
-            # Подсчет общего количества
-            count_stmt = select(func.count()).select_from(AvanpostUserModel)
-            if search_query and len(search_query) >= 2:
-                search_pattern = f"%{search_query}%"
-                conditions = [
-                    AvanpostUserModel.FName.ilike(search_pattern),
-                    AvanpostUserModel.FPhone.ilike(search_pattern),
-                ]
-                subquery = (
-                    select(AvanpostUserLinkModel.FK_Parent)
-                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
-                    .where(
-                        or_(
-                            UserModel.FFirstName.ilike(search_pattern),
-                            UserModel.FLastName.ilike(search_pattern),
-                            UserModel.FUserName.ilike(search_pattern),
-                        )
-                    )
-                    .scalar_subquery()
-                )
-                conditions.append(AvanpostUserModel.FID.in_(subquery))
-                count_stmt = count_stmt.where(or_(*conditions))
-
-            total_result = await session.execute(count_stmt)
-            total = total_result.scalar() or 0
-            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
-
-            # Пагинация
-            offset = page * page_size
-            stmt = stmt.offset(offset).limit(page_size)
-
-            result = await session.execute(stmt)
-            users = result.scalars().all()
-
-            # Форматирование пользователей
-            users_data = []
-            for user in users:
-                telegram_user = None
-                if user.user_link and user.user_link.telegram_user:
-                    telegram_user = user.user_link.telegram_user
-
-                fk_user = user.user_link.FK_Link if user.user_link else None
-
-                users_data.append(
-                    {
-                        "id": user.FID,
-                        "name": user.FName or f"User #{user.FID}",
-                        "phone": user.FPhone or "Не указан",
-                        "group_id": user.FK_MenuGroup,
-                        "telegram_id": fk_user,
-                        "telegram_name": telegram_user.fullname if telegram_user else None,
-                        "is_authorized": fk_user is not None,
-                    }
-                )
-
-            return {
-                "users": users_data,
-                "total": total,
-                "page": page,
-                "total_pages": total_pages,
-                "has_prev": page > 0,
-                "has_next": page < total_pages - 1,
-                "search_query": search_query,
-            }
-
-        except Exception as e:
-            db_logger.error(f"❌ Failed to get avanpost users page: {e}", exc_info=True)
-            return {
-                "users": [],
-                "total": 0,
-                "page": page,
-                "total_pages": 0,
-                "has_prev": False,
-                "has_next": False,
-                "search_query": search_query,
-                "error": str(e),
-            }
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def get_user_by_id(session: AsyncSession, user_id: int) -> UserModel | None:
-        """Получение пользователя по FID"""
-        if not user_id or user_id <= 0:
-            return None
-
-        user: UserModel | None = await session.get(UserModel, user_id)
-        return user
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def get_user_by_phone(session: AsyncSession, phone: str) -> UserModel | None:
-        """Получение пользователя по номеру телефона"""
-        if not phone:
-            return None
-
-        stmt = select(UserModel).where(UserModel.FPhone == phone)
         result: Result = await session.execute(stmt)
-        user: UserModel | None = result.scalar_one_or_none()
-        return user
+        users: list[UserModel] = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_all_users] Found {len(users)} users")
+        return users
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_authorized_users(session: AsyncSession, limit: int | None = None, offset: int = 0) -> list[UserModel]:
+    async def get_authorized_users(
+        session: AsyncSession,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[UserModel]:
         """
         Получение списка авторизованных пользователей.
 
-        Использует EXISTS для проверки наличия связи, что быстрее, чем JOIN,
-        если не нужно выбирать данные из связанной таблицы.
+        Использует EXISTS для проверки наличия связи с AvanpostUser.
+
+        Args:
+            session: Сессия БД
+            limit: Лимит записей
+            offset: Смещение
+
+        Returns:
+            list[UserModel]: Список авторизованных пользователей
         """
+        db_logger.info(f"📋 [get_authorized_users] Getting authorized users (limit={limit}, offset={offset})")
+
         from sqlalchemy import exists
 
         from ...models import AvanpostUserLinkModel
@@ -316,18 +254,21 @@ class UserRepository:
         if limit:
             stmt = stmt.limit(limit)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_authorized_users] Found {len(users)} authorized users")
         return users
 
     @staticmethod
     @log_exceptions(db_logger)
     async def get_authorized_users_count(session: AsyncSession) -> int:
         """
-        Получение количества авторизованных пользователей
-        (у которых есть связь с AvanpostUser).
+        Получение количества авторизованных пользователей.
 
-        Использует новую структуру AvanpostUserLinkModel для подсчёта.
+        Использует AvanpostUserLinkModel для подсчета связей.
 
         Args:
             session: Сессия БД
@@ -335,43 +276,53 @@ class UserRepository:
         Returns:
             int: Количество авторизованных пользователей
         """
+        db_logger.info("📊 [get_authorized_users_count] Getting authorized users count")
+
         try:
             from ...models import AvanpostUserLinkModel
 
-            # Подсчет количество записей в AvanpostUserLinkModel
+            # Подсчет количества записей в AvanpostUserLinkModel
             stmt = (
                 select(func.count())
                 .select_from(AvanpostUserLinkModel)
                 .where(AvanpostUserLinkModel.FK_Link.is_not(None))
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             count = result.scalar() or 0
 
-            db_logger.debug(f"📊 Authorized users count: {count}")
+            db_logger.info(f"✅ [get_authorized_users_count] Authorized users count: {count}")
             return count
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to get authorized users count: {e}", exc_info=True)
+            db_logger.error(f"❌ [get_authorized_users_count] Failed to get authorized users count: {e}", exc_info=True)
             return 0
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_all_users(session: AsyncSession, limit: int | None = None, offset: int = 0) -> list[UserModel]:
-        """Получение списка всех пользователей"""
-        stmt = select(UserModel).order_by(UserModel.FID).offset(offset)
-        if limit:
-            stmt = stmt.limit(limit)
+    async def search_users(
+        session: AsyncSession,
+        query: str,
+        limit: int = 20,
+    ) -> list[UserModel]:
+        """
+        Поиск пользователей по имени, фамилии или username.
 
-        result: Result = await session.execute(stmt)
-        users: list[UserModel] = list(result.scalars().all())
-        return users
+        Args:
+            session: Сессия БД
+            query: Поисковый запрос
+            limit: Лимит записей
 
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def search_users(session: AsyncSession, query: str, limit: int = 20) -> list[UserModel]:
-        """Поиск пользователей по имени, фамилии или username"""
+        Returns:
+            list[UserModel]: Список найденных пользователей
+        """
         if not query or not query.strip():
+            db_logger.debug("ℹ️ [search_users] Empty query")
             return []
+
+        db_logger.info(f"🔍 [search_users] Searching users by: {query}")
 
         search_pattern = f"%{query.strip()}%"
 
@@ -385,11 +336,53 @@ class UserRepository:
             .limit(limit)
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
+
+        db_logger.info(f"✅ [search_users] Found {len(users)} users matching '{query}'")
         return users
 
-    # ==================== МЕТОДЫ РАБОТЫ С AVANPOST USER ====================
+    # ==================== 3. РАБОТА С AVANPOST ПОЛЬЗОВАТЕЛЯМИ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_all_avanpost_users(
+        session: AsyncSession,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[AvanpostUserModel]:
+        """
+        Получение всех пользователей Avanpost (TAvanpostUsers).
+
+        Args:
+            session: Сессия БД
+            limit: Лимит записей
+            offset: Смещение
+
+        Returns:
+            list[AvanpostUserModel]: Список пользователей Avanpost
+        """
+        db_logger.info(f"📋 [get_all_avanpost_users] Getting all Avanpost users (limit={limit}, offset={offset})")
+
+        stmt = (
+            select(AvanpostUserModel)
+            .options(selectinload(AvanpostUserModel.user_link))
+            .order_by(AvanpostUserModel.FID)
+            .offset(offset)
+        )
+
+        if limit:
+            stmt = stmt.limit(limit)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+        result = await session.execute(stmt)
+        users = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_all_avanpost_users] Found {len(users)} Avanpost users")
+        return users
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -398,8 +391,7 @@ class UserRepository:
         avanpost_user_id: int,
     ) -> dict[str, Any] | None:
         """
-        Получение данных пользователя из TAvanpostUsers (main БД).
-        Использует SQLAlchemy ORM.
+        Получение данных пользователя из TAvanpostUsers.
 
         Args:
             session: Сессия БД (main)
@@ -411,15 +403,21 @@ class UserRepository:
         if not avanpost_user_id or avanpost_user_id <= 0:
             return None
 
+        db_logger.info(f"🔍 [get_avanpost_user_data] Getting Avanpost user data for ID: {avanpost_user_id}")
+
         try:
             stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
+                db_logger.warning(f"⚠️ [get_avanpost_user_data] Avanpost user {avanpost_user_id} not found")
                 return None
 
-            return {
+            user_data = {
                 "FID": user.FID,
                 "FK_Contact": user.FK_Contact,
                 "FK_MenuGroup": user.FK_MenuGroup,
@@ -430,8 +428,11 @@ class UserRepository:
                 "FPhone": user.FPhone,
             }
 
+            db_logger.info(f"✅ [get_avanpost_user_data] Found Avanpost user {avanpost_user_id}")
+            return user_data
+
         except Exception as e:
-            db_logger.error(f"❌ Failed to get Avanpost user data: {e}", exc_info=True)
+            db_logger.error(f"❌ [get_avanpost_user_data] Failed to get Avanpost user data: {e}", exc_info=True)
             return None
 
     @staticmethod
@@ -441,7 +442,7 @@ class UserRepository:
         telegram_user_id: int,
     ) -> AvanpostUserModel | None:
         """
-        Получение AvanpostUser по Telegram ID через новую структуру.
+        Получение AvanpostUser по Telegram ID.
 
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser
 
@@ -455,73 +456,42 @@ class UserRepository:
         if not telegram_user_id or telegram_user_id <= 0:
             return None
 
+        db_logger.info(
+            f"🔍 [get_avanpost_user_by_telegram_id] Getting Avanpost user for Telegram ID: {telegram_user_id}"
+        )
+
         try:
             from sqlalchemy.orm import selectinload
 
             from ...models import AvanpostUserLinkModel
 
-            # Загружаем AvanpostUser через цепочку связей
+            # Загрузка AvanpostUser через цепочку связей
             stmt = (
                 select(AvanpostUserModel)
                 .join(AvanpostUserLinkModel, AvanpostUserModel.FID == AvanpostUserLinkModel.FK_Parent)
                 .where(AvanpostUserLinkModel.FK_Link == telegram_user_id)
                 .options(selectinload(AvanpostUserModel.user_link))
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             user: AvanpostUserModel | None = result.scalar_one_or_none()
 
             if user:
-                db_logger.debug(f"✅ Found AvanpostUser {user.FID} for telegram user {telegram_user_id}")
+                db_logger.info(
+                    f"✅ [get_avanpost_user_by_telegram_id] Found AvanpostUser {user.FID} for telegram user {telegram_user_id}"
+                )
             else:
-                db_logger.debug(f"ℹ️ No AvanpostUser found for telegram user {telegram_user_id}")
+                db_logger.warning(
+                    f"⚠️ [get_avanpost_user_by_telegram_id] No AvanpostUser found for telegram user {telegram_user_id}"
+                )
 
             return user
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to get Avanpost user by Telegram ID: {e}", exc_info=True)
+            db_logger.error(f"❌ [get_avanpost_user_by_telegram_id] Failed: {e}", exc_info=True)
             return None
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def update_avanpost_user_telegram_link(
-        session: AsyncSession,
-        avanpost_user_id: int,
-        telegram_user_id: int,
-    ) -> bool:
-        """
-        Обновление связи AvanpostUser с Telegram пользователем.
-
-        Args:
-            session: Сессия БД (main)
-            avanpost_user_id: ID пользователя в Avanpost
-            telegram_user_id: ID пользователя в Telegram
-
-        Returns:
-            bool: Успешно ли обновлено
-        """
-        if not avanpost_user_id or avanpost_user_id <= 0:
-            return False
-        if not telegram_user_id or telegram_user_id <= 0:
-            return False
-
-        try:
-            stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-
-            if not user:
-                db_logger.warning(f"⚠️ AvanpostUser {avanpost_user_id} not found")
-                return False
-
-            user.FK_User = telegram_user_id
-            await session.flush()
-
-            db_logger.info(f"✅ Updated AvanpostUser.FK_User = {telegram_user_id} for user {avanpost_user_id}")
-            return True
-
-        except Exception as e:
-            db_logger.error(f"❌ Failed to update AvanpostUser FK_User: {e}", exc_info=True)
-            return False
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -556,8 +526,10 @@ class UserRepository:
             AvanpostUserModel | None: Созданная модель или None
         """
         if not avanpost_user_id or avanpost_user_id <= 0:
-            db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
+            db_logger.error(f"❌ [create_avanpost_user] Invalid avanpost_user_id: {avanpost_user_id}")
             return None
+
+        db_logger.info(f"🆕 [create_avanpost_user] Creating AvanpostUser {avanpost_user_id}")
 
         try:
             user = AvanpostUserModel(
@@ -574,14 +546,14 @@ class UserRepository:
             session.add(user)
             await session.flush()
 
-            db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id} with contact {fk_contact}")
+            db_logger.info(
+                f"✅ [create_avanpost_user] Created AvanpostUser {avanpost_user_id} with contact {fk_contact}"
+            )
             return user
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to create AvanpostUser: {e}", exc_info=True)
+            db_logger.error(f"❌ [create_avanpost_user] Failed to create AvanpostUser: {e}", exc_info=True)
             return None
-
-    # ==================== НОВЫЙ МЕТОД ДЛЯ СОЗДАНИЯ/ОБНОВЛЕНИЯ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -598,32 +570,49 @@ class UserRepository:
         fphone: str | None = None,
     ) -> tuple[bool, AvanpostUserModel | None]:
         """
-        Создание или обновление связи пользователя с Avanpost.
-        Сначала проверяет существование записи по FID, если есть - обновляет, если нет - создает.
+        Создание или обновление пользователя Avanpost.
+
+        Args:
+            session: Сессия БД (main)
+            telegram_user_id: ID пользователя в Telegram
+            avanpost_user_id: ID пользователя в Avanpost
+            fk_contact: ID контакта
+            fk_language: Код языка
+            fk_menugroup: ID группы меню
+            fk_owner: ID владельца
+            fk_motorcade: ID моторкада
+            fname: Имя
+            fphone: Телефон
+
+        Returns:
+            tuple[bool, AvanpostUserModel | None]: (успех, модель пользователя)
         """
         if not avanpost_user_id or avanpost_user_id <= 0:
-            db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
+            db_logger.error(f"❌ [create_or_update_avanpost_user] Invalid avanpost_user_id: {avanpost_user_id}")
             return False, None
 
-        #        if not telegram_user_id or telegram_user_id <= 0:
-        #            db_logger.error(f"❌ Invalid telegram_user_id: {telegram_user_id}")
-        #            return False, None
+        db_logger.info(
+            f"🔄 [create_or_update_avanpost_user] Creating/updating AvanpostUser {avanpost_user_id} for user {telegram_user_id}"
+        )
 
         try:
             # 1. Проверка существования пользователя в TUsers
             user = await UserRepository.get_user_by_id(session, telegram_user_id)
             if not user:
-                db_logger.error(f"❌ User {telegram_user_id} not found")
+                db_logger.error(f"❌ [create_or_update_avanpost_user] User {telegram_user_id} not found")
                 return False, None
 
-            # 2. Проверка существования записи в TAvanpostUsers по FID (а не по FK_User!)
+            # 2. Проверка существования записи в TAvanpostUsers по FID
             stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             avanpost_user = result.scalar_one_or_none()
 
             if avanpost_user:
-                # ОБНОВЛЕНИЕ существующей записи
-                db_logger.info(f"🔄 Updating existing AvanpostUser with FID={avanpost_user_id}")
+                # Обновление существующей записи
+                db_logger.info(f"🔄 [create_or_update_avanpost_user] Updating existing AvanpostUser {avanpost_user_id}")
 
                 if fk_contact is not None:
                     avanpost_user.FK_Contact = fk_contact
@@ -640,15 +629,15 @@ class UserRepository:
                 if fphone:
                     avanpost_user.FPhone = fphone[:30]
 
-                # ВСЕГДА обновляем связь с Telegram пользователем
+                # Обновление связи с Telegram пользователем
                 avanpost_user.FK_User = telegram_user_id
 
                 await session.flush()
-                db_logger.info(f"✅ Updated AvanpostUser {avanpost_user.FID} for user {telegram_user_id}")
+                db_logger.info(f"✅ [create_or_update_avanpost_user] Updated AvanpostUser {avanpost_user.FID}")
                 return True, avanpost_user
 
-            # 3. СОЗДАНИЕ нового AvanpostUser (если записи с таким FID нет)
-            db_logger.info(f"🆕 Creating new AvanpostUser with FID={avanpost_user_id}")
+            # 3. Создание нового AvanpostUser
+            db_logger.info(f"🆕 [create_or_update_avanpost_user] Creating new AvanpostUser {avanpost_user_id}")
 
             new_user = AvanpostUserModel(
                 FID=avanpost_user_id,
@@ -664,80 +653,12 @@ class UserRepository:
             session.add(new_user)
             await session.flush()
 
-            db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
+            db_logger.info(f"✅ [create_or_update_avanpost_user] Created AvanpostUser {avanpost_user_id}")
             return True, new_user
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to create/update AvanpostUser: {e}", exc_info=True)
+            db_logger.error(f"❌ [create_or_update_avanpost_user] Failed: {e}", exc_info=True)
             return False, None
-
-    # ==================== МЕТОДЫ ДЛЯ РАБОТЫ С AVANPOST (с предзагрузкой) ====================
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def get_user_with_avanpost(session: AsyncSession, user_id: int) -> UserModel | None:
-        """
-        Получение пользователя с предзагруженной связью с Avanpost.
-        Использует новую структуру: User -> AvanpostUserLink -> AvanpostUser
-        """
-        if not user_id or user_id <= 0:
-            return None
-
-        try:
-            from sqlalchemy.orm import selectinload
-
-            from ...models import AvanpostUserLinkModel
-
-            # Загрузка пользователя с двумя уровнями связей
-            stmt = (
-                select(UserModel)
-                .where(UserModel.FID == user_id)
-                .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
-            )
-            result = await session.execute(stmt)
-            user = result.scalar_one_or_none()
-
-            if user is None:
-                return None
-
-            if not isinstance(user, UserModel):
-                return None
-
-            return user
-
-        except Exception as e:
-            db_logger.error(f"❌ Failed to get user with Avanpost: {e}", exc_info=True)
-            return None
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def logout_user(session: AsyncSession, user_id: int) -> bool:
-        """
-        Выход пользователя из системы.
-        Удаляет связь с AvanpostUser и очищает данные.
-        """
-        if not user_id or user_id <= 0:
-            return False
-
-        # Используем метод с предзагрузкой
-        user = await UserRepository.get_user_with_avanpost(session, user_id)
-
-        if not user:
-            db_logger.warning(f"⚠️ User {user_id} not found for logout")
-            return False
-
-        # Удаляем связь с AvanpostUser
-        if user.avanpost_user:
-            await session.delete(user.avanpost_user)
-            db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
-
-        # Очищаем Telegram данные
-        user.FK_Chat = None
-        user.FDateUpdated = datetime_now()
-
-        await session.flush()
-        db_logger.info(f"✅ User {user_id} logged out")
-        return True
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -756,22 +677,43 @@ class UserRepository:
     ) -> tuple[bool, AvanpostUserModel | None]:
         """
         Создание или обновление связи пользователя с Avanpost через UPSERT.
-        Работает с новой структурой: TAvanpostUsers (данные) + TAvanpostUsersLinks (связь).
+
+        Работает с новой структурой:
+        - TAvanpostUsers (данные)
+        - TAvanpostUsersLinks (связь с Telegram)
+
+        Args:
+            session: Сессия БД (main)
+            telegram_user_id: ID пользователя в Telegram
+            avanpost_user_id: ID пользователя в Avanpost
+            telegram_user_required: Требуется ли Telegram пользователь
+            fk_contact: ID контакта
+            fk_language: Код языка
+            fk_menugroup: ID группы меню
+            fk_owner: ID владельца
+            fk_motorcade: ID моторкада
+            fname: Имя
+            fphone: Телефон
+
+        Returns:
+            tuple[bool, AvanpostUserModel | None]: (успех, модель пользователя)
         """
         if not avanpost_user_id or avanpost_user_id <= 0:
-            db_logger.error(f"❌ Invalid avanpost_user_id: {avanpost_user_id}")
+            db_logger.error(f"❌ [create_or_update_avanpost_user_upsert] Invalid avanpost_user_id: {avanpost_user_id}")
             return False, None
 
         if telegram_user_required and (not telegram_user_id or telegram_user_id <= 0):
-            db_logger.error(f"❌ Invalid telegram_user_id: {telegram_user_id}")
+            db_logger.error(f"❌ [create_or_update_avanpost_user_upsert] Invalid telegram_user_id: {telegram_user_id}")
             return False, None
+
+        db_logger.info(
+            f"🔄 [create_or_update_avanpost_user_upsert] UPSERT AvanpostUser: avanpost_id={avanpost_user_id}, telegram_id={telegram_user_id}"
+        )
 
         try:
             from sqlalchemy.dialects.postgresql import insert
 
             from ...models import AvanpostUserLinkModel, AvanpostUserModel
-
-            db_logger.debug(f"🔄 UPSERT AvanpostUser: avanpost_id={avanpost_user_id}, telegram_id={telegram_user_id}")
 
             # 1. UPSERT для TAvanpostUsers (данные из Avanpost)
             user_values: dict[str, Any] = {
@@ -797,12 +739,18 @@ class UserRepository:
                 index_elements=["FID"],
                 set_={k: v for k, v in user_values.items() if k != "FID"},
             )
+
+            db_logger.debug(f"📝 SQL (UPSERT user): {user_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             await session.execute(user_stmt)
             db_logger.debug(f"✅ TAvanpostUsers upserted: {avanpost_user_id}")
 
             # 2. UPSERT для TAvanpostUsersLinks (связь с Telegram)
             # Проверка, есть ли уже связь
             link_stmt = select(AvanpostUserLinkModel).where(AvanpostUserLinkModel.FK_Parent == avanpost_user_id)
+
+            db_logger.debug(f"📝 SQL (check link): {link_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(link_stmt)
             existing_link = result.scalar_one_or_none()
 
@@ -829,22 +777,130 @@ class UserRepository:
             user = result_user.scalar_one_or_none()
 
             if user:
-                db_logger.info(f"✅ UPSERT AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
+                db_logger.info(
+                    f"✅ [create_or_update_avanpost_user_upsert] UPSERT AvanpostUser {avanpost_user_id} for user {telegram_user_id}"
+                )
                 return True, user
             else:
-                db_logger.error(f"❌ Failed to get AvanpostUser {avanpost_user_id}")
+                db_logger.error(
+                    f"❌ [create_or_update_avanpost_user_upsert] Failed to get AvanpostUser {avanpost_user_id}"
+                )
                 return False, None
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to UPSERT AvanpostUser: {e}", exc_info=True)
+            db_logger.error(f"❌ [create_or_update_avanpost_user_upsert] Failed: {e}", exc_info=True)
             await session.rollback()
             return False, None
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_group_id(session: AsyncSession, user_id: int) -> int | None:
+    async def update_avanpost_user_telegram_link(
+        session: AsyncSession,
+        avanpost_user_id: int,
+        telegram_user_id: int,
+    ) -> bool:
         """
-        Получение ID группы действий пользователя через новую структуру.
+        Обновление связи AvanpostUser с Telegram пользователем.
+
+        Args:
+            session: Сессия БД (main)
+            avanpost_user_id: ID пользователя в Avanpost
+            telegram_user_id: ID пользователя в Telegram
+
+        Returns:
+            bool: Успешно ли обновлено
+        """
+        if not avanpost_user_id or avanpost_user_id <= 0:
+            return False
+        if not telegram_user_id or telegram_user_id <= 0:
+            return False
+
+        db_logger.info(
+            f"🔄 [update_avanpost_user_telegram_link] Updating link: Avanpost {avanpost_user_id} -> Telegram {telegram_user_id}"
+        )
+
+        try:
+            stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if not user:
+                db_logger.warning(f"⚠️ [update_avanpost_user_telegram_link] AvanpostUser {avanpost_user_id} not found")
+                return False
+
+            user.FK_User = telegram_user_id
+            await session.flush()
+
+            db_logger.info(f"✅ [update_avanpost_user_telegram_link] Updated AvanpostUser.FK_User = {telegram_user_id}")
+            return True
+
+        except Exception as e:
+            db_logger.error(f"❌ [update_avanpost_user_telegram_link] Failed: {e}", exc_info=True)
+            return False
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_user_with_avanpost(
+        session: AsyncSession,
+        user_id: int,
+    ) -> UserModel | None:
+        """
+        Получение пользователя с предзагруженной связью с Avanpost.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя в Telegram
+
+        Returns:
+            UserModel | None: Пользователь с загруженной связью или None
+        """
+        if not user_id or user_id <= 0:
+            return None
+
+        db_logger.info(f"🔍 [get_user_with_avanpost] Getting user {user_id} with Avanpost link")
+
+        try:
+            from sqlalchemy.orm import selectinload
+
+            from ...models import AvanpostUserLinkModel
+
+            # Загрузка пользователя с двумя уровнями связей
+            stmt = (
+                select(UserModel)
+                .where(UserModel.FID == user_id)
+                .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
+            )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                db_logger.warning(f"⚠️ [get_user_with_avanpost] User {user_id} not found")
+                return None
+
+            if not isinstance(user, UserModel):
+                return None
+
+            db_logger.info(f"✅ [get_user_with_avanpost] Found user {user_id}")
+            return user
+
+        except Exception as e:
+            db_logger.error(f"❌ [get_user_with_avanpost] Failed: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_user_group_id(
+        session: AsyncSession,
+        user_id: int,
+    ) -> int | None:
+        """
+        Получение ID группы действий пользователя.
 
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser -> FK_MenuGroup
 
@@ -858,6 +914,8 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
+        db_logger.info(f"🔍 [get_user_group_id] Getting group ID for user {user_id}")
+
         try:
             from sqlalchemy import select
             from sqlalchemy.orm import selectinload
@@ -870,25 +928,28 @@ class UserRepository:
                 .where(UserModel.FID == user_id)
                 .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
             if not user:
-                db_logger.debug(f"ℹ️ User {user_id} not found")
+                db_logger.warning(f"⚠️ [get_user_group_id] User {user_id} not found")
                 return None
 
             # Проверка наличия связи
             if not user.avanpost_link or user.avanpost_link.FK_Link is None:
-                db_logger.debug(f"ℹ️ User {user_id} is not authenticated (no link)")
+                db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} is not authenticated (no link)")
                 return None
 
             # Получение группы из AvanpostUser
             if user.avanpost_link.avanpost_user:
                 group_id = user.avanpost_link.avanpost_user.FK_MenuGroup
                 if group_id is not None:
-                    db_logger.debug(f"✅ User {user_id} has group {group_id}")
+                    db_logger.info(f"✅ [get_user_group_id] User {user_id} has group {group_id}")
                 else:
-                    db_logger.debug(f"ℹ️ User {user_id} has no group assigned")
+                    db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} has no group assigned")
 
                 # Явная проверка типа для mypy
                 if not isinstance(group_id, int):
@@ -896,83 +957,84 @@ class UserRepository:
 
                 return group_id
 
-            db_logger.debug(f"ℹ️ User {user_id} has no AvanpostUser record")
+            db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} has no AvanpostUser record")
             return None
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to get user group ID: {e}", exc_info=True)
+            db_logger.error(f"❌ [get_user_group_id] Failed: {e}", exc_info=True)
             return None
+
+    # ==================== 4. ПРОВЕРКА АВТОРИЗАЦИИ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_authenticated_user_with_avanpost(session: AsyncSession, user_id: int) -> UserModel | None:
+    async def is_user_authorized(
+        session: AsyncSession,
+        user_id: int,
+    ) -> bool:
         """
-        Получение авторизованного пользователя с предзагруженным AvanpostUser.
-        Обновляет время последней активности.
-        """
-        if not user_id or user_id <= 0:
-            return None
+        Проверка авторизации пользователя.
 
-        user = await UserRepository.get_user_with_avanpost(session, user_id)
-
-        if user and user.avanpost_user:
-            user.FDateLastActivity = datetime_now()
-            await session.flush()
-            return user
-
-        return None
-
-    # ==================== МЕТОДЫ ПРОВЕРКИ ====================
-
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def is_user_authorized(session: AsyncSession, user_id: int) -> bool:
-        """
-        Проверка авторизации пользователя по наличию связи в AvanpostUserLinkModel.
+        Проверяет наличие связи в AvanpostUserLinkModel.
 
         Args:
             session: Сессия БД
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
-            bool: True если пользователь авторизован (есть связь с Avanpost)
+            bool: True если пользователь авторизован
         """
         if not user_id or user_id <= 0:
             return False
+
+        db_logger.info(f"🔍 [is_user_authorized] Checking authorization for user {user_id}")
 
         try:
             from ...models import AvanpostUserLinkModel
 
             stmt = select(AvanpostUserLinkModel).where(AvanpostUserLinkModel.FK_Link == user_id)
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
-            return result.first() is not None
+            authorized = result.first() is not None
+
+            db_logger.info(f"✅ [is_user_authorized] User {user_id} authorized: {authorized}")
+            return authorized
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to check user authorization: {e}", exc_info=True)
+            db_logger.error(f"❌ [is_user_authorized] Failed: {e}", exc_info=True)
             return False
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def is_user_authenticated(session: AsyncSession, user_id: int) -> bool:
+    async def is_user_authenticated(
+        session: AsyncSession,
+        user_id: int,
+    ) -> bool:
         """
-        Проверка авторизации пользователя с обновлением времени активности.
-        Использует новую структуру AvanpostUserLinkModel.
+        Проверка аутентификации пользователя с обновлением времени активности.
 
         Args:
             session: Сессия БД
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
-            bool: True если пользователь авторизован (есть связь с Avanpost)
+            bool: True если пользователь аутентифицирован
         """
         if not user_id or user_id <= 0:
             return False
 
+        db_logger.info(f"🔍 [is_user_authenticated] Checking authentication for user {user_id}")
+
         try:
             from sqlalchemy.orm import selectinload
 
-            # Загружзка пользователя с предзагрузкой связи
+            # Загрузка пользователя с предзагрузкой связи
             stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_link))
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
@@ -981,30 +1043,39 @@ class UserRepository:
                 # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
+                db_logger.info(f"✅ [is_user_authenticated] User {user_id} is authenticated")
                 return True
 
+            db_logger.info(f"❌ [is_user_authenticated] User {user_id} is NOT authenticated")
             return False
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to check user authentication: {e}", exc_info=True)
+            db_logger.error(f"❌ [is_user_authenticated] Failed: {e}", exc_info=True)
             return False
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_authenticated_user(session: AsyncSession, user_id: int) -> UserModel | None:
+    async def get_authenticated_user(
+        session: AsyncSession,
+        user_id: int,
+    ) -> Optional["UserModel"]:
         """
-        Получение пользователя с предзагруженной связью Avanpost.
-        Используется для проверки авторизации с обновлением времени активности.
+        Получение аутентифицированного пользователя.
+
+        Загружает пользователя с предзагруженной связью Avanpost
+        и обновляет время последней активности.
 
         Args:
             session: Сессия БД
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
-            UserModel | None: Пользователь с загруженной связью или None
+            UserModel | None: Аутентифицированный пользователь или None
         """
         if not user_id or user_id <= 0:
             return None
+
+        db_logger.info(f"🔍 [get_authenticated_user] Getting authenticated user {user_id}")
 
         try:
             from sqlalchemy.orm import selectinload
@@ -1017,6 +1088,9 @@ class UserRepository:
                 .where(UserModel.FID == user_id)
                 .options(selectinload(UserModel.avanpost_link).selectinload(AvanpostUserLinkModel.avanpost_user))
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
@@ -1029,61 +1103,180 @@ class UserRepository:
                 if not isinstance(user, UserModel):
                     return None
 
+                db_logger.info(f"✅ [get_authenticated_user] Found authenticated user {user_id}")
                 return user
 
+            db_logger.warning(f"⚠️ [get_authenticated_user] User {user_id} is not authenticated")
             return None
 
         except Exception as e:
-            db_logger.error(f"❌ Failed to get authenticated user: {e}", exc_info=True)
+            db_logger.error(f"❌ [get_authenticated_user] Failed: {e}", exc_info=True)
             return None
-
-    # ==================== МЕТОДЫ ОБНОВЛЕНИЯ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def update_last_activity(session: AsyncSession, user_id: int) -> bool:
-        """Обновление времени последней активности пользователя"""
+    async def get_authenticated_user_with_avanpost(
+        session: AsyncSession,
+        user_id: int,
+    ) -> Optional["UserModel"]:
+        """
+        Получение аутентифицированного пользователя с AvanpostUser.
+
+        Является синонимом get_authenticated_user для обратной совместимости.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя в Telegram
+
+        Returns:
+            UserModel | None: Аутентифицированный пользователь или None
+        """
+        return await UserRepository.get_authenticated_user(session, user_id)  # type: ignore[no-any-return]
+
+    # ==================== 5. ОБНОВЛЕНИЕ ДАННЫХ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def update_last_activity(
+        session: AsyncSession,
+        user_id: int,
+    ) -> bool:
+        """
+        Обновление времени последней активности пользователя.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+
+        Returns:
+            bool: Успешно ли обновлено
+        """
         if not user_id or user_id <= 0:
             return False
+
+        db_logger.info(f"🔄 [update_last_activity] Updating last activity for user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
         if user:
             user.FDateLastActivity = datetime_now()
             await session.flush()
+            db_logger.info(f"✅ [update_last_activity] Updated last activity for user {user_id}")
             return True
+
+        db_logger.warning(f"⚠️ [update_last_activity] User {user_id} not found")
         return False
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def clear_telegram_data(session: AsyncSession, user_id: int) -> bool:
-        """Очистка Telegram данных пользователя (выход из системы) - удаляем AvanpostUser связь"""
+    async def logout_user(
+        session: AsyncSession,
+        user_id: int,
+    ) -> bool:
+        """
+        Выход пользователя из системы.
+
+        Удаляет связь с AvanpostUser и очищает Telegram данные.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+
+        Returns:
+            bool: Успешно ли выполнен выход
+        """
         if not user_id or user_id <= 0:
             return False
 
-        user: UserModel | None = await session.get(UserModel, user_id)
+        db_logger.info(f"🚪 [logout_user] Logging out user {user_id}")
+
+        # Использование метода с предзагрузкой
+        user = await UserRepository.get_user_with_avanpost(session, user_id)
+
         if not user:
+            db_logger.warning(f"⚠️ [logout_user] User {user_id} not found for logout")
             return False
 
         # Удаление связи с AvanpostUser
         if user.avanpost_user:
+            await session.delete(user.avanpost_user)
+            db_logger.info(f"✅ [logout_user] Deleted AvanpostUser for user {user_id}")
+
+        # Очистка Telegram данных
+        user.FK_Chat = None
+        user.FDateUpdated = datetime_now()
+
+        await session.flush()
+        db_logger.info(f"✅ [logout_user] User {user_id} logged out")
+        return True
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def clear_telegram_data(
+        session: AsyncSession,
+        user_id: int,
+    ) -> bool:
+        """
+        Очистка Telegram данных пользователя.
+
+        Удаляет связь с AvanpostUser.
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+
+        Returns:
+            bool: Успешно ли выполнена очистка
+        """
+        if not user_id or user_id <= 0:
+            return False
+
+        db_logger.info(f"🧹 [clear_telegram_data] Clearing Telegram data for user {user_id}")
+
+        user: UserModel | None = await session.get(UserModel, user_id)
+        if not user:
+            db_logger.warning(f"⚠️ [clear_telegram_data] User {user_id} not found")
+            return False
+
+        if user.avanpost_user:
             # Удаление записи из TAvanpostUsers для этого пользователя
             await session.delete(user.avanpost_user)
-            db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
+            db_logger.info(f"✅ [clear_telegram_data] Deleted AvanpostUser for user {user_id}")
 
         user.FK_Chat = None
         user.FDateUpdated = datetime_now()
         await session.flush()
-        db_logger.info(f"✅ Cleared Telegram data for user {user_id}")
+
+        db_logger.info(f"✅ [clear_telegram_data] Cleared Telegram data for user {user_id}")
         return True
 
-    # ==================== МЕТОДЫ СТАТИСТИКИ ====================
+    # ==================== 6. СТАТИСТИКА ====================
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_stats(session: AsyncSession, user_id: int) -> dict[str, Any]:
-        """Получение статистики пользователя"""
+    async def get_user_stats(
+        session: AsyncSession,
+        user_id: int,
+    ) -> dict[str, Any]:
+        """
+        Получение статистики пользователя.
+
+        Включает:
+        - Количество сообщений
+        - Количество решенных ошибок
+        - Информацию об авторизации
+
+        Args:
+            session: Сессия БД
+            user_id: ID пользователя
+
+        Returns:
+            dict: Статистика пользователя
+        """
+        db_logger.info(f"📊 [get_user_stats] Getting stats for user {user_id}")
+
         user: UserModel | None = await session.get(UserModel, user_id)
         if not user:
+            db_logger.warning(f"⚠️ [get_user_stats] User {user_id} not found")
             return {}
 
         messages_count: int = (
@@ -1098,7 +1291,7 @@ class UserRepository:
             or 0
         )
 
-        return {
+        stats = {
             "user_id": user_id,
             "username": user.FUserName,
             "fullname": user.fullname,
@@ -1110,6 +1303,11 @@ class UserRepository:
             "last_activity": user.FDateLastActivity.isoformat() if user.FDateLastActivity else None,
             "created_at": user.FDateCreated.isoformat() if user.FDateCreated else None,
         }
+
+        db_logger.info(
+            f"✅ [get_user_stats] Stats for user {user_id}: messages={messages_count}, errors={errors_resolved}"
+        )
+        return stats
 
 
 __all__ = ["UserRepository"]

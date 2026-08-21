@@ -1,3 +1,24 @@
+"""
+Модуль роутера для интеграции с системой Avanpost.
+
+Этот модуль предоставляет API эндпоинты для работы с данными из системы Avanpost:
+- Проверка пользователей по номеру телефона
+- Получение групп действий
+- Получение иерархического меню действий
+- Проверка наличия подэлементов в меню
+- Проверка доступности базы данных Avanpost
+
+Все эндпоинты используют общий префикс /avanpost и интегрируются
+с репозиториями для работы с данными Avanpost.
+
+Роуты:
+    POST /users/check - Проверка пользователя по номеру телефона
+    GET /groups - Получение списка групп действий
+    GET /groups/{group_id}/menu - Получение меню группы
+    GET /groups/{group_id}/items/{item_id}/has-subitems - Проверка наличия дочерних элементов
+    GET /health - Проверка доступности базы данных Avanpost
+"""
+
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,26 +28,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import db_manager
 from ...db.repositories import AvanpostActionRepository, AvanpostRepository
-from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
+from ...utils.decorators import log_exceptions
 from ..dependencies import get_session
 
+# Создание роутера с префиксом /avanpost и тегом для документации
 router = APIRouter(prefix="/avanpost", tags=["Avanpost"])
 
-# Репозиторий для работы с меню действий
+# Репозиторий для работы с меню действий (создается один раз на уровне модуля)
 _actions_repo = AvanpostActionRepository()
 
 
 class CheckUserRequest(BaseModel):
-    """Модель запроса для проверки пользователя"""
+    """
+    Модель запроса для проверки пользователя по номеру телефона.
 
-    phone_number: str = Field(..., description="Номер телефона", min_length=5, max_length=20)
+    Используется в эндпоинте /users/check для проверки существования
+    пользователя в системе Avanpost.
+    """
+
+    phone_number: str = Field(..., description="Номер телефона пользователя", min_length=5, max_length=20)
 
     @field_validator("phone_number")
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        """Валидация и нормализация номера телефона."""
+        """
+        Валидация и нормализация номера телефона.
+
+        Удаляет все символы, кроме цифр и знака '+',
+        и проверяет длину полученного номера.
+
+        Args:
+            v: Исходный номер телефона
+
+        Returns:
+            str: Очищенный и нормализованный номер
+
+        Raises:
+            ValueError: Если номер пустой или имеет некорректную длину
+        """
         cleaned = "".join(c for c in v if c.isdigit() or c == "+")
 
         if not cleaned:
@@ -42,81 +83,97 @@ class CheckUserRequest(BaseModel):
 
 
 class CheckUserResponse(BaseModel):
-    """Модель ответа для проверки пользователя"""
+    """Модель ответа для проверки пользователя в Avanpost."""
 
-    success: bool = Field(..., description="Успешность операции")
-    user_id: int | None = Field(None, description="ID пользователя в Avanpost")
-    group_id: int | None = Field(None, description="ID группы действий")
+    success: bool = Field(..., description="Успешность выполнения операции")
+    user_id: int | None = Field(None, description="ID пользователя в системе Avanpost")
+    group_id: int | None = Field(None, description="ID группы действий пользователя")
     phone_number: str = Field(..., description="Проверяемый номер телефона")
-    exists: bool = Field(False, description="Существует ли пользователь")
-    timestamp: str = Field(..., description="Время проверки")
+    exists: bool = Field(False, description="Существует ли пользователь в системе")
+    timestamp: str = Field(..., description="Время выполнения проверки")
 
 
 class MenuItemResponse(BaseModel):
-    """Модель пункта меню"""
+    """Модель отдельного пункта меню для ответа."""
 
-    id: int = Field(..., description="ID пункта")
-    name: str = Field(..., description="Название")
-    has_subitems: bool = Field(False, description="Есть ли дочерние элементы")
-    parent_id: int | None = Field(None, description="ID родительского элемента")
+    id: int = Field(..., description="Уникальный идентификатор пункта меню")
+    name: str = Field(..., description="Название пункта меню")
+    has_subitems: bool = Field(False, description="Имеет ли пункт дочерние элементы")
+    parent_id: int | None = Field(None, description="ID родительского пункта (None для корневых)")
 
 
 class MenuItemsResponse(BaseModel):
-    """Модель ответа со списком меню"""
+    """Модель ответа со списком пунктов меню для группы."""
 
-    success: bool = Field(..., description="Успешность операции")
-    group_id: int = Field(..., description="ID группы")
-    parent_item_id: int | None = Field(None, description="ID родительского элемента")
-    items: list[MenuItemResponse] = Field(default_factory=list, description="Список пунктов меню")
-    count: int = Field(0, description="Количество пунктов")
-    timestamp: str = Field(..., description="Время запроса")
+    success: bool = Field(..., description="Успешность выполнения операции")
+    group_id: int = Field(..., description="ID группы действий")
+    parent_item_id: int | None = Field(None, description="ID родительского элемента (для подменю)")
+    items: list[MenuItemResponse] = Field(default_factory=list, description="Список пунктов меню текущего уровня")
+    count: int = Field(0, description="Количество пунктов в списке")
+    timestamp: str = Field(..., description="Время выполнения запроса")
 
 
 class GroupResponse(BaseModel):
-    """Модель группы действий"""
+    """Модель группы действий для ответа."""
 
-    id: int = Field(..., description="ID группы")
-    name: str = Field(..., description="Название группы")
+    id: int = Field(..., description="Уникальный идентификатор группы")
+    name: str = Field(..., description="Название группы действий")
 
 
 class GroupsResponse(BaseModel):
-    """Модель ответа со списком групп"""
+    """Модель ответа со списком групп действий."""
 
-    success: bool = Field(..., description="Успешность операции")
-    groups: list[GroupResponse] = Field(default_factory=list, description="Список групп")
-    count: int = Field(0, description="Количество групп")
-    timestamp: str = Field(..., description="Время запроса")
+    success: bool = Field(..., description="Успешность выполнения операции")
+    groups: list[GroupResponse] = Field(default_factory=list, description="Список групп действий")
+    count: int = Field(0, description="Количество групп в списке")
+    timestamp: str = Field(..., description="Время выполнения запроса")
 
 
 class CheckSubitemsResponse(BaseModel):
-    """Модель ответа для проверки наличия подэлементов"""
+    """Модель ответа для проверки наличия дочерних элементов у пункта меню."""
 
-    success: bool = Field(..., description="Успешность операции")
-    group_id: int = Field(..., description="ID группы")
-    item_id: int = Field(..., description="ID элемента")
+    success: bool = Field(..., description="Успешность выполнения операции")
+    group_id: int = Field(..., description="ID группы действий")
+    item_id: int = Field(..., description="ID проверяемого пункта меню")
     has_subitems: bool = Field(False, description="Есть ли дочерние элементы")
-    timestamp: str = Field(..., description="Время проверки")
+    timestamp: str = Field(..., description="Время выполнения проверки")
 
 
 class ErrorResponse(BaseModel):
-    """Модель ответа при ошибке"""
+    """Стандартная модель ответа при возникновении ошибки."""
 
-    success: bool = Field(False, description="Успешность операции")
+    success: bool = Field(False, description="Успешность операции (всегда False)")
     error: str = Field(..., description="Сообщение об ошибке")
-    timestamp: str = Field(..., description="Время ошибки")
+    timestamp: str = Field(..., description="Время возникновения ошибки")
 
 
 # ============ Вспомогательные функции ============
 
 
 def _validate_group_id(group_id: int) -> None:
-    """Валидация ID группы"""
+    """
+    Валидация ID группы действий.
+
+    Args:
+        group_id: Проверяемый ID
+
+    Raises:
+        HTTPException: Если ID <= 0
+    """
     if group_id <= 0:
         raise HTTPException(status_code=400, detail="Group ID must be positive")
 
 
 def _validate_item_id(item_id: int) -> None:
-    """Валидация ID элемента"""
+    """
+    Валидация ID пункта меню.
+
+    Args:
+        item_id: Проверяемый ID
+
+    Raises:
+        HTTPException: Если ID <= 0
+    """
     if item_id <= 0:
         raise HTTPException(status_code=400, detail="Item ID must be positive")
 
@@ -136,21 +193,27 @@ async def check_user_by_phone(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
-    Проверка пользователя по номеру телефона.
+    Проверка существования пользователя в системе Avanpost по номеру телефона.
+
+    Вызывает хранимую процедуру в базе данных Avanpost для поиска пользователя.
+    Возвращает ID пользователя и ID его группы действий при наличии.
 
     Args:
         request: Запрос с номером телефона (уже провалидирован и нормализован)
-        session: Сессия БД (внедряется через Depends)
+        session: Асинхронная сессия SQLAlchemy (внедряется через Depends)
 
     Returns:
-        CheckUserResponse: Результат проверки
+        JSONResponse: Результат проверки с информацией о пользователе
+
+    Raises:
+        HTTPException: При ошибках валидации или выполнения запроса
     """
     api_logger.info(f"📱 Checking user by phone: {request.phone_number}")
 
     try:
         phone = request.phone_number
 
-        # Используем репозиторий с переданной сессией
+        # Вызов репозитория для проверки пользователя
         user_id, group_id, contact_id = await AvanpostRepository.check_user_by_phone(
             session=session,
             phone_number=phone,
@@ -199,21 +262,26 @@ async def get_groups(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
-    Получение списка групп действий.
+    Получение списка всех групп действий из Avanpost.
+
+    Группы действий используются для организации доступа и определения
+    доступных функций для пользователя.
 
     Args:
-        session: Сессия БД (внедряется через Depends)
+        session: Асинхронная сессия SQLAlchemy (внедряется через Depends)
 
     Returns:
-        GroupsResponse: Список групп
+        JSONResponse: Список групп действий с ID и названиями
     """
     api_logger.info("📋 Getting groups from Avanpost")
 
     try:
+        # Получение данных групп из репозитория
         groups_data = await _actions_repo.get_groups(
             session=session,
         )
 
+        # Преобразование данных в формат ответа
         groups = [
             GroupResponse(
                 id=g.get("id", 0),
@@ -250,33 +318,46 @@ async def get_groups(
     "/groups/{group_id}/menu",
     response_model=MenuItemsResponse,
     summary="Получить меню группы",
-    description="Возвращает пункты меню для указанной группы действий",
+    description="Возвращает пункты меню для указанной группы действий с поддержкой иерархии",
 )
 @log_exceptions(api_logger)
 async def get_menu_items(
     group_id: int,
     parent_item_id: int | None = Query(
         None,
-        description="ID родительского элемента (None для корневого меню)",
+        description="ID родительского элемента (None для получения корневого меню)",
     ),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
-    Получение списка действий для группы действий.
+    Получение иерархического списка действий для группы.
+
+    Позволяет получить как корневое меню (parent_item_id=None),
+    так и подменю для конкретного пункта.
 
     Args:
-        group_id: ID группы
-        parent_item_id: ID родительского элемента (опционально)
-        session: Сессия БД (внедряется через Depends)
+        group_id: ID группы действий (из пути)
+        parent_item_id: ID родительского пункта меню (параметр запроса, опционально)
+        session: Асинхронная сессия SQLAlchemy (внедряется через Depends)
 
     Returns:
-        MenuItemsResponse: Список пунктов меню
+        JSONResponse: Список пунктов меню текущего уровня
+
+    Raises:
+        HTTPException: При невалидном ID группы
+
+    Notes:
+        - Для получения корневого меню передайте parent_item_id=None
+        - Для получения подменю передайте ID родительского пункта
+        - Пункты содержат флаг has_subitems для определения наличия дочерних элементов
+        - Все названия возвращаются на русском языке (lang_code="RU")
     """
     api_logger.info(f"📋 Getting menu items for group {group_id}, parent={parent_item_id}")
 
     _validate_group_id(group_id)
 
     try:
+        # Получение пунктов меню из репозитория
         items_data = await _actions_repo.get_menu_items(
             session=session,
             group_id=group_id,
@@ -284,6 +365,7 @@ async def get_menu_items(
             lang_code="RU",
         )
 
+        # Преобразование данных в формат ответа
         items = [
             MenuItemResponse(
                 id=item.get("id", 0),
@@ -326,7 +408,7 @@ async def get_menu_items(
     "/groups/{group_id}/items/{item_id}/has-subitems",
     response_model=CheckSubitemsResponse,
     summary="Проверить наличие дочерних элементов",
-    description="Проверяет, есть ли у пункта меню дочерние элементы",
+    description="Проверяет, есть ли у указанного пункта меню дочерние элементы",
 )
 @log_exceptions(api_logger)
 async def check_has_subitems(
@@ -335,15 +417,21 @@ async def check_has_subitems(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
-    Проверка наличия дочерних элементов у действия группы.
+    Проверка наличия дочерних элементов у пункта меню.
+
+    Используется для определения необходимости отображать кнопку
+    перехода на следующий уровень меню.
 
     Args:
-        group_id: ID группы
-        item_id: ID пункта меню
-        session: Сессия БД (внедряется через Depends)
+        group_id: ID группы действий (из пути)
+        item_id: ID проверяемого пункта меню (из пути)
+        session: Асинхронная сессия SQLAlchemy (внедряется через Depends)
 
     Returns:
-        CheckSubitemsResponse: Результат проверки
+        JSONResponse: Результат проверки с булевым флагом has_subitems
+
+    Raises:
+        HTTPException: При невалидных ID группы или пункта
     """
     api_logger.info(f"🔍 Checking subitems for group {group_id}, item {item_id}")
 
@@ -351,6 +439,7 @@ async def check_has_subitems(
     _validate_item_id(item_id)
 
     try:
+        # Проверка наличия дочерних элементов через репозиторий
         has_subitems = await _actions_repo.has_subitems(
             session=session,
             group_id=group_id,
@@ -387,23 +476,28 @@ async def check_has_subitems(
 @router.get(
     "/health",
     summary="Проверка доступности Avanpost",
-    description="Проверяет подключение к базе данных Avanpost",
+    description="Проверяет подключение к базе данных Avanpost для мониторинга",
 )
 @log_exceptions(api_logger)
 async def health_check_avanpost() -> JSONResponse:
     """
-    Проверка доступности Avanpost.
+    Проверка доступности базы данных Avanpost.
 
-    Использует существующий метод db_manager.check_connection()
-    для проверки подключения к БД Avanpost.
+    Используется для мониторинга и определения работоспособности
+    внешней системы Avanpost.
 
     Returns:
-        JSONResponse: Статус подключения
+        JSONResponse: Статус подключения с информацией о здоровье
+
+    Notes:
+        - Возвращает HTTP 200 при успешном подключении
+        - Возвращает HTTP 503 при недоступности базы данных
+        - Результат кешируется в db_manager
     """
     api_logger.info("🔍 Checking Avanpost health...")
 
     try:
-        # Используем существующий метод db_manager для проверки соединения
+        # Проверка подключения к базе данных Avanpost
         is_connected = await db_manager.check_connection("avanpost")
 
         if is_connected:
@@ -442,7 +536,7 @@ async def health_check_avanpost() -> JSONResponse:
         )
 
 
-# ============ Вспомогательные функции ============
+# ============ Вспомогательные функции (для внутреннего использования) ============
 
 
 async def _build_menu_tree(
@@ -455,15 +549,23 @@ async def _build_menu_tree(
     """
     Рекурсивное построение дерева меню.
 
+    Используется для построения полной иерархической структуры меню
+    в один запрос.
+
     Args:
-        session: Сессия БД
-        group_id: ID группы
+        session: Асинхронная сессия SQLAlchemy
+        group_id: ID группы действий
         items: Список элементов текущего уровня
-        current_depth: Текущая глубина
-        max_depth: Максимальная глубина
+        current_depth: Текущая глубина вложенности (начинается с 0)
+        max_depth: Максимальная глубина для построения
 
     Returns:
-        list[dict]: Дерево меню
+        list[dict]: Дерево меню с вложенными дочерними элементами
+
+    Notes:
+        - Рекурсивно обходит меню до достижения max_depth
+        - Каждый узел содержит id, name, parent_id, children, has_children
+        - Не загружает более max_depth уровней для защиты от бесконечной рекурсии
     """
     if current_depth >= max_depth or not items:
         return []
@@ -477,7 +579,9 @@ async def _build_menu_tree(
             "parent_id": item.get("parent_id"),
         }
 
+        # Если есть подэлементы и не достигли максимальной глубины
         if item.get("has_subitems", False) and current_depth < max_depth - 1:
+            # Загружаем дочерние элементы
             children = await _actions_repo.get_menu_items(
                 session=session,
                 group_id=group_id,
@@ -485,6 +589,7 @@ async def _build_menu_tree(
                 lang_code="RU",
             )
 
+            # Рекурсивно строим поддерево
             node["children"] = await _build_menu_tree(
                 session=session,
                 group_id=group_id,

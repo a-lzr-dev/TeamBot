@@ -12,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import NullPool
 
 from ..config import settings
-from ..exceptions import log_exceptions
 from ..logger import db_logger
 from ..models import BaseModel
+from ..utils.decorators import log_exceptions
 
 
 class DBType(StrEnum):
@@ -181,7 +181,11 @@ class DBManager:
         return self._initialized
 
     @asynccontextmanager
-    async def get_session(self, db_name: str | None = None) -> AsyncGenerator[AsyncSession]:
+    async def get_session(
+        self,
+        db_name: str | None = None,
+        show_logs: bool = True,
+    ) -> AsyncGenerator[AsyncSession]:
         """Получение сессии для указанной БД"""
         engine = self.get_engine(db_name) if db_name else self.primary
 
@@ -192,12 +196,16 @@ class DBManager:
         try:
             session = engine.session_factory()
             self._session_counter += 1
-            db_logger.debug(f"🔄 Session created for '{db_name or self._primary_name}' (total={self._session_counter})")
+            if show_logs:
+                db_logger.debug(
+                    f"🔄 Session created for '{db_name or self._primary_name}' (total={self._session_counter})"
+                )
 
             yield session
 
             await session.commit()
-            db_logger.debug("✅ Session committed")
+            if show_logs:
+                db_logger.debug("✅ Session committed")
 
         except Exception as e:
             db_logger.error(f"❌ Session error: {e}", exc_info=True)
@@ -207,7 +215,8 @@ class DBManager:
         finally:
             if session:
                 await session.close()
-                db_logger.debug("🔒 Session closed")
+                if show_logs:
+                    db_logger.debug("🔒 Session closed")
 
     @log_exceptions(db_logger)
     async def initialize_all(self) -> None:

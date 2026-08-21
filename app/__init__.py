@@ -12,6 +12,14 @@ from .services import (
     notification_service,
     reminder_service,
 )
+from .utils.decorators import (
+    handle_exception,
+    log_exceptions,
+    retry_on_failure,
+    robust_operation,
+    silent_retry,
+    with_retry_and_log,
+)
 
 __all__ = [
     # Логеры
@@ -38,4 +46,11 @@ __all__ = [
     "reminder_service",
     "NotificationService",
     "notification_service",
+    # Декораторы
+    "log_exceptions",
+    "handle_exception",
+    "retry_on_failure",
+    "with_retry_and_log",
+    "silent_retry",
+    "robust_operation",
 ]

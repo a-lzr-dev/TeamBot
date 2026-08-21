@@ -106,7 +106,7 @@ check_database() {
     if [ -n "$DB_MAIN_HOST" ] && [ -n "$DB_MAIN_PORT" ]; then
         log_debug "Проверка PostgreSQL: $DB_MAIN_HOST:$DB_MAIN_PORT"
         
-        # Используем python для проверки через asyncpg
+        # Использование python для проверки через asyncpg
         python3 -c "
 import asyncio
 import asyncpg

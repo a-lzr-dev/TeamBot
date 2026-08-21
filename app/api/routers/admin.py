@@ -1,344 +1,538 @@
-from typing import Any
+"""
+Модуль маршрутов для работы с ошибками.
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+Предоставляет API эндпоинты для:
+- Регистрации внешних ошибок из других систем
+- Решения и переоткрытия ошибок
+- Получения статистики по ошибкам
+- Управления настройками уведомлений об ошибках
+- Генерации отчетов об ошибках
+"""
+
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...bot.dependencies import get_bot_manager
-from ...db import UserRepository, db_manager
-from ...db.repositories import StatsRepository
-from ...exceptions import log_exceptions
+from ...db.repositories import ErrorRepository, NotificationSettingsRepository
 from ...logger import api_logger
-from ...utils.datetime import get_timestamp
+from ...models import ErrorCategory, ErrorSeverity
+from ...services import error_service
+from ...utils import get_timestamp
+from ...utils.decorators import log_exceptions
 from ..dependencies import get_session
 
-router = APIRouter(tags=["Admin"])
+# Создание роутера с префиксом /errors
+# Все эндпоинты будут доступны по пути /api/v1/errors
+router = APIRouter(prefix="/errors", tags=["Errors"])
 
 # Репозитории (создаем один раз на уровне модуля)
-_user_repo = UserRepository()
-_stats_repo = StatsRepository()
+_error_repo = ErrorRepository()
+_settings_repo = NotificationSettingsRepository()
 
 
-class HealthResponse(BaseModel):
-    """Модель ответа для health check"""
+class ErrorRequest(BaseModel):
+    """Модель запроса для внешней ошибки"""
 
-    status: str = Field(..., description="Статус API")
-    timestamp: str = Field(..., description="Время проверки")
-
-
-class DatabaseHealthResponse(BaseModel):
-    """Модель ответа для проверки БД"""
-
-    status: str = Field(..., description="Статус сервиса (ready/not ready)")
-    database: str = Field(..., description="Статус подключения к БД (connected/disconnected)")
-    timestamp: str = Field(..., description="Время проверки")
-
-
-class ServiceStatusResponse(BaseModel):
-    """Модель статуса сервиса"""
-
-    service: str = Field(..., description="Название сервиса")
-    status: str = Field(..., description="Статус сервиса (ok/error/unavailable)")
-    details: dict[str, Any] | None = Field(None, description="Дополнительная информация")
+    error_code: str = Field(..., description="Код ошибки", min_length=1, max_length=100)
+    error_message: str = Field(..., description="Сообщение об ошибке", min_length=1)
+    source_system: str = Field(..., description="Система-источник", min_length=1, max_length=100)
+    source_module: str | None = Field(None, description="Модуль-источник", max_length=100)
+    user_id: int | None = Field(None, description="ID пользователя, у которого возникла ошибка")
+    user_login: str | None = Field(None, description="Логин пользователя")
+    category: ErrorCategory = Field(ErrorCategory.EXTERNAL, description="Категория ошибки")
+    severity: ErrorSeverity = Field(ErrorSeverity.ERROR, description="Степень серьезности")
+    details: str | None = Field(None, description="Детали ошибки")
+    chat_ids: list[int] | None = Field(None, description="Список ID чатов для отправки сообщений")
+    send_to_telegram: bool = Field(True, description="Отправить сообщение в Telegram")
 
 
-class FullHealthResponse(BaseModel):
-    """Модель полной проверки здоровья"""
+class ErrorResolveRequest(BaseModel):
+    """Модель запроса для решения ошибки"""
 
-    api: ServiceStatusResponse
-    database: ServiceStatusResponse
-    telegram: ServiceStatusResponse
-    timestamp: str = Field(..., description="Время проверки")
-    overall_status: str = Field(..., description="Общий статус (healthy/degraded/unhealthy)")
+    resolved_by: int = Field(..., description="ID пользователя, который решает ошибку")
+    check_procedure: str | None = Field(None, description="Хранимая процедура для проверки")
 
 
-class StatsResponse(BaseModel):
-    """Модель статистики"""
+class ErrorFilterRequest(BaseModel):
+    """Модель запроса для фильтра ошибок"""
 
-    database: dict[str, Any] = Field(..., description="Статистика БД")
-    telegram: dict[str, Any] = Field(..., description="Статистика Telegram")
-    timestamp: str = Field(..., description="Время получения статистики")
+    chat_id: int = Field(..., description="ID чата")
+    pattern: str = Field(..., description="Шаблон для фильтрации")
+    pattern_type: str = Field("contains", description="Тип шаблона: contains, exact, regex")
+    category: ErrorCategory | None = Field(None, description="Категория ошибки")
+    error_code: str | None = Field(None, description="Код ошибки")
+    source_system: str | None = Field(None, description="Система-источник")
+    is_regex: bool = Field(False, description="Использовать регулярное выражение")
+    description: str | None = Field(None, description="Описание фильтра")
 
 
-# ============ Вспомогательные функции ============
-def create_service_status(service: str, status: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Создание объекта статуса сервиса"""
-    return {"service": service, "status": status, "details": details or {}}
+class ChatNotificationSettingsRequest(BaseModel):
+    """Модель запроса для настроек уведомлений"""
+
+    chat_id: int = Field(..., description="ID чата")
+    silence_start: str | None = Field(None, description="Начало тишины (HH:MM)")
+    silence_end: str | None = Field(None, description="Конец тишины (HH:MM)")
+    silence_enabled: bool = Field(False, description="Включить тишину")
+    notify_errors: bool = Field(True, description="Уведомлять об ошибках")
+    notify_periodic_tasks: bool = Field(True, description="Уведомлять о периодических задачах")
+    notify_task_execution: bool = Field(True, description="Уведомлять о выполнении задач")
+    notify_system: bool = Field(True, description="Уведомлять о системных событиях")
+    notification_level: ErrorSeverity = Field(ErrorSeverity.ERROR, description="Уровень уведомлений")
+    grouping_enabled: bool = Field(True, description="Группировать ошибки")
+    grouping_window_minutes: int = Field(60, description="Окно группировки в минутах")
+    auto_reports_enabled: bool = Field(True, description="Включить автоматические отчеты")
+    auto_report_interval: int = Field(60, description="Интервал отчетов в минутах")
+    auto_report_hour_start: int = Field(9, description="Начало рабочего времени")
+    auto_report_hour_end: int = Field(18, description="Конец рабочего времени")
 
 
 # ============ Эндпоинты ============
-@router.get(
-    "/health",
-    response_model=HealthResponse,
-    summary="Проверка здоровья API",
-    description="Простая проверка, что API работает",
-    tags=["Health"],
+
+
+@router.post(
+    "/external",
+    summary="Зарегистрировать внешнюю ошибку",
+    description="Регистрация ошибки из внешней системы. Отправка в Telegram происходит автоматически через LogHandlerService.",
 )
 @log_exceptions(api_logger)
-async def health_check() -> dict[str, Any]:
-    """Health check эндпоинт"""
-    api_logger.debug("✅ Health check requested")
-    return {"status": "ok", "timestamp": get_timestamp()}
+async def register_external_error(
+    request: ErrorRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Регистрация внешней ошибки.
 
+    Args:
+        request: Данные ошибки
+        session: Сессия БД
 
-@router.get("/ping", summary="Ping эндпоинт", description="Простой пинг для проверки доступности", tags=["Health"])
-@log_exceptions(api_logger)
-async def ping() -> dict[str, str]:
-    """Простой пинг для проверки доступности"""
-    return {"pong": "ok", "timestamp": get_timestamp()}
+    Returns:
+        JSONResponse с результатом регистрации
+    """
+    api_logger.info(f"📝 Registering external error: {request.error_code} from {request.source_system}")
 
-
-@router.get(
-    "/ready",
-    summary="Проверка готовности",
-    description="Проверка готовности для Kubernetes/оркестрации",
-    tags=["Health"],
-)
-@log_exceptions(api_logger)
-async def readiness() -> JSONResponse:
-    """Проверка готовности всех сервисов"""
-    api_logger.debug("🔍 Readiness check requested")
-
-    errors = []
-
-    # Проверка БД через db_manager
     try:
-        is_connected = await db_manager.check_connection()
-        if not is_connected:
-            errors.append("database unavailable")
-            api_logger.warning("⚠️ Database unavailable")
-    except Exception as e:
-        api_logger.error(f"❌ Database check failed: {e}")
-        errors.append(f"database error: {str(e)}")
+        chat_ids = request.chat_ids or []
 
-    # Проверка Bot
-    try:
-        bot_manager = get_bot_manager()
-        status = await bot_manager.get_status()
-        if not status.get("is_running", False):
-            errors.append("telegram bot not running")
-            api_logger.warning("⚠️ Telegram bot not running")
-    except Exception as e:
-        api_logger.error(f"❌ Telegram check failed: {e}")
-        errors.append(f"telegram error: {str(e)}")
+        if chat_ids:
+            api_logger.info(f"📨 Will send to {len(chat_ids)} specified chats: {chat_ids}")
+        else:
+            api_logger.debug("ℹ️ No chat_ids specified, error will be handled by LogHandlerService")
 
-    if errors:
-        return JSONResponse(
-            status_code=503, content={"status": "not ready", "reason": errors, "timestamp": get_timestamp()}
+        # Логирование ошибки через сервис ошибок
+        error = await error_service.log_external_error(
+            error_code=request.error_code,
+            error_message=request.error_message,
+            source_system=request.source_system,
+            user_id=request.user_id,
+            user_login=request.user_login,
+            category=request.category,
+            severity=request.severity,
+            details=request.details,
+            source_module=request.source_module,
+            chat_ids=chat_ids,
+            send_to_telegram=request.send_to_telegram,
+            session=session,
         )
 
-    api_logger.info("✅ All services ready")
-    return JSONResponse(status_code=200, content={"status": "ready", "timestamp": get_timestamp()})
+        # Получение количества связанных сообщений
+        message_count = await _error_repo.get_linked_message_count(session, error.FID)
 
+        api_logger.info(f"✅ Error saved with ID: {error.FID}, linked messages: {message_count}")
 
-@router.get(
-    "/health/db",
-    response_model=DatabaseHealthResponse,
-    summary="Проверка подключения к БД",
-    description="Проверяет доступность базы данных",
-    tags=["Health", "Database"],
-)
-@log_exceptions(api_logger)
-async def database_health_check() -> JSONResponse:
-    """Проверка подключения к базе данных"""
-    api_logger.debug("🔍 Database health check requested")
-
-    try:
-        # ИСПОЛЬЗУЕМ db_manager.check_connection() ВМЕСТО ПРЯМОГО SQL
-        is_connected = await db_manager.check_connection()
-
-        if is_connected:
-            api_logger.debug("✅ Database connection OK")
-            return JSONResponse(
-                status_code=200, content={"status": "ready", "database": "connected", "timestamp": get_timestamp()}
-            )
-        else:
-            api_logger.warning("⚠️ Database connection failed")
-            return JSONResponse(
-                status_code=503,
-                content={"status": "not ready", "database": "disconnected", "timestamp": get_timestamp()},
-            )
+        return JSONResponse(
+            status_code=201,
+            content={
+                "success": True,
+                "error_id": error.FID,
+                "linked_messages": message_count,
+                "chats_sent": chat_ids if chat_ids else [],
+                "message": "Error registered" + (" and message sent" if message_count > 0 else ""),
+                "timestamp": get_timestamp(),
+            },
+        )
 
     except Exception as e:
-        api_logger.error(f"❌ Database health check error: {e}", exc_info=True)
-        # ИСПОЛЬЗУЕМ DatabaseError ИЗ exceptions
-        from ...exceptions import DatabaseError
-
-        raise DatabaseError(f"Database health check failed: {e}") from e
+        api_logger.error(f"❌ Failed to register external error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get(
-    "/health/full",
-    response_model=FullHealthResponse,
-    summary="Полная проверка всех сервисов",
-    description="Проверяет состояние API, БД и Telegram",
-    tags=["Health"],
+@router.post(
+    "/{error_id}/resolve",
+    summary="Решение ошибки",
+    description="Проверяет исчезновение ошибки и отмечает её как решенную",
 )
 @log_exceptions(api_logger)
-async def full_health_check(
+async def resolve_error(
+    error_id: int,
+    request: ErrorResolveRequest,
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Комплексная проверка всех сервисов"""
-    api_logger.info("🔍 Full health check requested")
+) -> JSONResponse:
+    """
+    Решение ошибки.
 
-    # Статус API
-    api_status = create_service_status("api", "ok", {"version": "1.0.0"})
+    Args:
+        error_id: ID ошибки
+        request: Данные запроса (кто решает, процедура проверки)
+        session: Сессия БД
 
-    # Статус БД через db_manager
-    db_details = {}
-    db_status = "ok"
+    Returns:
+        JSONResponse с результатом решения
+    """
+    api_logger.info(f"🔧 Resolving error {error_id} by user {request.resolved_by}")
+
     try:
-        # ИСПОЛЬЗУЕМ db_manager.check_connection() ВМЕСТО ПРЯМОГО SQL
-        is_connected = await db_manager.check_connection()
-        if is_connected:
-            try:
-                # Используем db_manager.get_stats() для получения статистики
-                stats = await db_manager.get_stats()
-                db_details.update(stats)
+        success, message = await error_service.check_and_resolve_error(
+            error_id=error_id,
+            resolved_by=request.resolved_by,
+            check_procedure=request.check_procedure,
+            session=session,
+        )
 
-                # Получение количества авторизованных пользователей через репозиторий
-                db_details["authorized_users"] = await _user_repo.get_authorized_users_count(session)
-
-            except Exception as e:
-                api_logger.warning(f"Could not get DB stats: {e}")
-                db_details["stats_error"] = str(e)
+        if success:
+            api_logger.info(f"✅ Error {error_id} resolved successfully")
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "message": message, "timestamp": get_timestamp()},
+            )
         else:
-            db_status = "error"
-            db_details["error"] = "Database connection failed"
+            api_logger.warning(f"⚠️ Failed to resolve error {error_id}: {message}")
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": message, "timestamp": get_timestamp()},
+            )
+
     except Exception as e:
-        db_status = "error"
-        db_details["error"] = str(e)
-        api_logger.error(f"DB health check failed: {e}")
+        api_logger.error(f"❌ Failed to resolve error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
-    database_status = create_service_status("database", db_status, db_details)
 
-    # Статус Bot
-    bot_details = {}
-    bot_status = "ok"
+@router.post(
+    "/{error_id}/reopen",
+    summary="Переоткрыть ошибку",
+    description="Переоткрывает ранее решенную ошибку",
+)
+@log_exceptions(api_logger)
+async def reopen_error(
+    error_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Переоткрытие ранее решенной ошибки.
+
+    Args:
+        error_id: ID ошибки
+        session: Сессия БД
+
+    Returns:
+        JSONResponse с результатом переоткрытия
+    """
+    api_logger.info(f"🔁 Reopening error {error_id}")
+
     try:
-        bot_manager = get_bot_manager()
-        status_info = await bot_manager.get_status()
-        bot_details = {
-            "is_running": status_info.get("is_running", False),
-            "is_initialized": status_info.get("is_initialized", False),
-            "tasks_count": status_info.get("tasks_count", 0),
-        }
-        if not status_info.get("is_running", False):
-            bot_status = "error"
-            bot_details["error"] = "Bot is not running"
+        success, message = await error_service.reopen_error(
+            error_id=error_id,
+            session=session,
+        )
+
+        if success:
+            api_logger.info(f"✅ Error {error_id} reopened successfully")
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "message": message, "timestamp": get_timestamp()},
+            )
+        else:
+            api_logger.warning(f"⚠️ Failed to reopen error {error_id}: {message}")
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": message, "timestamp": get_timestamp()},
+            )
+
     except Exception as e:
-        bot_status = "error"
-        bot_details["error"] = str(e)
-        api_logger.error(f"Bot health check failed: {e}")
-
-    bot_status_dict = create_service_status("bot", bot_status, bot_details)
-
-    # Определение общего статуса
-    statuses = [api_status["status"], database_status["status"], bot_status_dict["status"]]
-    if all(s == "ok" for s in statuses):
-        overall = "healthy"
-    elif any(s == "error" for s in statuses):
-        overall = "unhealthy"
-    else:
-        overall = "degraded"
-
-    response = {
-        "api": api_status,
-        "database": database_status,
-        "telegram": bot_status,
-        "timestamp": get_timestamp(),
-        "overall_status": overall,
-    }
-
-    if overall == "healthy":
-        api_logger.info("✅ All services healthy")
-    elif overall == "degraded":
-        api_logger.warning("⚠️ Some services degraded")
-    else:
-        api_logger.error("❌ Services unhealthy")
-
-    return response
+        api_logger.error(f"❌ Failed to reopen error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get(
     "/stats",
-    response_model=StatsResponse,
-    summary="Получение статистики",
-    description="Получение статистики по БД и Telegram",
-    tags=["Stats"],
+    summary="Статистика ошибок",
+    description="Получение статистики по ошибкам за период",
 )
 @log_exceptions(api_logger)
-async def get_stats(
+async def get_error_stats(
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+    category: ErrorCategory | None = None,
     session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Получение статистики всех сервисов"""
-    api_logger.info("📊 Stats requested")
+) -> JSONResponse:
+    """
+    Получение статистики ошибок.
 
-    stats = {"database": {}, "telegram": {}, "timestamp": get_timestamp()}
+    Args:
+        start_date: Начальная дата
+        end_date: Конечная дата
+        category: Категория ошибок
+        session: Сессия БД
 
-    # Статистика БД через репозиторий
+    Returns:
+        JSONResponse со статистикой
+    """
+    api_logger.info("📊 Getting error stats")
+
     try:
-        # Используем StatsRepository для получения полной статистики
-        db_stats = await _stats_repo.get_full_stats(session)
-        stats["database"] = db_stats
-        api_logger.debug("✅ Database stats collected")
+        stats = await error_service.get_error_stats(
+            start_date=start_date,
+            end_date=end_date,
+            category=category,
+            session=session,
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "stats": stats, "timestamp": get_timestamp()},
+        )
+
     except Exception as e:
-        api_logger.error(f"❌ Failed to get database stats: {e}")
-        stats["database"] = {"error": str(e)}
-
-    # Статистика Bot
-    try:
-        bot_manager = get_bot_manager()
-        bot_stats = await bot_manager.get_status()
-        stats["telegram"] = bot_stats
-        api_logger.debug("✅ Bot stats collected")
-    except Exception as e:
-        api_logger.error(f"❌ Failed to get bot stats: {e}")
-        stats["telegram"] = {"error": str(e)}
-
-    return stats
+        api_logger.error(f"❌ Failed to get error stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/metrics", summary="Метрики API", description="Получение метрик API (только для админов)", tags=["Stats"])
-@log_exceptions(api_logger)
-async def get_metrics(request: Request) -> dict[str, Any]:
-    """Получение метрик API"""
-    api_logger.info("📊 Metrics requested")
-
-    metrics = {}
-
-    if hasattr(request.app.state, "metrics_middleware"):
-        try:
-            metrics = request.app.state.metrics_middleware.get_metrics()
-            api_logger.debug("✅ Metrics collected from middleware")
-        except Exception as e:
-            api_logger.error(f"❌ Failed to get metrics from middleware: {e}")
-            metrics["error"] = str(e)
-    else:
-        metrics["message"] = "Metrics middleware not configured"
-
-    return {"metrics": metrics, "timestamp": get_timestamp()}
-
-
-@router.post(
-    "/metrics/reset", summary="Сброс метрик", description="Сброс метрик API (только для админов)", tags=["Stats"]
+@router.get(
+    "/user/{user_id}/stats",
+    summary="Статистика пользователя",
+    description="Статистика пользователя по решению ошибок",
 )
 @log_exceptions(api_logger)
-async def reset_metrics(request: Request) -> dict[str, str]:
-    """Сброс метрик API"""
-    api_logger.info("🔄 Metrics reset requested")
+async def get_user_stats(
+    user_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Получение статистики пользователя по решению ошибок.
 
-    if hasattr(request.app.state, "metrics_middleware"):
-        try:
-            request.app.state.metrics_middleware.reset_metrics()
-            api_logger.info("✅ Metrics reset successfully")
-            return {"status": "success", "message": "Metrics reset successfully", "timestamp": get_timestamp()}
-        except Exception as e:
-            api_logger.error(f"❌ Failed to reset metrics: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to reset metrics: {e}") from e
-    else:
-        raise HTTPException(status_code=404, detail="Metrics middleware not configured")
+    Args:
+        user_id: ID пользователя
+        session: Сессия БД
+
+    Returns:
+        JSONResponse со статистикой пользователя
+    """
+    api_logger.info(f"📊 Getting user stats for user {user_id}")
+
+    try:
+        stats = await error_service.get_user_stats(
+            user_id=user_id,
+            session=session,
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "stats": stats, "timestamp": get_timestamp()},
+        )
+
+    except Exception as e:
+        api_logger.error(f"❌ Failed to get user stats: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.put(
+    "/settings",
+    summary="Настройки уведомлений",
+    description="Обновление настроек уведомлений для чата",
+)
+@log_exceptions(api_logger)
+async def update_notification_settings(
+    request: ChatNotificationSettingsRequest,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Обновление настроек уведомлений для чата.
+
+    Args:
+        request: Новые настройки
+        session: Сессия БД
+
+    Returns:
+        JSONResponse с результатом обновления
+    """
+    api_logger.info(f"⚙️ Updating notification settings for chat {request.chat_id}")
+
+    try:
+        # Проверка наличия настроек для чата
+        settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=request.chat_id)
+
+        if settings_obj:
+            # Обновление существующих настроек
+            updated_settings = await _settings_repo.update(
+                session=session,
+                chat_id=request.chat_id,
+                silence_start=request.silence_start,
+                silence_end=request.silence_end,
+                silence_enabled=request.silence_enabled,
+                notify_errors=request.notify_errors,
+                notify_periodic_tasks=request.notify_periodic_tasks,
+                notify_task_execution=request.notify_task_execution,
+                notify_system=request.notify_system,
+                notification_level=request.notification_level,
+                grouping_enabled=request.grouping_enabled,
+                grouping_window_minutes=request.grouping_window_minutes,
+                auto_reports_enabled=request.auto_reports_enabled,
+                auto_report_interval=request.auto_report_interval,
+                auto_report_hour_start=request.auto_report_hour_start,
+                auto_report_hour_end=request.auto_report_hour_end,
+            )
+
+            if updated_settings is None:
+                api_logger.error(f"❌ Failed to update settings for chat {request.chat_id}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "message": "Failed to update settings", "timestamp": get_timestamp()},
+                )
+
+            api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
+        else:
+            # Создание новых настроек
+            await _settings_repo.create(
+                session=session,
+                chat_id=request.chat_id,
+                silence_start=request.silence_start,
+                silence_end=request.silence_end,
+                silence_enabled=request.silence_enabled,
+                notify_errors=request.notify_errors,
+                notify_periodic_tasks=request.notify_periodic_tasks,
+                notify_task_execution=request.notify_task_execution,
+                notify_system=request.notify_system,
+                notification_level=request.notification_level,
+                grouping_enabled=request.grouping_enabled,
+                grouping_window_minutes=request.grouping_window_minutes,
+                auto_reports_enabled=request.auto_reports_enabled,
+                auto_report_interval=request.auto_report_interval,
+                auto_report_hour_start=request.auto_report_hour_start,
+                auto_report_hour_end=request.auto_report_hour_end,
+            )
+            api_logger.debug(f"ℹ️ Created new settings for chat {request.chat_id}")
+
+        await session.commit()
+
+        api_logger.info(f"✅ Notification settings updated for chat {request.chat_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "Settings updated successfully", "timestamp": get_timestamp()},
+        )
+
+    except Exception as e:
+        api_logger.error(f"❌ Failed to update notification settings: {e}", exc_info=True)
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get(
+    "/settings/{chat_id}",
+    summary="Получить настройки",
+    description="Получение настроек уведомлений для чата",
+)
+@log_exceptions(api_logger)
+async def get_notification_settings(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Получение настроек уведомлений для чата.
+
+    Args:
+        chat_id: ID чата
+        session: Сессия БД
+
+    Returns:
+        JSONResponse с настройками
+    """
+    api_logger.info(f"⚙️ Getting notification settings for chat {chat_id}")
+
+    try:
+        settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=chat_id)
+
+        if not settings_obj:
+            api_logger.warning(f"⚠️ Settings not found for chat {chat_id}")
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "Settings not found", "timestamp": get_timestamp()},
+            )
+
+        api_logger.info(f"✅ Settings retrieved for chat {chat_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "settings": {
+                    "silence_start": settings_obj.FSilenceStart,
+                    "silence_end": settings_obj.FSilenceEnd,
+                    "silence_enabled": settings_obj.FSilenceEnabled,
+                    "notify_errors": settings_obj.FNotifyErrors,
+                    "notify_periodic_tasks": settings_obj.FNotifyPeriodicTasks,
+                    "notify_task_execution": settings_obj.FNotifyTaskExecution,
+                    "notify_system": settings_obj.FNotifySystem,
+                    "notification_level": settings_obj.FNotificationLevel.value,
+                    "grouping_enabled": settings_obj.FGroupingEnabled,
+                    "grouping_window_minutes": settings_obj.FGroupingWindowMinutes,
+                    "auto_reports_enabled": settings_obj.FEnableAutoReports,
+                    "auto_report_interval": settings_obj.FAutoReportInterval,
+                    "auto_report_hour_start": settings_obj.FAutoReportHourStart,
+                    "auto_report_hour_end": settings_obj.FAutoReportHourEnd,
+                },
+                "timestamp": get_timestamp(),
+            },
+        )
+
+    except Exception as e:
+        api_logger.error(f"❌ Failed to get notification settings: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.get(
+    "/report/{chat_id}",
+    summary="Сгенерировать отчет",
+    description="Генерация автоматического отчета об ошибках для чата",
+)
+@log_exceptions(api_logger)
+async def generate_report(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    """
+    Генерация отчета об ошибках для чата.
+
+    Args:
+        chat_id: ID чата
+        session: Сессия БД
+
+    Returns:
+        JSONResponse с отчетом
+    """
+    api_logger.info(f"📊 Generating report for chat {chat_id}")
+
+    try:
+        from ...services.notification_service import notification_service
+
+        report = await notification_service.generate_auto_report(
+            chat_id=chat_id,
+            session=session,
+        )
+
+        api_logger.info(f"✅ Report generated for chat {chat_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "report": report, "timestamp": get_timestamp()},
+        )
+
+    except Exception as e:
+        api_logger.error(f"❌ Failed to generate report: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 __all__ = ["router"]

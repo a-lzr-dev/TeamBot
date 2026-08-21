@@ -1,3 +1,16 @@
+"""
+Модуль авторизации пользователей в Telegram боте.
+
+Отвечает за:
+1. Аутентификацию пользователей по номеру телефона
+2. Проверку пользователей через хранимую процедуру Avanpost
+3. Сохранение данных пользователей в БД
+4. Управление сессиями и кешем авторизации
+5. Обновление команд для авторизованных пользователей
+6. Фоновую синхронизацию данных пользователя
+7. Middleware для проверки авторизации
+"""
+
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
@@ -9,40 +22,58 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, TelegramObject
 
-from app.bot.dependencies import get_bot_manager
-from app.bot.keyboards import AuthKeyboard
-from app.config import settings
-from app.db import db_manager
-from app.db.repositories import AvanpostRepository, UserRepository
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
-from app.models.base import ErrorCategory, MessageActionType, MessageType
-from app.services.error_service import error_service
+from ....config import settings
+from ....db import db_manager
+from ....db.repositories import AvanpostRepository, UserRepository
+from ....logger import bot_logger
+from ....models.base import ErrorCategory, MessageActionType, MessageType
+from ....services.error_service import error_service
+from ....utils.decorators import log_exceptions
+from ...dependencies import get_bot_manager
+from ...keyboards import AuthKeyboard
 
+# Создание роутера для обработки команд и callback-запросов
 router = Router(name="aiogram_auth")
 
-# Репозитории (создаем один раз на уровне модуля)
-_user_repo = UserRepository()
-_avanpost_repo = AvanpostRepository()
+# Репозитории (создаем один раз на уровне модуля для переиспользования)
+_user_repo = UserRepository()  # Репозиторий для работы с пользователями
+_avanpost_repo = AvanpostRepository()  # Репозиторий для работы с Avanpost
 
 
 class AuthStates(StatesGroup):
-    """Состояния для аутентификации"""
+    """
+    Состояния для аутентификации пользователя.
 
-    waiting_for_contact = State()
-    authenticated = State()
+    Используются в FSM (Finite State Machine) для отслеживания
+    текущего этапа авторизации.
+    """
+
+    waiting_for_contact = State()  # Ожидание контакта от пользователя
+    authenticated = State()  # Пользователь авторизован
 
 
 # Хранилище для временного хранения данных авторизации
+# Ключ: ID пользователя в Telegram
+# Значение: словарь с данными авторизации (user_id, group_id, phone)
 _auth_cache: dict[int, dict[str, Any]] = {}
 
 
 async def is_user_authenticated(user_id: int) -> bool:
-    """Проверка, авторизован ли пользователь (есть ли связь с AvanpostUser)"""
+    """
+    Проверка, авторизован ли пользователь.
+
+    Проверяет наличие связи с AvanpostUser в базе данных.
+
+    Args:
+        user_id: ID пользователя в Telegram
+
+    Returns:
+        bool: True если пользователь авторизован, иначе False
+    """
     try:
         async with db_manager.get_session() as session:
-            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПРОВЕРКИ АВТОРИЗАЦИИ
-            return await _user_repo.is_user_authenticated(session, user_id)
+            result = await _user_repo.is_user_authenticated(session, user_id)
+            return bool(result)
     except Exception as e:
         bot_logger.error(f"❌ Failed to check authentication: {e}")
         return False
@@ -51,7 +82,18 @@ async def is_user_authenticated(user_id: int) -> bool:
 @router.message(Command("start"))
 @log_exceptions(bot_logger)
 async def cmd_start(message: Message, state: FSMContext) -> None:
-    """Обработчик команды /start - запрос верификации"""
+    """
+    Обработчик команды /start - запрос верификации.
+
+    Проверяет авторизацию пользователя и в зависимости от результата:
+    - Если авторизован: показывает приветствие и обновляет команды
+    - Если не авторизован: запрашивает контакт для верификации
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
+    # Проверка наличия пользователя
     if not message.from_user:
         await message.answer("❌ Не удалось определить пользователя.")
         return
@@ -80,6 +122,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
+        # Отправка приветственного сообщения
         await bot_manager.send_answer(
             text="👋 Добро пожаловать!\n\n"
             "✅ Вы уже авторизованы в системе.\n"
@@ -91,12 +134,12 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
         await state.set_state(AuthStates.authenticated)
 
-        # ИСПОЛЬЗУЕМ user_repo ДЛЯ ОБНОВЛЕНИЯ ВРЕМЕНИ АКТИВНОСТИ
+        # Обновление времени последней активности
         async with db_manager.get_session() as session:
             await _user_repo.update_last_activity(session, telegram_user_id)
         return
 
-    # Запрос контакта
+    # Если пользователь не авторизован - запрос контакта
     keyboard = AuthKeyboard.get_auth_request_keyboard()
 
     await state.set_state(AuthStates.waiting_for_contact)
@@ -124,11 +167,18 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "❌ Отмена")
 @log_exceptions(bot_logger)
 async def handle_cancel_auth(message: Message, state: FSMContext) -> None:
-    """Отмена авторизации через текстовую кнопку"""
+    """
+    Отмена авторизации через текстовую кнопку.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
     current_state = await state.get_state()
 
     if current_state == AuthStates.waiting_for_contact:
+        # Отмена авторизации
         await state.clear()
         await bot_manager.send_answer(
             text="❌ Верификация отменена.\n\nДля повторной попытки используйте /start",
@@ -138,6 +188,7 @@ async def handle_cancel_auth(message: Message, state: FSMContext) -> None:
             reply_markup=ReplyKeyboardRemove(),
         )
     else:
+        # Нет активной авторизации
         await bot_manager.send_answer(
             text="❌ Нет активной авторизации.",
             event=message,
@@ -150,9 +201,19 @@ async def handle_cancel_auth(message: Message, state: FSMContext) -> None:
 @router.message(F.contact)
 @log_exceptions(bot_logger)
 async def handle_contact(message: Message, state: FSMContext) -> None:
-    """Обработка полученного контакта"""
+    """
+    Обработка полученного контакта от пользователя.
+
+    Выполняет проверку номера телефона через хранимую процедуру Avanpost,
+    сохраняет данные пользователя в БД и выполняет авторизацию.
+
+    Args:
+        message: Сообщение с контактом
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка наличия пользователя
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -165,8 +226,10 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     telegram_user_id = message.from_user.id
     contact = message.contact
 
+    # Отображение toast-уведомления о начале проверки
     await bot_manager.send_toast(text="⏳ Проверка данных...", message=message)
 
+    # Проверка наличия номера телефона
     if not contact or not contact.phone_number:
         await bot_manager.send_answer(
             text="❌ Не удалось получить номер телефона. Попробуйте еще раз.",
@@ -176,6 +239,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Проверка, что пользователь отправляет свой собственный контакт
     if contact.user_id != telegram_user_id:
         await bot_manager.send_answer(
             text="⚠️ Пожалуйста, отправьте свой собственный контакт.\n\n"
@@ -186,18 +250,19 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Нормализация номера телефона
     phone_number = normalize_phone(contact.phone_number)
     bot_logger.info(f"📱 Received contact from user {telegram_user_id}: {phone_number}")
 
     try:
         # 1. Проверка пользователя через хранимую процедуру Avanpost
         async with db_manager.get_session("avanpost") as avanpost_session:
-            # ИСПОЛЬЗУЕМ avanpost_repo ДЛЯ ПРОВЕРКИ ПОЛЬЗОВАТЕЛЯ
             avanpost_user_id, menu_group_id, fk_contact = await _avanpost_repo.check_user_by_phone(
                 session=avanpost_session,
                 phone_number=phone_number,
             )
 
+        # Если пользователь не найден в системе Avanpost
         if not avanpost_user_id:
             keyboard = AuthKeyboard.get_auth_request_keyboard()
 
@@ -216,7 +281,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 
         # 2. Сохранение информации о пользователе в БД
         async with db_manager.get_session("main") as session:
-            # ИСПОЛЬЗУЕМ user_repo ДЛЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ
+            # Сохранение пользователя
             user = await _user_repo.save_user(
                 session=session,
                 user_id=telegram_user_id,
@@ -238,7 +303,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 )
                 return
 
-            # ИСПОЛЬЗУЕМ user_repo ДЛЯ СОЗДАНИЯ/ОБНОВЛЕНИЯ СВЯЗИ
+            # Создание или обновление связи с AvanpostUser
             success, avanpost_user = await _user_repo.create_or_update_avanpost_user_upsert(
                 session=session,
                 telegram_user_id=telegram_user_id,
@@ -258,7 +323,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 )
                 return
 
-            # Коммит выполняется внутри репозитория, но для надежности делаем явный
             await session.commit()
 
         # 3. Обновление кеша авторизации
@@ -268,6 +332,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             "phone": phone_number,
         }
 
+        # Установка состояния "авторизован"
         await state.set_state(AuthStates.authenticated)
 
         # 4. Запуск синхронизации пользовательских данных в фоне
@@ -278,7 +343,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             )
         )
 
-        # 5. Обновление команды для пользователя
+        # 5. Обновление команд для пользователя
         is_admin = telegram_user_id in settings.ADMIN_IDS
         try:
             await bot_manager.update_user_commands(telegram_user_id, is_admin)
@@ -299,14 +364,17 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         )
 
     except Exception as e:
+        # Обработка ошибок авторизации
         bot_logger.error(f"❌ Authentication error: {e}", exc_info=True)
 
+        # Логирование ошибки через error_service
         await error_service.log_error(
             error=e,
             component="auth",
             category=ErrorCategory.SYSTEM,
         )
 
+        # Отправка сообщения об ошибке пользователю
         await bot_manager.send_answer(
             text="❌ Произошла ошибка при авторизации.\n\n"
             "Пожалуйста, попробуйте позже или обратитесь к администратору.",
@@ -320,9 +388,18 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 @router.message(Command("logout"))
 @log_exceptions(bot_logger)
 async def cmd_logout(message: Message, state: FSMContext) -> None:
-    """Команда для выхода из системы"""
+    """
+    Команда для выхода из системы.
+
+    Выполняет выход пользователя, очищает кеш и сбрасывает команды.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка наличия пользователя
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -335,8 +412,8 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
     user_id = message.from_user.id
 
     try:
+        # Выход пользователя через репозиторий
         async with db_manager.get_session() as session:
-            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ВЫХОДА ИЗ СИСТЕМЫ
             success = await _user_repo.logout_user(session, user_id)
 
             if success:
@@ -345,19 +422,21 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
             else:
                 bot_logger.warning(f"⚠️ User {user_id} not found for logout")
 
-        # Очистка кеша
+        # Очистка кеша авторизации
         _auth_cache.pop(user_id, None)
         bot_manager.clear_user_cache(user_id)
 
-        # Сброс команд
+        # Сброс команд пользователя
         try:
             await bot_manager.reset_user_commands(user_id)
             bot_logger.info(f"✅ Commands reset for user {user_id}")
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to reset commands: {e}")
 
+        # Очистка состояния FSM
         await state.clear()
 
+        # Отправка сообщения об успешном выходе
         await bot_manager.send_answer(
             text="👋 Вы вышли из системы.\n\nДля повторной авторизации используйте /start",
             event=message,
@@ -366,6 +445,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
         )
 
     except Exception as e:
+        # Обработка ошибок выхода
         bot_logger.error(f"❌ Logout error: {e}", exc_info=True)
 
         await bot_manager.send_answer(
@@ -379,11 +459,22 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 @router.message(Command("actions"))
 @log_exceptions(bot_logger)
 async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
-    """Команда /actions с использованием group_id из авторизации"""
+    """
+    Команда /actions с использованием group_id из авторизации.
+
+    Проверяет авторизацию пользователя и передает управление
+    обработчику команды /actions с переданным group_id.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
+    # Отложенный импорт для избежания циклических зависимостей
     from .actions import cmd_actions
 
     bot_manager = get_bot_manager()
 
+    # Проверка наличия пользователя
     if not message.from_user:
         await bot_manager.send_answer(
             text="❌ Не удалось определить пользователя.",
@@ -395,6 +486,7 @@ async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
 
     user_id = message.from_user.id
 
+    # Проверка авторизации пользователя
     if not await is_user_authenticated(user_id):
         await bot_manager.send_answer(
             text="🔐 **Требуется авторизация**\n\n"
@@ -406,11 +498,13 @@ async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Получение group_id из кеша авторизации
     user_data = _auth_cache.get(user_id)
 
     if user_data and user_data.get("group_id"):
         await state.update_data(use_group_id=user_data.get("group_id"))
 
+    # Вызов обработчика команды /actions
     await cmd_actions(message, state)
 
 
@@ -423,8 +517,19 @@ async def auth_middleware(
     data: dict[str, Any],
 ) -> Any:
     """
-    Мидлвар для проверки авторизации пользователя.
+    Middleware для проверки авторизации пользователя.
+
     Проверяет авторизацию для всех команд (кроме /start, /help, /logout).
+    Если пользователь не авторизован, отправляет сообщение с требованием
+    авторизации и прерывает выполнение команды.
+
+    Args:
+        handler: Обработчик события
+        event: Событие от пользователя
+        data: Данные события
+
+    Returns:
+        Any: Результат выполнения обработчика или None при ошибке
     """
     bot_manager = get_bot_manager()
 
@@ -444,6 +549,7 @@ async def auth_middleware(
 
             user_id = user.id
 
+            # Если пользователь не авторизован
             if not await is_user_authenticated(user_id):
                 bot_manager = get_bot_manager()
                 keyboard = AuthKeyboard.get_auth_needed_keyboard()
@@ -469,6 +575,7 @@ async def auth_middleware(
                 await bot_manager.send_toast(text="🔐 Требуется авторизация", event=event)
                 return None
 
+    # Если все проверки пройдены - выполнение обработчика
     return await handler(event, data)
 
 
@@ -476,21 +583,40 @@ async def auth_middleware(
 
 
 def normalize_phone(phone: str) -> str:
-    """Нормализация номера телефона к формату +XXXXXXXXXXX"""
+    """
+    Нормализация номера телефона к формату +XXXXXXXXXXX.
+
+    Выполняет:
+    - Удаление всех нецифровых символов
+    - Замену '8' на '7' в начале номера (для российских номеров)
+    - Добавление '+' перед номером
+
+    Args:
+        phone: Исходный номер телефона
+
+    Returns:
+        str: Нормализованный номер телефона
+    """
+    # Удаление всех нецифровых символов
     digits = re.sub(r"\D", "", phone)
 
+    # Замена '8' на '7' в начале номера
     if digits.startswith("8"):
         digits = "7" + digits[1:]
 
+    # Если номер начинается с '7' - добавляем '+'
     if digits.startswith("7"):
         return "+" + digits
 
+    # Если номер уже начинается с '+7' - возвращаем как есть
     if phone.startswith("+7"):
         return phone
 
+    # Если номер уже начинается с '+' - возвращаем как есть
     if phone.startswith("+"):
         return phone
 
+    # Возвращение исходного номера
     return phone
 
 
@@ -498,17 +624,28 @@ async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, i
     """
     Проверка пользователя через хранимую процедуру Avanpost.
 
+    Args:
+        phone_number: Номер телефона для проверки
+
     Returns:
-        tuple[int | None, int | None, int | None]: (avanpost_user_id, menu_group_id, fk_contact)
+        tuple[int | None, int | None, int | None]:
+            (avanpost_user_id, menu_group_id, fk_contact) или (None, None, None) при ошибке
     """
     try:
+        # Нормализация номера телефона
         normalized_phone = normalize_phone(phone_number)
 
+        # Вызов хранимой процедуры
         async with db_manager.get_session("avanpost") as session:
-            # ИСПОЛЬЗУЕМ avanpost_repo ДЛЯ ПРОВЕРКИ
-            return await _avanpost_repo.check_user_by_phone(
+            result = await _avanpost_repo.check_user_by_phone(
                 session=session,
                 phone_number=normalized_phone,
+            )
+            # Явное приведение типов для mypy
+            return (
+                int(result[0]) if result[0] is not None else None,
+                int(result[1]) if result[1] is not None else None,
+                int(result[2]) if result[2] is not None else None,
             )
     except Exception as e:
         bot_logger.error(f"❌ Failed to check user in Avanpost: {e}", exc_info=True)
@@ -521,6 +658,12 @@ async def get_user_group_id(user_id: int) -> int | None:
 
     Поддерживает как Telegram ID, так и Avanpost ID.
     Использует репозиторий вместо прямого доступа к модели.
+
+    Args:
+        user_id: ID пользователя (Telegram или Avanpost)
+
+    Returns:
+        int | None: ID группы действий или None
     """
     # Проверка кеша по Telegram ID
     user_data = _auth_cache.get(user_id)
@@ -536,10 +679,11 @@ async def get_user_group_id(user_id: int) -> int | None:
 
     try:
         async with db_manager.get_session() as session:
-            # ИСПОЛЬЗУЕМ user_repo ДЛЯ ПОЛУЧЕНИЯ ГРУППЫ
+            # Поиск по Telegram ID
             result = await _user_repo.get_user_group_id(session, user_id)
             if result is not None:
-                return result
+                # Явное приведение к int для mypy
+                return int(result) if isinstance(result, int) else None
 
             # Если не нашли по Telegram ID, пробуем как Avanpost ID
             avanpost_user_data = await _user_repo.get_avanpost_user_data(session, user_id)
@@ -551,15 +695,23 @@ async def get_user_group_id(user_id: int) -> int | None:
             return None
     except Exception as e:
         bot_logger.error(f"❌ Failed to get user group: {e}")
-
-    return None
+        return None
 
 
 async def _sync_user_in_background(
     telegram_user_id: int,
     avanpost_user_id: int,
 ) -> None:
-    """Фоновая синхронизация пользовательских данных из Avanpost"""
+    """
+    Фоновая синхронизация пользовательских данных из Avanpost.
+
+    Запускается после успешной авторизации пользователя для
+    загрузки всех связанных данных (чаты, заказы, транспорт и т.д.)
+
+    Args:
+        telegram_user_id: ID пользователя в Telegram
+        avanpost_user_id: ID пользователя в Avanpost
+    """
     try:
         from ....services import avanpost_sync_service
 
@@ -583,7 +735,17 @@ async def _sync_user_in_background(
 
 
 def _build_welcome_message(avanpost_user_id: int, menu_group_id: int | None, is_admin: bool) -> str:
-    """Формирование приветственного сообщения"""
+    """
+    Формирование приветственного сообщения для авторизованного пользователя.
+
+    Args:
+        avanpost_user_id: ID пользователя в Avanpost
+        menu_group_id: ID группы меню
+        is_admin: Является ли пользователь администратором
+
+    Returns:
+        str: Текст приветственного сообщения в формате Markdown
+    """
     welcome_text = (
         f"✅ **Авторизация успешна!**\n\n"
         f"👋 Добро пожаловать!\n\n"

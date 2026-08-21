@@ -1,3 +1,37 @@
+"""
+Модуль роутера для управления сообщениями Telegram бота.
+
+Этот модуль предоставляет API эндпоинты для работы с сообщениями в Telegram:
+- Отправка сообщений (одиночных, массовых, во все чаты)
+- Управление временем жизни сообщений (автоудаление)
+- Просмотр и восстановление удаленных сообщений
+- Получение статистики по сообщениям и чатам
+- Управление чатами и их участниками
+
+Все эндпоинты используют общий префикс /bot/msgs и требуют аутентификации.
+Модуль интегрируется с BotManager для работы с Telegram API и репозиториями
+для работы с базой данных.
+
+Роуты:
+    POST /send - Универсальная отправка сообщений
+    POST /messages/lifetime - Установка времени жизни сообщения
+    POST /messages/lifetime/batch - Массовая установка времени жизни
+    GET /messages/lifetime/stats - Статистика по времени жизни
+    POST /messages/lifetime/force-check - Принудительная проверка истекших
+    GET /messages/lifetime/{message_id} - Информация о времени жизни
+    GET /messages/deleted - Статистика удаленных сообщений
+    GET /messages/deleted/list - Список удаленных сообщений
+    GET /messages/deleted/with-initiator - Удаленные с инициаторами
+    GET /messages/deletion-stats - Статистика удалений по типам
+    GET /messages/{message_id}/deletion-info - Информация об удалении
+    POST /messages/restore/{message_id} - Восстановление сообщения
+    DELETE /{message_id} - Удаление сообщения из Telegram
+    GET /status - Статус Telegram клиентов
+    GET /chats - Список чатов
+    GET /chats/{chat_id} - Информация о чате
+    GET /stats - Общая статистика
+"""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -16,35 +50,41 @@ from ...bot.dependencies import get_bot_manager
 from ...config import settings
 from ...db.repositories import ChatRepository, MessageRepository, StatsRepository
 from ...dtos import ChatDetailDTO, ChatDTO, DeletedMessageDTO
-from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ChatType, MessageType, datetime_now
 from ...services.message_lifetime_service import message_lifetime_service
 from ...utils import get_timestamp
+from ...utils.decorators import log_exceptions
 from ..dependencies import get_session
 
+# Создание роутера с префиксом /bot/msgs и тегом для документации
 router = APIRouter(prefix="/bot/msgs", tags=["Bot Messages"])
 
-# Репозитории (создаем один раз на уровне модуля)
+# Репозитории (создаются один раз на уровне модуля для переиспользования)
 _chat_repo = ChatRepository()
 _message_repo = MessageRepository()
 _stats_repo = StatsRepository()
 
 
 class SendMessageRequest(BaseModel):
-    """Модель запроса для отправки сообщения"""
+    """
+    Модель запроса для отправки сообщения в Telegram.
+
+    Поддерживает отправку как в конкретный чат, так и во все чаты.
+    Включает все параметры, доступные в Telegram Bot API.
+    """
 
     chat_id: int | None = Field(None, description="ID чата в Telegram (обязателен, если send_to_all=false)")
-    message_type: MessageType = Field(default=MessageType.BOT_RESPONSE, description="Тип сообщения")
+    message_type: MessageType = Field(default=MessageType.BOT_RESPONSE, description="Тип сообщения для классификации")
     text: str = Field(..., description="Текст сообщения", min_length=1, max_length=4096)
     parse_mode: str | None = Field(None, description="Режим парсинга: 'HTML', 'Markdown', 'MarkdownV2' или None")
     disable_web_page_preview: bool = Field(False, description="Отключить предпросмотр ссылок")
-    disable_notification: bool = Field(False, description="Отключить уведомление")
+    disable_notification: bool = Field(False, description="Отключить уведомление у получателей")
     protect_content: bool = Field(False, description="Защитить содержимое от пересылки")
-    reply_to_message_id: int | None = Field(None, description="ID сообщения, на которое отвечаем")
+    reply_to_message_id: int | None = Field(None, description="ID сообщения, на которое отвечаем (цитирование)")
     allow_sender: bool = Field(True, description="Разрешить отправку от имени пользователя (если доступно)")
     lifetime_seconds: int | None = Field(
-        None, description="Время жизни сообщения в секундах (если указано, сообщение будет автоматически удалено)"
+        None, description="Время жизни сообщения в секундах (автоудаление)", ge=10, le=2592000
     )
 
     # Параметры для отправки во все чаты
@@ -57,6 +97,18 @@ class SendMessageRequest(BaseModel):
     @field_validator("parse_mode")
     @classmethod
     def validate_parse_mode(cls, v: str | None) -> str | None:
+        """
+        Валидация режима парсинга.
+
+        Args:
+            v: Режим парсинга
+
+        Returns:
+            str | None: Валидный режим в верхнем регистре
+
+        Raises:
+            ValueError: Если режим не поддерживается
+        """
         if v is not None:
             v_upper = v.upper()
             if v_upper not in ["HTML", "MARKDOWN", "MARKDOWN_V2"]:
@@ -67,6 +119,18 @@ class SendMessageRequest(BaseModel):
     @field_validator("lifetime_seconds")
     @classmethod
     def validate_lifetime(cls, v: int | None) -> int | None:
+        """
+        Валидация времени жизни сообщения.
+
+        Args:
+            v: Время жизни в секундах
+
+        Returns:
+            int | None: Валидное время жизни
+
+        Raises:
+            ValueError: Если время выходит за допустимые пределы
+        """
         if v is not None:
             if v < 10:
                 raise ValueError("lifetime_seconds must be at least 10 seconds")
@@ -76,7 +140,7 @@ class SendMessageRequest(BaseModel):
 
 
 class SendMessageResponse(BaseModel):
-    """Модель ответа для отправки сообщения"""
+    """Модель ответа для успешной отправки одного сообщения."""
 
     success: bool = Field(..., description="Успешность отправки")
     message_id: int | None = Field(None, description="ID отправленного сообщения")
@@ -91,9 +155,9 @@ class SendMessageResponse(BaseModel):
 
 
 class BatchSendMessageResponse(BaseModel):
-    """Модель ответа для массовой отправки"""
+    """Модель ответа для массовой отправки сообщений."""
 
-    total: int = Field(..., description="Всего сообщений")
+    total: int = Field(..., description="Всего сообщений в запросе")
     successful: int = Field(..., description="Успешно отправлено")
     failed: int = Field(..., description="Не удалось отправить")
     results: list[dict[str, Any]] = Field(..., description="Результаты отправки каждого сообщения")
@@ -102,33 +166,33 @@ class BatchSendMessageResponse(BaseModel):
 
 
 class SendMessageToAllResponse(BaseModel):
-    """Модель ответа для отправки во все чаты"""
+    """Модель ответа для отправки сообщения во все чаты."""
 
     success: bool = Field(..., description="Успешность операции")
-    total_chats: int = Field(..., description="Всего чатов")
+    total_chats: int = Field(..., description="Всего чатов для отправки")
     success_count: int = Field(..., description="Успешно отправлено")
     failed_count: int = Field(..., description="Не удалось отправить")
-    failed_chats: list[dict[str, Any]] = Field(default_factory=list, description="Список чатов с ошибками")
+    failed_chats: list[dict[str, Any]] = Field(default_factory=list, description="Список чатов с ошибками (макс. 10)")
     timestamp: str = Field(..., description="Время отправки")
 
 
 class ErrorResponse(BaseModel):
-    """Модель ответа при ошибке"""
+    """Стандартная модель ответа при ошибке."""
 
-    success: bool = Field(default=False, description="Успешность операции")
+    success: bool = Field(default=False, description="Успешность операции (всегда False)")
     error: str = Field(..., description="Сообщение об ошибке")
     timestamp: str = Field(..., description="Время ошибки")
 
 
 class SetLifetimeRequest(BaseModel):
-    """Модель запроса для установки времени жизни"""
+    """Модель запроса для установки времени жизни одному сообщению."""
 
     message_id: int = Field(..., description="ID сообщения")
     lifetime_seconds: int = Field(..., description="Время жизни в секундах", ge=10, le=2592000)
 
 
 class BatchSetLifetimeRequest(BaseModel):
-    """Модель запроса для установки времени жизни нескольким сообщениям"""
+    """Модель запроса для установки времени жизни нескольким сообщениям."""
 
     message_ids: list[int] = Field(..., description="Список ID сообщений", min_length=1, max_length=100)
     lifetime_seconds: int | None = Field(None, description="Время жизни в секундах", ge=10, le=2592000)
@@ -137,35 +201,12 @@ class BatchSetLifetimeRequest(BaseModel):
 class UnifiedSendRequest(BaseModel):
     """
     Универсальная модель для отправки сообщений.
+
     Поддерживает три формата:
-
-    1. Прямой объект (одно сообщение):
-       {
-           "chat_id": -1001234567890,
-           "text": "Hello, world!"
-       }
-
-    2. С оберткой messages (одно сообщение):
-       {
-           "messages": {
-               "chat_id": -1001234567890,
-               "text": "Hello, world!"
-           }
-       }
-
-    3. Массив сообщений:
-       {
-           "messages": [
-               {"chat_id": -1001234567890, "text": "Message 1"},
-               {"chat_id": -1001234567890, "text": "Message 2"}
-           ]
-       }
-
-    4. Отправка во все чаты:
-       {
-           "send_to_all": true,
-           "text": "Hello, everyone!"
-       }
+    1. Прямой объект (одно сообщение)
+    2. С оберткой messages (одно сообщение)
+    3. Массив сообщений (пакетная отправка)
+    4. Отправка во все чаты (send_to_all=true)
     """
 
     messages: SendMessageRequest | list[SendMessageRequest] | None = Field(
@@ -187,7 +228,17 @@ class UnifiedSendRequest(BaseModel):
     lifetime_seconds: int | None = Field(None, description="Время жизни сообщения в секундах")
 
     def get_messages(self) -> list[SendMessageRequest]:
-        """Преобразование входных данных в список сообщений"""
+        """
+        Преобразование входных данных в список сообщений.
+
+        Обрабатывает все поддерживаемые форматы:
+        - Прямые поля -> одно сообщение
+        - messages с объектом -> одно сообщение
+        - messages со списком -> список сообщений
+
+        Returns:
+            list[SendMessageRequest]: Список сообщений для отправки
+        """
         # Если есть messages в обертке
         if self.messages is not None:
             if isinstance(self.messages, SendMessageRequest):
@@ -223,7 +274,12 @@ class UnifiedSendRequest(BaseModel):
         return []
 
     def is_batch(self) -> bool:
-        """Проверка, является ли запрос пакетным"""
+        """
+        Проверка, является ли запрос пакетным.
+
+        Returns:
+            bool: True если запрос содержит массив сообщений
+        """
         if self.messages is not None:
             return isinstance(self.messages, list)
         return False
@@ -233,7 +289,15 @@ class UnifiedSendRequest(BaseModel):
 
 
 async def _get_bot_manager() -> BotManager:
-    """Получение экземпляра BotManager с проверкой статуса"""
+    """
+    Получение экземпляра BotManager с проверкой статуса.
+
+    Returns:
+        BotManager: Экземпляр менеджера бота
+
+    Raises:
+        HTTPException: Если бот не запущен (HTTP 503)
+    """
     bot_manager = get_bot_manager()
     status = await bot_manager.get_status()
     if not status.get("is_running", False):
@@ -245,7 +309,16 @@ async def _send_single_message(
     bot_manager: BotManager,
     msg: SendMessageRequest,
 ) -> SendMessageResponse:
-    """Отправка одного сообщения через BotManager"""
+    """
+    Отправка одного сообщения через BotManager.
+
+    Args:
+        bot_manager: Экземпляр менеджера бота
+        msg: Данные сообщения для отправки
+
+    Returns:
+        SendMessageResponse: Результат отправки
+    """
     try:
         send_result = await bot_manager.send_message(
             chat_id=msg.chat_id,
@@ -319,9 +392,21 @@ async def _send_message_to_all_chats(
     msg: SendMessageRequest,
     session: AsyncSession,
 ) -> SendMessageToAllResponse:
-    """Отправка сообщения во все чаты"""
+    """
+    Отправка сообщения во все активные чаты.
+
+    Поддерживает фильтрацию по типам чатов и исключение указанных чатов.
+
+    Args:
+        bot_manager: Экземпляр менеджера бота
+        msg: Данные сообщения с параметрами фильтрации
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        SendMessageToAllResponse: Результат отправки во все чаты
+    """
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ ВСЕХ АКТИВНЫХ ЧАТОВ
+        # Получение всех активных чатов
         chats = await _chat_repo.get_chats(session, is_active=True)
 
         # Фильтр по типам чатов
@@ -398,7 +483,7 @@ async def _send_message_to_all_chats(
             total_chats=total_chats,
             success_count=success_count,
             failed_count=failed_count,
-            failed_chats=failed_chats[:10],
+            failed_chats=failed_chats[:10],  # Ограничиваем количество ошибок в ответе
             timestamp=get_timestamp(),
         )
 
@@ -414,17 +499,43 @@ async def _send_message_to_all_chats(
     "/send",
     response_model=SendMessageResponse | BatchSendMessageResponse | SendMessageToAllResponse | ErrorResponse,
     summary="Отправить сообщение(я) в Telegram",
-    description="""Универсальный эндпоинт для отправки сообщений в Telegram.""",
+    description="""Универсальный эндпоинт для отправки сообщений в Telegram.
+
+Поддерживает:
+- Отправку одного сообщения
+- Отправку массива сообщений (до 100)
+- Отправку во все активные чаты
+- Установку времени жизни сообщений
+
+Форматы запроса:
+1. Прямой объект: {"chat_id": 123, "text": "Hello"}
+2. Обертка messages: {"messages": {"chat_id": 123, "text": "Hello"}}
+3. Массив: {"messages": [{"chat_id": 123, "text": "Msg1"}, ...]}
+4. Во все чаты: {"send_to_all": true, "text": "Hello everyone"}
+""",
 )
 @log_exceptions(api_logger)
 async def send_message_unified(
     request: UnifiedSendRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Универсальная отправка сообщений"""
+    """
+    Универсальная отправка сообщений в Telegram.
+
+    Автоматически определяет формат запроса и отправляет сообщения
+    соответствующим образом.
+
+    Args:
+        request: Универсальный запрос с сообщениями
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат отправки с соответствующим статус-кодом
+    """
     messages = request.get_messages()
     is_batch = request.is_batch()
 
+    # Проверка наличия сообщений
     if not messages:
         api_logger.warning("No messages to send")
         return JSONResponse(
@@ -444,7 +555,7 @@ async def send_message_unified(
             result = await _send_message_to_all_chats(bot_manager, msg, session)
             return JSONResponse(status_code=200, content=result.model_dump())
 
-    # Проверка на пакетную отправку
+    # Проверка лимита для пакетной отправки
     if is_batch and len(messages) > 100:
         api_logger.warning(f"Too many messages: {len(messages)} > 100")
         return JSONResponse(
@@ -490,10 +601,11 @@ async def send_message_unified(
         is_batch=True,
     )
 
+    # Выбор статус-кода в зависимости от результатов
     if failed == 0:
         status_code = 200
     elif successful > 0:
-        status_code = 207
+        status_code = 207  # Multi-Status
     else:
         status_code = 400
 
@@ -510,11 +622,19 @@ async def set_message_lifetime(
     request: SetLifetimeRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Установка времени жизни сообщения"""
+    """
+    Установка времени жизни для одного сообщения.
+
+    Args:
+        request: Запрос с ID сообщения и временем жизни
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат операции с информацией об истечении
+    """
     api_logger.info(f"⏰ Setting lifetime for message {request.message_id}: {request.lifetime_seconds}s")
 
     try:
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ УСТАНОВКИ ВРЕМЕНИ ЖИЗНИ
         result = await _message_repo.set_message_lifetime(
             session=session,
             message_id=request.message_id,
@@ -551,14 +671,23 @@ async def set_message_lifetime(
 @router.post(
     "/messages/lifetime/batch",
     summary="Установить время жизни для нескольких сообщений",
-    description="Устанавливает время жизни для списка сообщений",
+    description="Устанавливает время жизни для списка сообщений (макс. 100)",
 )
 @log_exceptions(api_logger)
 async def set_messages_lifetime_batch(
     request: BatchSetLifetimeRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Установка времени жизни для нескольких сообщений"""
+    """
+    Массовая установка времени жизни для нескольких сообщений.
+
+    Args:
+        request: Запрос со списком ID сообщений и временем жизни
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат операции с количеством успешных обновлений
+    """
     if request.lifetime_seconds is None:
         raise HTTPException(status_code=400, detail="lifetime_seconds is required for batch operation")
 
@@ -569,7 +698,6 @@ async def set_messages_lifetime_batch(
         failed_count = 0
 
         for message_id in request.message_ids:
-            # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ УСТАНОВКИ ВРЕМЕНИ ЖИЗНИ
             result = await _message_repo.set_message_lifetime(
                 session=session,
                 message_id=message_id,
@@ -599,18 +727,26 @@ async def set_messages_lifetime_batch(
 @router.get(
     "/messages/lifetime/stats",
     summary="Статистика по времени жизни сообщений",
-    description="Получение статистики по времени жизни сообщений",
+    description="Получение статистики по времени жизни сообщений для чата или всех чатов",
 )
 @log_exceptions(api_logger)
 async def get_message_lifetime_stats(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение статистики по времени жизни"""
+    """
+    Получение статистики по времени жизни сообщений.
+
+    Args:
+        chat_id: ID чата (опционально, для фильтрации)
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Статистика с количеством сообщений по времени жизни
+    """
     api_logger.info(f"📊 Getting message lifetime stats for chat {chat_id or 'all'}")
 
     try:
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await _message_repo.get_message_lifetime_stats(session=session, chat_id=chat_id)
 
         return JSONResponse(
@@ -626,15 +762,22 @@ async def get_message_lifetime_stats(
 @router.post(
     "/messages/lifetime/force-check",
     summary="Принудительная проверка истекших сообщений",
-    description="Принудительно проверяет и помечает истекшие сообщения",
+    description="Принудительно проверяет и помечает истекшие сообщения для удаления",
 )
 @log_exceptions(api_logger)
 async def force_check_expired_messages() -> JSONResponse:
-    """Принудительная проверка истекших сообщений"""
+    """
+    Принудительная проверка истекших сообщений.
+
+    Запускает проверку всех сообщений с истекшим временем жизни
+    и помечает их для удаления.
+
+    Returns:
+        JSONResponse: Количество найденных и помеченных сообщений
+    """
     api_logger.info("🔄 Force check expired messages requested")
 
     try:
-        # ИСПОЛЬЗУЕМ message_lifetime_service ДЛЯ ПРИНУДИТЕЛЬНОЙ ПРОВЕРКИ
         result = await message_lifetime_service.force_check()
 
         return JSONResponse(
@@ -655,24 +798,35 @@ async def force_check_expired_messages() -> JSONResponse:
 @router.get(
     "/messages/lifetime/{message_id}",
     summary="Получить информацию о времени жизни сообщения",
-    description="Возвращает информацию о времени жизни сообщения",
+    description="Возвращает информацию о времени жизни сообщения и его статусе",
 )
 @log_exceptions(api_logger)
 async def get_message_lifetime_info(
     message_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение информации о времени жизни сообщения"""
+    """
+    Получение детальной информации о времени жизни сообщения.
+
+    Args:
+        message_id: ID сообщения
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Информация о времени жизни, статусе удаления, оставшемся времени
+
+    Raises:
+        HTTPException: Если сообщение не найдено
+    """
     api_logger.info(f"📊 Getting lifetime info for message {message_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЯ
         message = await _message_repo.get_message_by_id(session, message_id)
 
         if not message:
             raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
 
-        # ИСПОЛЬЗУЕМ свойства модели ВМЕСТО ПРЯМОГО ДОСТУПА К ПОЛЯМ
+        # Если сообщение уже удалено
         if message.FFlagDeleted:
             return JSONResponse(
                 status_code=200,
@@ -686,6 +840,7 @@ async def get_message_lifetime_info(
                 },
             )
 
+        # Проверка истекло ли сообщение
         is_expired = False
         if message.FExpiresAt:
             is_expired = message.FExpiresAt <= datetime_now()
@@ -716,7 +871,7 @@ async def get_message_lifetime_info(
 @router.get(
     "/messages/deleted",
     summary="Получить статистику удаленных сообщений",
-    description="Возвращает статистику по удаленным сообщениям",
+    description="Возвращает статистику по удаленным сообщениям за указанный период",
 )
 @log_exceptions(api_logger)
 async def get_deleted_messages_stats(
@@ -724,11 +879,20 @@ async def get_deleted_messages_stats(
     days: int = getattr(settings, "API_STATS_DAYS", 7),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение статистики по удаленным сообщениям."""
+    """
+    Получение статистики по удаленным сообщениям.
+
+    Args:
+        chat_id: ID чата (опционально, для фильтрации)
+        days: Количество дней для анализа
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Статистика удалений с разбивкой по дням
+    """
     api_logger.info(f"Getting deleted messages stats for chat {chat_id or 'all'}")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await _chat_repo.get_deleted_messages_stats(session=session, chat_id=chat_id, days=days)
 
         return JSONResponse(
@@ -744,7 +908,7 @@ async def get_deleted_messages_stats(
 @router.get(
     "/messages/deleted/list",
     summary="Получить список удаленных сообщений",
-    description="Возвращает список удаленных сообщений",
+    description="Возвращает список удаленных сообщений с пагинацией",
 )
 @log_exceptions(api_logger)
 async def get_deleted_messages(
@@ -753,11 +917,21 @@ async def get_deleted_messages(
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение списка удаленных сообщений."""
+    """
+    Получение списка удаленных сообщений.
+
+    Args:
+        chat_id: ID чата (опционально, для фильтрации)
+        limit: Максимальное количество записей
+        offset: Смещение для пагинации
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Список удаленных сообщений
+    """
     api_logger.info(f"Getting deleted messages for chat {chat_id or 'all'}")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЙ
         messages = await _chat_repo.get_messages(
             session=session,
             chat_id=chat_id,
@@ -766,7 +940,7 @@ async def get_deleted_messages(
             offset=offset,
         )
 
-        # ИСПОЛЬЗУЕМ DTO ДЛЯ ФОРМАТИРОВАНИЯ
+        # Преобразование в DTO
         deleted_messages = []
         for msg in messages:
             if msg.FFlagDeleted:
@@ -800,11 +974,23 @@ async def get_deleted_messages_with_initiator(
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение удаленных сообщений с информацией об инициаторе."""
+    """
+    Получение удаленных сообщений с информацией об инициаторе.
+
+    Возвращает не только сами сообщения, но и кто их удалил.
+
+    Args:
+        chat_id: ID чата (опционально, для фильтрации)
+        limit: Максимальное количество записей
+        offset: Смещение для пагинации
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Список удаленных сообщений с инициаторами
+    """
     api_logger.info(f"Getting deleted messages with initiator for chat {chat_id or 'all'}")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ УДАЛЕННЫХ СООБЩЕНИЙ
         messages = await _chat_repo.get_deleted_messages_with_initiator(
             session=session, chat_id=chat_id, limit=limit, offset=offset
         )
@@ -827,7 +1013,7 @@ async def get_deleted_messages_with_initiator(
 @router.get(
     "/messages/deletion-stats",
     summary="Статистика удалений по типам",
-    description="Возвращает статистику удалений по типам инициаторов",
+    description="Возвращает статистику удалений по типам инициаторов (бот, пользователь, система)",
 )
 @log_exceptions(api_logger)
 async def get_deletion_stats_by_initiator(
@@ -835,11 +1021,20 @@ async def get_deletion_stats_by_initiator(
     days: int = getattr(settings, "API_STATS_DAYS", 7),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение статистики удалений по типам инициаторов."""
+    """
+    Получение статистики удалений по типам инициаторов.
+
+    Args:
+        chat_id: ID чата (опционально, для фильтрации)
+        days: Количество дней для анализа
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Статистика с разбивкой по типам инициаторов
+    """
     api_logger.info(f"Getting deletion stats for chat {chat_id or 'all'}")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await _chat_repo.get_deletion_stats_by_initiator(session=session, chat_id=chat_id, days=days)
 
         return JSONResponse(
@@ -862,16 +1057,28 @@ async def get_message_deletion_info(
     message_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение информации об удалении сообщения."""
+    """
+    Получение детальной информации об удалении сообщения.
+
+    Args:
+        message_id: ID сообщения
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Информация об удалении (время, инициатор, причина)
+
+    Raises:
+        HTTPException: Если сообщение не найдено
+    """
     api_logger.info(f"Getting deletion info for message {message_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЯ
         message = await _message_repo.get_message_by_id(session, message_id)
 
         if not message:
             raise HTTPException(status_code=404, detail=f"Message {message_id} not found")
 
+        # Если сообщение не удалено
         if not message.FFlagDeleted:
             return JSONResponse(
                 status_code=200,
@@ -926,11 +1133,25 @@ async def restore_deleted_message(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Восстановление удаленного сообщения."""
+    """
+    Восстановление удаленного сообщения.
+
+    Отменяет флаг удаления и восстанавливает сообщение в базе данных.
+
+    Args:
+        message_id: ID сообщения для восстановления
+        chat_id: ID чата (опционально, для проверки)
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат операции
+
+    Raises:
+        HTTPException: Если сообщение не найдено
+    """
     api_logger.info(f"Restoring message {message_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ВОССТАНОВЛЕНИЯ СООБЩЕНИЯ
         result = await _chat_repo.restore_deleted_message(session=session, message_id=message_id, chat_id=chat_id)
 
         if result:
@@ -953,13 +1174,26 @@ async def restore_deleted_message(
         raise HTTPException(status_code=500, detail=f"Failed to restore message: {str(e)}") from e
 
 
-@router.delete("/{message_id}", summary="Удалить сообщение", description="Удаляет сообщение из чата Telegram")
+@router.delete(
+    "/{message_id}",
+    summary="Удалить сообщение",
+    description="Удаляет сообщение из чата Telegram",
+)
 @log_exceptions(api_logger)
 async def delete_message(
     message_id: int,
     chat_id: int,
 ) -> JSONResponse:
-    """Удаление сообщения из чата Telegram."""
+    """
+    Удаление сообщения из чата Telegram через Bot API.
+
+    Args:
+        message_id: ID сообщения для удаления
+        chat_id: ID чата, из которого удаляется сообщение
+
+    Returns:
+        JSONResponse: Результат операции
+    """
     api_logger.info(f"Deleting message {message_id} from chat {chat_id}")
 
     try:
@@ -1005,10 +1239,19 @@ async def delete_message(
         )
 
 
-@router.get("/status", summary="Получить статус Telegram", description="Возвращает статус Telegram клиентов")
+@router.get(
+    "/status",
+    summary="Получить статус Telegram",
+    description="Возвращает статус Telegram клиентов (ботов) и их состояние",
+)
 @log_exceptions(api_logger)
 async def get_telegram_status() -> JSONResponse:
-    """Получение статуса Telegram клиентов."""
+    """
+    Получение статуса Telegram клиентов.
+
+    Returns:
+        JSONResponse: Информация о статусе ботов и подключениях
+    """
     api_logger.info("Getting Telegram status...")
 
     try:
@@ -1030,27 +1273,36 @@ async def get_telegram_status() -> JSONResponse:
         )
 
 
-@router.get("/chats", summary="Получить список чатов", description="Возвращает список всех активных чатов")
+@router.get(
+    "/chats",
+    summary="Получить список чатов",
+    description="Возвращает список всех активных чатов с информацией об участниках и количестве сообщений",
+)
 @log_exceptions(api_logger)
 async def get_chats(
     is_active: bool | None = True,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение списка чатов из базы данных."""
+    """
+    Получение списка чатов с детальной информацией.
+
+    Args:
+        is_active: Фильтр по активности (True - только активные)
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Список чатов с метаинформацией
+    """
     api_logger.info("Getting chats list...")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ ЧАТОВ
         chats = await _chat_repo.get_chats(session, is_active=is_active)
 
         result = []
         for chat in chats:
-            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ УЧАСТНИКОВ
             members = await _chat_repo.get_user_chat_members(session, chat_id=chat.FID, is_active=True)
-            # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ КОЛИЧЕСТВА СООБЩЕНИЙ
             messages_count = await _message_repo.get_message_count_by_chat(session, chat.FID)
 
-            # ИСПОЛЬЗУЕМ DTO ДЛЯ ФОРМАТИРОВАНИЯ
             chat_dto = ChatDTO.from_model(
                 chat=chat,
                 members_count=len(members),
@@ -1069,18 +1321,32 @@ async def get_chats(
 @router.get(
     "/chats/{chat_id}",
     summary="Получить информацию о чате",
-    description="Возвращает информацию о конкретном чате",
+    description="Возвращает детальную информацию о конкретном чате с последними сообщениями",
 )
 @log_exceptions(api_logger)
 async def get_chat_info(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение детальной информации о чате."""
+    """
+    Получение детальной информации о чате.
+
+    Возвращает информацию о чате, участниках, количестве сообщений
+    и последние 10 сообщений.
+
+    Args:
+        chat_id: ID чата
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Детальная информация о чате
+
+    Raises:
+        HTTPException: Если чат не найден
+    """
     api_logger.info(f"Getting chat info for {chat_id}...")
 
     try:
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ ЧАТА
         chats = await _chat_repo.get_chats(session, chat_id=chat_id)
 
         if not chats:
@@ -1088,16 +1354,12 @@ async def get_chat_info(
 
         chat = chats[0]
 
-        # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПОЛУЧЕНИЯ УЧАСТНИКОВ
         members = await _chat_repo.get_user_chat_members(session, chat_id=chat.FID, is_active=True)
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ КОЛИЧЕСТВА СООБЩЕНИЙ
         messages_count = await _message_repo.get_message_count_by_chat(session, chat.FID)
-        # ИСПОЛЬЗУЕМ MessageRepository ДЛЯ ПОЛУЧЕНИЯ ПОСЛЕДНИХ СООБЩЕНИЙ
         recent_messages = await _message_repo.get_messages_by_chat(
             session=session, chat_id=chat.FID, limit=10, include_deleted=True
         )
 
-        # ИСПОЛЬЗУЕМ DTO ДЛЯ ФОРМАТИРОВАНИЯ
         chat_detail_dto = ChatDetailDTO.from_model(
             chat=chat,
             members_count=len(members),
@@ -1115,16 +1377,34 @@ async def get_chat_info(
         raise HTTPException(status_code=500, detail=f"Failed to get chat info: {str(e)}") from e
 
 
-@router.get("/stats", summary="Получить статистику", description="Получает общую статистику по чатам и сообщениям")
+@router.get(
+    "/stats",
+    summary="Получить статистику",
+    description="Получает общую статистику по чатам, сообщениям, пользователям и активности",
+)
 @log_exceptions(api_logger)
 async def get_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение общей статистики по чатам и сообщениям."""
+    """
+    Получение общей статистики по системе.
+
+    Включает:
+    - Количество чатов
+    - Количество сообщений
+    - Количество пользователей
+    - Активность по дням
+    - Распределение по типам чатов
+
+    Args:
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Полная статистика системы
+    """
     api_logger.info("Getting stats...")
 
     try:
-        # ИСПОЛЬЗУЕМ StatsRepository ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await _stats_repo.get_full_stats(session)
 
         return JSONResponse(

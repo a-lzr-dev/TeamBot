@@ -57,14 +57,22 @@ class ListKeyboardBuilder:
         item_name_formatter: Callable[[dict[str, Any]], str] | None = None,
     ) -> InlineKeyboardMarkup:
         """Построение клавиатуры"""
+        from app.logger import bot_logger
+
+        bot_logger.debug(f"🔍 [ListKeyboardBuilder] Building keyboard with {len(items)} items")
+        bot_logger.debug(f"🔍 [ListKeyboardBuilder] extra_buttons: {extra_buttons}")
+
         keyboard = []
 
         # Кнопки элементов
         row = []
         for item in items:
-            name = item.get("name", f"Item #{item.get('id', '?')}")
             if item_name_formatter:
                 name = item_name_formatter(item)
+            else:
+                name = item.get("name", f"Item #{item.get('id', '?')}")
+
+            # Обрезание длинного имени
             if len(name) > self.max_name_length:
                 name = name[: self.max_name_length - 1] + "…"
 
@@ -100,9 +108,7 @@ class ListKeyboardBuilder:
                         )
                     )
 
-            page_text = (
-                f"🔍 {current_page + 1}/{total_pages}" if search_query else f"📄 {current_page + 1}/{total_pages}"
-            )
+            page_text = f"🔍 {current_page + 1}/{total_pages}"
             nav_row.append(
                 InlineKeyboardButton(text=f"{page_text} Поиск...", callback_data=f"{self.callback_prefix}search")
             )

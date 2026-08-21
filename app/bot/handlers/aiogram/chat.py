@@ -1,153 +1,448 @@
-from aiogram import Bot, Router
-from aiogram.types import ChatMemberUpdated
+"""
+Модуль обработчика списка чатов.
 
-from app.core import chat_type_from_aiogram, chat_type_to_str, user_info_from_aiogram
-from app.db import ChatRepository, UserRepository, db_manager
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
+Этот модуль предоставляет функциональность для отображения и управления
+списком чатов пользователя в системе Avanpost.
 
-router = Router(name="aiogram_chat")
+Основные компоненты:
+    - ChatsListHandler: Обработчик списка чатов с пагинацией и поиском
+    - Отображение чатов пользователя
+    - Выбор чата для просмотра сообщений
+    - Поиск по чатам
+
+Использует GenericListCallbackHandler для универсальной обработки списков.
+
+Функциональность:
+    - Отображение списка чатов с пагинацией
+    - Поиск по чатам
+    - Выбор чата для просмотра сообщений
+    - Навигация по чатам с сохранением состояния
+"""
+
+from typing import Any
+
+from aiogram import Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
+
+from ....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
+from ....bot.dependencies import get_bot_manager
+from ....db import db_manager
+from ....db.repositories import AvanpostUserRepository
+from ....logger import bot_logger
+from ....models import MessageActionType, MessageType
+from ...keyboards import ListKeyboardBuilder
+from .states import SubMenuStates
+
+# Создание роутера для обработки чатов
+router = Router(name="aiogram_chats_list")
+
+# Репозиторий для работы с пользователями Avanpost
+_avanpost_user_repo = AvanpostUserRepository()
 
 
-@router.my_chat_member()
-@log_exceptions(bot_logger)
-async def bot_added_or_removed(event: ChatMemberUpdated, bot: Bot) -> None:
-    """Обработка событий добавления/удаления бота в чат"""
-    bot_logger.debug(f"🔄 Bot chat member event: {event.chat.id}")
+class ChatsListHandler(GenericListCallbackHandler):
+    """
+    Обработчик списка чатов пользователя.
 
-    new_status = event.new_chat_member.status
-    old_status = event.old_chat_member.status
+    Наследуется от GenericListCallbackHandler и реализует:
+        - Загрузку данных чатов из БД
+        - Отображение списка с пагинацией
+        - Обработку выбора чата
+        - Поиск по чатам
 
-    if new_status == old_status:
-        return
+    Атрибуты:
+        PAGE_SIZE: Количество чатов на странице
+        STATE_VIEWING: Состояние просмотра списка
+        STATE_SEARCHING: Состояние поиска
+    """
 
-    chat = event.chat
-    chat_title = chat.title or str(chat.id)
+    def __init__(self) -> None:
+        """Инициализация обработчика списка чатов."""
+        super().__init__(prefix="chats", list_type="chats")
+        self.PAGE_SIZE = 10
+        self.STATE_VIEWING = SubMenuStates.viewing_chats
+        self.STATE_SEARCHING = SubMenuStates.searching_chats
 
-    # Проверка, что событие относится к нашему боту
-    bot_user = event.new_chat_member.user
-    if bot_user.id != bot.id:
-        return
+    async def load_data(
+        self,
+        session: Any,
+        page: int,
+        search_query: str | None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """
+        Загрузка данных чатов из базы данных.
 
-    # Преобразование статуса в строку
-    new_status_str = new_status.value if hasattr(new_status, "value") else str(new_status)
+        Args:
+            session: Сессия БД
+            page: Номер страницы
+            search_query: Поисковый запрос (опционально)
+            **kwargs: Дополнительные параметры (avanpost_user_id)
 
-    chat_type = chat_type_from_aiogram(chat)
-    chat_type_str = chat_type_to_str(chat_type)
+        Returns:
+            dict: Данные списка чатов
+        """
+        avanpost_user_id = kwargs.get("avanpost_user_id")
+        if not avanpost_user_id:
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": "User ID not provided",
+            }
 
-    async with db_manager.get_session() as session:
-        # Сохранение бота как пользователя
-        bot_user_info = user_info_from_aiogram(bot_user)
-        await UserRepository.save_user(
-            session=session,
-            user_id=bot_user_info["user_id"],
-            is_bot=bot_user_info["is_bot"],
-            first_name=bot_user_info["first_name"],
-            last_name=bot_user_info["last_name"],
-            username=bot_user_info["username"],
-        )
-
-        if new_status_str in ["member", "administrator", "creator"]:
-            bot_logger.info(f"✅ Bot added to chat: {chat_title} (ID: {chat.id})")
-
-            await ChatRepository.save_chat(
-                session=session, chat_id=chat.id, chat_type=chat_type_str, title=chat.title, is_active=True
-            )
-
-            await ChatRepository.save_chat_member(
+        try:
+            # Получение чатов пользователя из репозитория
+            data = await _avanpost_user_repo.get_user_chats_page(
                 session=session,
-                user_id=bot_user_info["user_id"],
-                chat_id=chat.id,
-                status=new_status_str,
-                is_active=True,
+                avanpost_user_id=avanpost_user_id,
+                page=page,
+                page_size=self.PAGE_SIZE,
+                search_query=search_query,
             )
 
-        elif new_status_str in ["left", "kicked"]:
-            bot_logger.info(f"❌ Bot removed from chat: {chat_title} (ID: {chat.id})")
+            return {
+                "items": data.get("chats", []),
+                "total": data.get("total", 0),
+                "page": data.get("page", 0),
+                "total_pages": data.get("total_pages", 0),
+                "has_prev": data.get("has_prev", False),
+                "has_next": data.get("has_next", False),
+                "search_query": data.get("search_query"),
+            }
+        except Exception as e:
+            bot_logger.error(f"❌ Failed to load chats: {e}", exc_info=True)
+            return {
+                "items": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": str(e),
+            }
 
-            await ChatRepository.save_chat(
-                session=session, chat_id=chat.id, chat_type=chat_type_str, title=chat.title, is_active=False
-            )
+    async def show_list(
+        self,
+        event: Message | CallbackQuery,
+        state: FSMContext,
+        page: int = 0,
+        search_query: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Отображение списка чатов.
 
-            await ChatRepository.save_chat_member(
-                session=session,
-                user_id=bot_user_info["user_id"],
-                chat_id=chat.id,
-                status=new_status_str,
-                is_active=False,
-            )
+        Args:
+            event: Сообщение или CallbackQuery
+            state: Состояние FSM
+            page: Номер страницы
+            search_query: Поисковый запрос
+            **kwargs: Дополнительные параметры
+        """
+        bot_manager = get_bot_manager()
 
-        await session.commit()
-        bot_logger.info(f"✅ Chat member event processed for {chat.id}")
+        # Подтверждение получения колбэка
+        if isinstance(event, CallbackQuery):
+            await event.answer()
 
-
-@router.chat_member()
-@log_exceptions(bot_logger)
-async def chat_member_update(event: ChatMemberUpdated) -> None:
-    """Обработка изменений участников чата"""
-    # Игнорирование изменения, связанные с ботом
-    bot = event.bot
-
-    if bot is None:
-        bot_logger.warning("⚠️ Bot is None in chat_member_update")
-        return
-
-    # Проверка, что событие относится к боту
-    try:
-        bot_me = await bot.get_me()
-        if event.new_chat_member.user.id == bot_me.id:
+        chat_id = self._get_chat_id(event)
+        if not chat_id:
             return
-    except Exception as e:
-        bot_logger.warning(f"⚠️ Failed to get bot info: {e}")
-        return
 
-    bot_logger.debug(f"🔄 Chat member update: {event.chat.id}")
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
 
-    user = event.new_chat_member.user
-    old_status = event.old_chat_member.status
-    new_status = event.new_chat_member.status
+        if not avanpost_user_id:
+            await bot_manager.send_message(
+                chat_id=chat_id,
+                text="❌ Не удалось определить пользователя.",
+                message_type=MessageType.COMMAND_ACTION_INFO,
+                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                parse_mode="Markdown",
+            )
+            return
 
-    if old_status == new_status:
-        return
+        try:
+            # Загрузка данных чатов
+            async with db_manager.get_session() as session:
+                data = await self.load_data(session, page, search_query, avanpost_user_id=avanpost_user_id)
 
-    async with db_manager.get_session() as session:
-        user_info = user_info_from_aiogram(user)
-        await UserRepository.save_user(
-            session=session,
-            user_id=user_info["user_id"],
-            is_bot=user_info["is_bot"],
-            first_name=user_info["first_name"],
-            last_name=user_info["last_name"],
-            username=user_info["username"],
-        )
+            # Обработка ошибки загрузки
+            if data.get("error"):
+                await bot_manager.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Ошибка загрузки чатов: {data['error']}",
+                    message_type=MessageType.COMMAND_ACTION_INFO,
+                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                    parse_mode="Markdown",
+                )
+                return
 
-        # Проверка наличия чата в БД
-        chats = await ChatRepository.get_chats(session, chat_id=event.chat.id)
-        if not chats:
-            bot_logger.warning(f"⚠️ Chat {event.chat.id} not found in DB, creating...")
-            chat_type = chat_type_from_aiogram(event.chat)
-            chat_type_str = chat_type_to_str(chat_type)
+            items = data["items"]
+            total = data["total"]
+            current_page = data["page"]
+            total_pages = data["total_pages"]
 
-            await ChatRepository.save_chat(
-                session=session, chat_id=event.chat.id, chat_type=chat_type_str, title=event.chat.title, is_active=True
+            # Отображение пустого списка
+            if total == 0:
+                empty_text = "💬 **Мои чаты**\n\n"
+                if search_query:
+                    empty_text += f"🔍 По запросу `{search_query}` чаты не найдены."
+                else:
+                    empty_text += "Нет чатов."
+
+                await bot_manager.send_message(
+                    chat_id=chat_id,
+                    text=empty_text,
+                    message_type=MessageType.COMMAND_ACTION_INFO,
+                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                    parse_mode="Markdown",
+                    reply_markup=self.get_back_keyboard(state),
+                )
+                return
+
+            # Формирование текста списка
+            start_item = current_page * self.PAGE_SIZE + 1
+            end_item = min(start_item + self.PAGE_SIZE - 1, total)
+
+            text = "💬 **Мои чаты**\n\n"
+            if search_query:
+                text += f"🔍 **Поиск:** `{search_query}`\n"
+            text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
+            text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
+
+            # Построение клавиатуры
+            builder = ListKeyboardBuilder(
+                callback_prefix="chats",
+                buttons_per_row=2,
+                item_icon="💬",
+                max_name_length=30,
             )
 
-        # Обновление статуса участника
-        new_status_str = new_status.value if hasattr(new_status, "value") else str(new_status)
-        is_active = new_status_str not in ["left", "kicked"]
+            parent_item_id = state_data.get("parent_item_id")
+            extra_buttons = []
+            if parent_item_id:
+                extra_buttons.append(("🔙 Назад к действиям", f"action_back_{parent_item_id}"))
 
-        await ChatRepository.save_chat_member(
-            session=session,
-            user_id=user_info["user_id"],
-            chat_id=event.chat.id,
-            status=new_status_str,
-            is_active=is_active,
+            keyboard = builder.build(
+                items=items,
+                current_page=current_page,
+                total_pages=total_pages,
+                search_query=search_query,
+                extra_buttons=extra_buttons if extra_buttons else None,
+                item_name_formatter=lambda item: self._format_chat_item(item),
+            )
+
+            # Сохранение состояния
+            state_keys = await self.get_state_keys()
+            await state.update_data(
+                **{
+                    state_keys["page"]: current_page,
+                    state_keys["search_query"]: search_query,
+                }
+            )
+
+            # Отправка сообщения
+            await bot_manager.send_message(
+                chat_id=chat_id,
+                text=text,
+                message_type=MessageType.COMMAND_ACTION,
+                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                parse_mode="Markdown",
+                reply_markup=keyboard,
+            )
+
+        except Exception as e:
+            bot_logger.error(f"❌ Failed to show chats: {e}", exc_info=True)
+            await bot_manager.send_message(
+                chat_id=chat_id,
+                text="❌ Произошла ошибка при загрузке чатов. Попробуйте позже.",
+                message_type=MessageType.COMMAND_ACTION_INFO,
+                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                parse_mode="Markdown",
+            )
+
+    async def on_select(
+        self,
+        callback: CallbackQuery,
+        state: FSMContext,
+        item_id: int,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Обработка выбора чата - открытие сообщений чата.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+            item_id: ID выбранного чата
+            **kwargs: Дополнительные параметры
+        """
+        bot_manager = get_bot_manager()
+        await bot_manager.send_toast(
+            text=f"💬 Открытие чата #{item_id}...",
+            event=callback,
         )
 
-        await session.commit()
-        bot_logger.debug(f"✅ Chat member {user_info['user_id']} status updated to {new_status_str}")
+        # Передача управления обработчику деталей чата
+        from .lists.chat_details import ChatDetailsStates, show_chat_details
+
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
+        parent_item_id = state_data.get("parent_item_id")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        # Сохранение состояния для деталей чата
+        await state.update_data(
+            selected_chat_id=item_id,
+            chat_details_page=0,
+            parent_item_id=parent_item_id,
+        )
+        await state.set_state(ChatDetailsStates.viewing_messages)
+
+        # Отображение сообщений выбранного чата
+        await show_chat_details(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            chat_id=item_id,
+            page=0,
+        )
+
+    async def get_state_keys(self) -> dict[str, str]:
+        """
+        Получение ключей для состояния.
+
+        Returns:
+            dict: Словарь с ключами состояния
+        """
+        return {
+            "page": "chats_page",
+            "search_query": "chats_search_query",
+            "page_before_search": "chats_page_before_search",
+            "search_message_id": "chats_search_message_id",
+            "total": "chats_total",
+            "total_pages": "chats_total_pages",
+        }
+
+    @staticmethod
+    def _get_chat_id(event: Message | CallbackQuery) -> int | None:
+        """
+        Получение ID чата из события.
+
+        Args:
+            event: Сообщение или CallbackQuery
+
+        Returns:
+            int | None: ID чата
+        """
+        if isinstance(event, Message):
+            chat_id = event.chat.id
+            return int(chat_id) if chat_id is not None else None
+        if isinstance(event, CallbackQuery) and event.message:
+            chat_id = event.message.chat.id
+            return int(chat_id) if chat_id is not None else None
+        return None
+
+    @staticmethod
+    def get_back_keyboard(state: FSMContext) -> Any:
+        """
+        Клавиатура с кнопкой возврата.
+
+        Args:
+            state: Состояние FSM
+
+        Returns:
+            InlineKeyboardMarkup: Клавиатура
+        """
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        return InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="chats_back")]]
+        )
+
+    @staticmethod
+    def _format_chat_item(item: dict[str, Any]) -> str:
+        """
+        Форматирование элемента чата для отображения.
+
+        Args:
+            item: Данные чата
+
+        Returns:
+            str: Отформатированное название
+        """
+        name = item.get("name")
+        if name is None:
+            item_id = item.get("id", "?")
+            name = f"Чат #{item_id}"
+        return name
+
+
+# Создание экземпляров обработчиков
+chats_handler = ChatsListHandler()
+chats_search_handler = GenericSearchHandler(chats_handler)
+
+
+async def show_chats_list(
+    event: Message | CallbackQuery,
+    state: FSMContext,
+    page: int = 0,
+    search_query: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """
+    Упрощенная функция для отображения списка чатов.
+
+    Args:
+        event: Сообщение или CallbackQuery
+        state: Состояние FSM
+        page: Номер страницы
+        search_query: Поисковый запрос
+        **kwargs: Дополнительные параметры
+    """
+    await chats_handler.show_list(event, state, page, search_query, **kwargs)
+
+
+# ============ Обработчики роутера ============
+
+
+@router.callback_query(lambda c: c.data.startswith("chats_"))
+async def handle_chats_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    """
+    Обработка колбэков для списка чатов.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
+    await chats_handler.handle(callback, state)
+
+
+@router.message(SubMenuStates.searching_chats)
+async def handle_chats_search(message: Message, state: FSMContext) -> None:
+    """
+    Обработка поискового запроса для чатов.
+
+    Args:
+        message: Сообщение с поисковым запросом
+        state: Состояние FSM
+    """
+    await chats_search_handler.handle_search_query(message, state)
 
 
 __all__ = [
     "router",
+    "show_chats_list",
+    "chats_handler",
 ]

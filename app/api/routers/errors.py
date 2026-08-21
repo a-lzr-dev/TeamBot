@@ -1,3 +1,27 @@
+"""
+Модуль роутера для управления ошибками и уведомлениями.
+
+Этот модуль предоставляет API эндпоинты для:
+- Регистрации внешних ошибок из других систем
+- Управления жизненным циклом ошибок (решение, переоткрытие)
+- Получения статистики по ошибкам
+- Управления настройками уведомлений для чатов
+- Генерации отчетов об ошибках
+
+Все эндпоинты используют общий префикс /errors и интегрируются
+с сервисами error_service и notification_service.
+
+Роуты:
+    POST /external - Регистрация внешней ошибки
+    POST /{error_id}/resolve - Решение ошибки
+    POST /{error_id}/reopen - Переоткрытие ошибки
+    GET /stats - Статистика ошибок
+    GET /user/{user_id}/stats - Статистика пользователя
+    PUT /settings - Обновление настроек уведомлений
+    GET /settings/{chat_id} - Получение настроек уведомлений
+    GET /report/{chat_id} - Генерация отчета об ошибках
+"""
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -6,81 +30,103 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.repositories import ErrorRepository, NotificationSettingsRepository
-from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...models import ErrorCategory, ErrorSeverity
 from ...services import error_service
 from ...utils import get_timestamp
+from ...utils.decorators import log_exceptions
 from ..dependencies import get_session
 
+# Создание роутера с префиксом /errors и тегом для документации
 router = APIRouter(prefix="/errors", tags=["Errors"])
 
-# Репозитории (создаем один раз на уровне модуля)
+# Репозитории (создаются один раз на уровне модуля для переиспользования)
 _error_repo = ErrorRepository()
 _settings_repo = NotificationSettingsRepository()
 
 
 class ErrorRequest(BaseModel):
-    """Модель запроса для внешней ошибки"""
+    """
+    Модель запроса для регистрации внешней ошибки.
+
+    Используется для приема ошибок из внешних систем.
+    Автоматически отправляет уведомления в Telegram через LogHandlerService.
+    """
 
     error_code: str = Field(..., description="Код ошибки", min_length=1, max_length=100)
     error_message: str = Field(..., description="Сообщение об ошибке", min_length=1)
-    source_system: str = Field(..., description="Система-источник", min_length=1, max_length=100)
-    source_module: str | None = Field(None, description="Модуль-источник", max_length=100)
+    source_system: str = Field(..., description="Система-источник ошибки", min_length=1, max_length=100)
+    source_module: str | None = Field(None, description="Модуль-источник ошибки", max_length=100)
     user_id: int | None = Field(None, description="ID пользователя, у которого возникла ошибка")
     user_login: str | None = Field(None, description="Логин пользователя")
     category: ErrorCategory = Field(ErrorCategory.EXTERNAL, description="Категория ошибки")
-    severity: ErrorSeverity = Field(ErrorSeverity.ERROR, description="Степень серьезности")
-    details: str | None = Field(None, description="Детали ошибки")
-    chat_ids: list[int] | None = Field(None, description="Список ID чатов для отправки сообщений")
+    severity: ErrorSeverity = Field(ErrorSeverity.ERROR, description="Степень серьезности ошибки")
+    details: str | None = Field(None, description="Детали ошибки (дополнительная информация)")
+    chat_ids: list[int] | None = Field(None, description="Список ID чатов для отправки уведомлений")
     send_to_telegram: bool = Field(True, description="Отправить сообщение в Telegram")
 
 
 class ErrorResolveRequest(BaseModel):
-    """Модель запроса для решения ошибки"""
+    """
+    Модель запроса для решения ошибки.
+
+    Используется для проверки исчезновения ошибки и ее решения.
+    """
 
     resolved_by: int = Field(..., description="ID пользователя, который решает ошибку")
-    check_procedure: str | None = Field(None, description="Хранимая процедура для проверки")
+    check_procedure: str | None = Field(None, description="Имя хранимой процедуры для проверки исчезновения ошибки")
 
 
 class ErrorFilterRequest(BaseModel):
-    """Модель запроса для фильтра ошибок"""
+    """
+    Модель запроса для создания фильтра ошибок в чате.
+
+    Используется для настройки фильтрации сообщений об ошибках в чатах.
+    """
 
     chat_id: int = Field(..., description="ID чата")
-    pattern: str = Field(..., description="Шаблон для фильтрации")
+    pattern: str = Field(..., description="Шаблон для фильтрации сообщений")
     pattern_type: str = Field("contains", description="Тип шаблона: contains, exact, regex")
-    category: ErrorCategory | None = Field(None, description="Категория ошибки")
-    error_code: str | None = Field(None, description="Код ошибки")
-    source_system: str | None = Field(None, description="Система-источник")
-    is_regex: bool = Field(False, description="Использовать регулярное выражение")
+    category: ErrorCategory | None = Field(None, description="Категория ошибки для фильтрации")
+    error_code: str | None = Field(None, description="Код ошибки для фильтрации")
+    source_system: str | None = Field(None, description="Система-источник для фильтрации")
+    is_regex: bool = Field(False, description="Использовать регулярное выражение в шаблоне")
     description: str | None = Field(None, description="Описание фильтра")
 
 
 class ChatNotificationSettingsRequest(BaseModel):
-    """Модель запроса для настроек уведомлений"""
+    """
+    Модель запроса для настройки уведомлений в чате.
+
+    Управляет поведением уведомлений в конкретном чате.
+    """
 
     chat_id: int = Field(..., description="ID чата")
-    silence_start: str | None = Field(None, description="Начало тишины (HH:MM)")
-    silence_end: str | None = Field(None, description="Конец тишины (HH:MM)")
-    silence_enabled: bool = Field(False, description="Включить тишину")
+    silence_start: str | None = Field(None, description="Начало периода тишины (формат HH:MM)")
+    silence_end: str | None = Field(None, description="Конец периода тишины (формат HH:MM)")
+    silence_enabled: bool = Field(False, description="Включить режим тишины")
     notify_errors: bool = Field(True, description="Уведомлять об ошибках")
     notify_periodic_tasks: bool = Field(True, description="Уведомлять о периодических задачах")
     notify_task_execution: bool = Field(True, description="Уведомлять о выполнении задач")
     notify_system: bool = Field(True, description="Уведомлять о системных событиях")
-    notification_level: ErrorSeverity = Field(ErrorSeverity.ERROR, description="Уровень уведомлений")
-    grouping_enabled: bool = Field(True, description="Группировать ошибки")
-    grouping_window_minutes: int = Field(60, description="Окно группировки в минутах")
-    auto_reports_enabled: bool = Field(True, description="Включить автоматические отчеты")
-    auto_report_interval: int = Field(60, description="Интервал отчетов в минутах")
-    auto_report_hour_start: int = Field(9, description="Начало рабочего времени")
-    auto_report_hour_end: int = Field(18, description="Конец рабочего времени")
+    notification_level: ErrorSeverity = Field(
+        ErrorSeverity.ERROR, description="Минимальный уровень серьезности для уведомлений"
+    )
+    grouping_enabled: bool = Field(True, description="Группировать схожие ошибки")
+    grouping_window_minutes: int = Field(60, description="Временное окно для группировки ошибок (минуты)")
+    auto_reports_enabled: bool = Field(True, description="Включить автоматические отчеты об ошибках")
+    auto_report_interval: int = Field(60, description="Интервал отправки отчетов (минуты)")
+    auto_report_hour_start: int = Field(9, description="Начало рабочего времени для отчетов (час)")
+    auto_report_hour_end: int = Field(18, description="Конец рабочего времени для отчетов (час)")
 
 
 # ============ Эндпоинты ============
 
 
 @router.post(
-    "/external", summary="Зарегистрировать внешнюю ошибку", description="Регистрация ошибки из внешней системы"
+    "/external",
+    summary="Зарегистрировать внешнюю ошибку",
+    description="Регистрация ошибки из внешней системы с автоматической отправкой в Telegram",
 )
 @log_exceptions(api_logger)
 async def register_external_error(
@@ -88,10 +134,20 @@ async def register_external_error(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     """
-    Регистрация внешней ошибки.
+    Регистрация внешней ошибки в системе.
 
-    Отправка в Telegram происходит автоматически через LogHandlerService,
-    который определяет топик на основе source_system.
+    Принимает ошибку из внешней системы, сохраняет в базу данных
+    и отправляет уведомление в Telegram через LogHandlerService.
+
+    Args:
+        request: Данные внешней ошибки
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: ID ошибки и информация об отправке уведомлений
+
+    Raises:
+        HTTPException: При ошибках сохранения или отправки
     """
     api_logger.info(f"📝 Registering external error: {request.error_code} from {request.source_system}")
 
@@ -103,7 +159,7 @@ async def register_external_error(
         else:
             api_logger.debug("ℹ️ No chat_ids specified, error will be handled by LogHandlerService")
 
-        # ИСПОЛЬЗУЕМ error_service ДЛЯ ЛОГИРОВАНИЯ ОШИБКИ
+        # Регистрация ошибки через сервис
         error = await error_service.log_external_error(
             error_code=request.error_code,
             error_message=request.error_message,
@@ -119,7 +175,7 @@ async def register_external_error(
             session=session,
         )
 
-        # Используем репозиторий для получения количества связанных сообщений
+        # Получение количества связанных сообщений
         message_count = await _error_repo.get_linked_message_count(session, error.FID)
 
         api_logger.info(f"✅ Error saved with ID: {error.FID}, linked messages: {message_count}")
@@ -141,19 +197,37 @@ async def register_external_error(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/{error_id}/resolve", summary="Решение ошибки", description="Проверка исчезновения ошибки и ее решение")
+@router.post(
+    "/{error_id}/resolve",
+    summary="Решение ошибки",
+    description="Проверяет исчезновение ошибки и отмечает ее как решенную",
+)
 @log_exceptions(api_logger)
 async def resolve_error(
     error_id: int,
     request: ErrorResolveRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Решение ошибки"""
+    """
+    Решение ошибки с проверкой ее исчезновения.
 
+    Выполняет проверку через указанную хранимую процедуру
+    и отмечает ошибку как решенную в случае успеха.
+
+    Args:
+        error_id: ID ошибки для решения
+        request: Данные о пользователе и процедуре проверки
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат решения ошибки
+
+    Raises:
+        HTTPException: При ошибках выполнения проверки
+    """
     api_logger.info(f"🔧 Resolving error {error_id} by user {request.resolved_by}")
 
     try:
-        # ИСПОЛЬЗУЕМ error_service ДЛЯ РЕШЕНИЯ ОШИБКИ
         success, message = await error_service.check_and_resolve_error(
             error_id=error_id,
             resolved_by=request.resolved_by,
@@ -177,18 +251,34 @@ async def resolve_error(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/{error_id}/reopen", summary="Переоткрыть ошибку", description="Переоткрытие ранее решенной ошибки")
+@router.post(
+    "/{error_id}/reopen",
+    summary="Переоткрыть ошибку",
+    description="Переоткрытие ранее решенной ошибки",
+)
 @log_exceptions(api_logger)
 async def reopen_error(
     error_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Переоткрытие ошибки"""
+    """
+    Переоткрытие ранее решенной ошибки.
 
+    Отменяет статус "решено" и возвращает ошибку в активное состояние.
+
+    Args:
+        error_id: ID ошибки для переоткрытия
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат переоткрытия
+
+    Raises:
+        HTTPException: При ошибках обновления статуса
+    """
     api_logger.info(f"🔁 Reopening error {error_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПЕРЕОТКРЫТИЯ ОШИБКИ
         success, message = await error_service.reopen_error(
             error_id=error_id,
             session=session,
@@ -210,7 +300,11 @@ async def reopen_error(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/stats", summary="Статистика ошибок", description="Получение статистики по ошибкам")
+@router.get(
+    "/stats",
+    summary="Статистика ошибок",
+    description="Получение статистики по ошибкам с фильтрацией по дате и категории",
+)
 @log_exceptions(api_logger)
 async def get_error_stats(
     start_date: datetime | None = None,
@@ -218,12 +312,27 @@ async def get_error_stats(
     category: ErrorCategory | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение статистики ошибок"""
+    """
+    Получение статистики по ошибкам.
 
+    Возвращает агрегированную статистику с группировкой по:
+    - Категориям ошибок
+    - Степени серьезности
+    - Системам-источникам
+    - Статусам (активные/решенные)
+
+    Args:
+        start_date: Начальная дата для фильтрации (опционально)
+        end_date: Конечная дата для фильтрации (опционально)
+        category: Категория ошибок для фильтрации (опционально)
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Статистика ошибок
+    """
     api_logger.info("📊 Getting error stats")
 
     try:
-        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ
         stats = await error_service.get_error_stats(
             start_date=start_date,
             end_date=end_date,
@@ -239,19 +348,33 @@ async def get_error_stats(
 
 
 @router.get(
-    "/user/{user_id}/stats", summary="Статистика пользователя", description="Статистика пользователя по решению ошибок"
+    "/user/{user_id}/stats",
+    summary="Статистика пользователя",
+    description="Статистика пользователя по решению ошибок",
 )
 @log_exceptions(api_logger)
 async def get_user_stats(
     user_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение статистики пользователя"""
+    """
+    Получение статистики пользователя по решению ошибок.
 
+    Возвращает:
+    - Общее количество решенных ошибок
+    - Среднее время решения
+    - Распределение по категориям и серьезности
+
+    Args:
+        user_id: ID пользователя
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Статистика пользователя
+    """
     api_logger.info(f"📊 Getting user stats for user {user_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ error_service ДЛЯ ПОЛУЧЕНИЯ СТАТИСТИКИ ПОЛЬЗОВАТЕЛЯ
         stats = await error_service.get_user_stats(
             user_id=user_id,
             session=session,
@@ -264,22 +387,44 @@ async def get_user_stats(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.put("/settings", summary="Настройки уведомлений", description="Обновление настроек уведомлений для чата")
+@router.put(
+    "/settings",
+    summary="Настройки уведомлений",
+    description="Обновление настроек уведомлений для чата",
+)
 @log_exceptions(api_logger)
 async def update_notification_settings(
     request: ChatNotificationSettingsRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Обновление настроек уведомлений"""
+    """
+    Обновление настроек уведомлений для конкретного чата.
 
+    Позволяет настроить:
+    - Режим тишины
+    - Типы уведомлений (ошибки, задачи, система)
+    - Уровень серьезности
+    - Группировку ошибок
+    - Автоматические отчеты
+
+    Args:
+        request: Настройки уведомлений
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Результат обновления
+
+    Raises:
+        HTTPException: При ошибках сохранения настроек
+    """
     api_logger.info(f"⚙️ Updating notification settings for chat {request.chat_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ репозиторий ДЛЯ ПОЛУЧЕНИЯ НАСТРОЕК
+        # Проверяем наличие существующих настроек
         settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=request.chat_id)
 
         if settings_obj:
-            # ИСПОЛЬЗУЕМ update() МЕТОД РЕПОЗИТОРИЯ ВМЕСТО ПРЯМОГО ИЗМЕНЕНИЯ
+            # Обновление существующих настроек
             updated_settings = await _settings_repo.update(
                 session=session,
                 chat_id=request.chat_id,
@@ -308,7 +453,7 @@ async def update_notification_settings(
 
             api_logger.debug(f"ℹ️ Updated existing settings for chat {request.chat_id}")
         else:
-            # ИСПОЛЬЗУЕМ create() МЕТОД РЕПОЗИТОРИЯ
+            # Создание новых настроек
             await _settings_repo.create(
                 session=session,
                 chat_id=request.chat_id,
@@ -329,8 +474,7 @@ async def update_notification_settings(
             )
             api_logger.debug(f"ℹ️ Created new settings for chat {request.chat_id}")
 
-        # Коммит выполняется автоматически через репозиторий
-        # Но для надежности делаем явный коммит
+        # Явный коммит изменений
         await session.commit()
 
         api_logger.info(f"✅ Notification settings updated for chat {request.chat_id}")
@@ -346,18 +490,32 @@ async def update_notification_settings(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.get("/settings/{chat_id}", summary="Получить настройки", description="Получение настроек уведомлений для чата")
+@router.get(
+    "/settings/{chat_id}",
+    summary="Получить настройки",
+    description="Получение настроек уведомлений для чата",
+)
 @log_exceptions(api_logger)
 async def get_notification_settings(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Получение настроек уведомлений"""
+    """
+    Получение текущих настроек уведомлений для чата.
 
+    Args:
+        chat_id: ID чата
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Настройки уведомлений
+
+    Raises:
+        HTTPException: При ошибках получения настроек
+    """
     api_logger.info(f"⚙️ Getting notification settings for chat {chat_id}")
 
     try:
-        # ИСПОЛЬЗУЕМ репозиторий ДЛЯ ПОЛУЧЕНИЯ НАСТРОЕК
         settings_obj = await _settings_repo.get_by_chat_id(session=session, chat_id=chat_id)
 
         if not settings_obj:
@@ -369,7 +527,6 @@ async def get_notification_settings(
 
         api_logger.info(f"✅ Settings retrieved for chat {chat_id}")
 
-        # Используем DTO или словарь для ответа
         return JSONResponse(
             status_code=200,
             content={
@@ -400,15 +557,34 @@ async def get_notification_settings(
 
 
 @router.get(
-    "/report/{chat_id}", summary="Сгенерировать отчет", description="Генерация автоматического отчета об ошибках"
+    "/report/{chat_id}",
+    summary="Сгенерировать отчет",
+    description="Генерация автоматического отчета об ошибках для чата",
 )
 @log_exceptions(api_logger)
 async def generate_report(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """Генерация отчета об ошибках"""
+    """
+    Генерация отчета об ошибках для чата.
 
+    Создает отчет, содержащий:
+    - Активные ошибки
+    - Решенные за период ошибки
+    - Статистику по категориям
+    - Рекомендации по устранению
+
+    Args:
+        chat_id: ID чата
+        session: Асинхронная сессия SQLAlchemy
+
+    Returns:
+        JSONResponse: Отчет об ошибках
+
+    Raises:
+        HTTPException: При ошибках генерации отчета
+    """
     api_logger.info(f"📊 Generating report for chat {chat_id}")
 
     try:
@@ -421,7 +597,10 @@ async def generate_report(
 
         api_logger.info(f"✅ Report generated for chat {chat_id}")
 
-        return JSONResponse(status_code=200, content={"success": True, "report": report, "timestamp": get_timestamp()})
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "report": report, "timestamp": get_timestamp()},
+        )
 
     except Exception as e:
         api_logger.error(f"❌ Failed to generate report: {e}", exc_info=True)

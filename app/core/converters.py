@@ -73,7 +73,7 @@ def chat_type_from_dialog(dialog: Any | None) -> ChatType:
         return ChatType.PRIVATE
 
     try:
-        # Если есть entity, используем его
+        # Использование entity, если оно есть
         if hasattr(dialog, "entity") and dialog.entity is not None:
             return chat_type_from_telethon(dialog.entity)
 

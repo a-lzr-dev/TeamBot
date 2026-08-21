@@ -6,9 +6,9 @@ from telethon.errors import FloodWaitError
 from app.core.services.base import BaseService
 
 from ....db.repositories.users import UserRepository
-from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import UserModel
+from ....utils.decorators import log_exceptions
 from ...clients.telethon_client import TelethonClient
 
 if TYPE_CHECKING:
@@ -74,7 +74,7 @@ class TelethonUserService(BaseService):
         username: str | None = None,
     ) -> UserModel:
         """Сохранение пользователя в БД"""
-        return await UserRepository.save_user(
+        return await UserRepository.save_user(  # type: ignore[no-any-return]
             session=session,
             user_id=user_id,
             is_bot=is_bot,

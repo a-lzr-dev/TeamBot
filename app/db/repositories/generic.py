@@ -121,7 +121,10 @@ class GenericRepository:
         Returns:
             tuple[int, int, int]: (удалено, без изменений (не найдены), ошибки)
         """
+        db_logger.info(f"🗑️ [delete_records_bulk] Batch delete from {model.__tablename__}")
+
         if not records:
+            db_logger.debug("ℹ️ [delete_records_bulk] No records to delete")
             return 0, 0, 0
 
         if isinstance(records, dict):
@@ -129,7 +132,7 @@ class GenericRepository:
         elif isinstance(records, list):
             records_list = records
         else:
-            db_logger.warning(f"⚠️ Unexpected records type: {type(records)}")
+            db_logger.warning(f"⚠️ [delete_records_bulk] Unexpected records type: {type(records)}")
             return 0, 0, 0
 
         delete_ids = []
@@ -148,6 +151,7 @@ class GenericRepository:
                         delete_ids.append(pk_tuple)
 
         if not delete_ids:
+            db_logger.debug("ℹ️ [delete_records_bulk] No valid primary keys found")
             return 0, 0, 0
 
         safe_chunk_size = GenericRepository._calculate_safe_chunk_size(
@@ -166,6 +170,9 @@ class GenericRepository:
             if len(primary_keys) == 1:
                 pk_col = getattr(model, primary_keys[0])
                 delete_stmt = delete(model).where(pk_col.in_(chunk_ids))
+
+                db_logger.debug(f"📝 SQL (delete chunk): {delete_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
                 try:
                     result = await session.execute(delete_stmt)
                     rowcount = result.rowcount if hasattr(result, "rowcount") else 0
@@ -193,6 +200,11 @@ class GenericRepository:
 
                 if conditions:
                     delete_stmt = delete(model).where(or_(*conditions))
+
+                    db_logger.debug(
+                        f"📝 SQL (delete chunk): {delete_stmt.compile(compile_kwargs={'literal_binds': True})}"
+                    )
+
                     try:
                         result = await session.execute(delete_stmt)
                         rowcount = result.rowcount if hasattr(result, "rowcount") else 0
@@ -210,6 +222,9 @@ class GenericRepository:
                             raise
                         total_errors += len(chunk_ids)
 
+        db_logger.info(
+            f"✅ [delete_records_bulk] Deleted {total_deleted}, unchanged {total_unchanged}, errors {total_errors}"
+        )
         return total_deleted, total_unchanged, total_errors
 
     @staticmethod
@@ -233,7 +248,10 @@ class GenericRepository:
                 "error_records": количество записей с ошибками,
             }
         """
+        db_logger.info(f"🔄 [upsert_records_bulk] Batch upsert into {model.__tablename__} ({len(records)} records)")
+
         if not records:
+            db_logger.debug("ℹ️ [upsert_records_bulk] No records to upsert")
             return {"inserted": 0, "updated": 0, "unchanged": 0, "error_records": 0}
 
         if model_columns is None:
@@ -248,6 +266,7 @@ class GenericRepository:
             normalized_records.append(GenericRepository._convert_record_types(model, rec))
 
         if not normalized_records:
+            db_logger.warning("⚠️ [upsert_records_bulk] No valid records after normalization")
             return {"inserted": 0, "updated": 0, "unchanged": 0, "error_records": 0}
 
         records = normalized_records
@@ -280,6 +299,11 @@ class GenericRepository:
                     chunk = pk_list[i : i + select_chunk_size]
                     try:
                         select_stmt = select(model).where(pk_col.in_(chunk))
+
+                        db_logger.debug(
+                            f"📝 SQL (select existing): {select_stmt.compile(compile_kwargs={'literal_binds': True})}"
+                        )
+
                         result = await session.execute(select_stmt)
                         db_records = result.scalars().all()
                         for db_rec in db_records:
@@ -311,6 +335,11 @@ class GenericRepository:
                     if conditions:
                         try:
                             select_stmt = select(model).where(or_(*conditions))
+
+                            db_logger.debug(
+                                f"📝 SQL (select existing): {select_stmt.compile(compile_kwargs={'literal_binds': True})}"
+                            )
+
                             result = await session.execute(select_stmt)
                             db_records = result.scalars().all()
                             for db_rec in db_records:
@@ -419,6 +448,11 @@ class GenericRepository:
                         insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=primary_keys)
                     else:
                         insert_stmt = insert_stmt.on_conflict_do_nothing(index_elements=primary_keys)
+
+                    db_logger.debug(
+                        f"📝 SQL (insert chunk): {insert_stmt.compile(compile_kwargs={'literal_binds': True})}"
+                    )
+
                     await session.execute(insert_stmt)
                     inserted += len(batch)
                 except Exception:
@@ -440,6 +474,11 @@ class GenericRepository:
                         )
                     else:
                         upsert_stmt = pg_insert(model).values(batch).on_conflict_do_nothing()
+
+                    db_logger.debug(
+                        f"📝 SQL (update chunk): {upsert_stmt.compile(compile_kwargs={'literal_binds': True})}"
+                    )
+
                     await session.execute(upsert_stmt)
                     updated += len(batch)
                 except Exception:
@@ -447,13 +486,17 @@ class GenericRepository:
                         raise
                     error_records_count += len(batch)
 
-        # 7. Возврат статистики
-        return {
+        result = {
             "inserted": inserted,
             "updated": updated,
             "unchanged": len(unchanged_records),
             "error_records": error_records_count,
         }
+
+        db_logger.info(
+            f"✅ [upsert_records_bulk] Inserted {inserted}, updated {updated}, unchanged {len(unchanged_records)}, errors {error_records_count}"
+        )
+        return result  # type: ignore[no-any-return]
 
     @staticmethod
     async def save_data_bulk(
@@ -464,6 +507,7 @@ class GenericRepository:
         chunk_size: int = 1000,
         raise_on_error: bool = False,
         commit_chunks: bool = False,
+        show_logs: bool = True,
     ) -> dict[str, int]:
         """
         Массовое сохранение данных с использованием UPSERT.
@@ -476,6 +520,7 @@ class GenericRepository:
             chunk_size: Размер чанка для пакетной обработки
             raise_on_error: Поднимать исключение при ошибке или продолжать
             commit_chunks: Коммитить каждый чанк отдельно (для больших таблиц)
+            show_logs: Отображение подробного логирования (Debug уровень)
 
         Returns:
             dict: Статистика операций
@@ -485,12 +530,11 @@ class GenericRepository:
                 - unchanged_upsert: количество записей без изменений при UPSERT
                 - unchanged_delete: количество записей без изменений при DELETE
                 - error_records: количество записей с ошибками
-
-        Note:
-            Записи с FlagExpire=1 или True обрабатываются как DELETE.
-            Остальные записи обрабатываются как UPSERT (INSERT или UPDATE).
         """
+        db_logger.info(f"💾 [save_data_bulk] Bulk save into {model.__tablename__}")
+
         if not records:
+            db_logger.debug("ℹ️ [save_data_bulk] No records to save")
             return {
                 "inserted": 0,
                 "updated": 0,
@@ -505,6 +549,7 @@ class GenericRepository:
         elif isinstance(records, list):
             records_list = records
         else:
+            db_logger.warning(f"⚠️ [save_data_bulk] Unexpected records type: {type(records)}")
             return {
                 "inserted": 0,
                 "updated": 0,
@@ -552,7 +597,7 @@ class GenericRepository:
                     if clean_delete_record:
                         delete_records.append(clean_delete_record)
                 else:
-                    db_logger.warning(f"⚠️ No primary keys for {model.__tablename__}, skipping DELETE")
+                    db_logger.warning(f"⚠️ [save_data_bulk] No primary keys for {model.__tablename__}, skipping DELETE")
             else:
                 clean_record = {}
                 for col in model_columns:
@@ -614,7 +659,7 @@ class GenericRepository:
         # UPSERT
         if upsert_records:
             if not primary_keys:
-                db_logger.warning(f"⚠️ No primary key for {model.__tablename__}, using all columns")
+                db_logger.warning(f"⚠️ [save_data_bulk] No primary key for {model.__tablename__}, using all columns")
                 primary_keys = list(upsert_records[0].keys())
 
             if commit_chunks:
@@ -664,7 +709,7 @@ class GenericRepository:
                 total_unchanged_upsert += result["unchanged"]
                 total_error_records += result["error_records"]
 
-        return {
+        result = {
             "inserted": total_inserted,
             "updated": total_updated,
             "deleted": total_deleted,
@@ -672,6 +717,13 @@ class GenericRepository:
             "unchanged_delete": total_unchanged_delete,
             "error_records": total_error_records,
         }
+
+        db_logger.info(
+            f"✅ [save_data_bulk] Inserted {total_inserted}, updated {total_updated}, deleted {total_deleted}, "
+            f"unchanged_upsert {total_unchanged_upsert}, unchanged_delete {total_unchanged_delete}, "
+            f"errors {total_error_records}"
+        )
+        return result
 
 
 __all__ = ["GenericRepository"]

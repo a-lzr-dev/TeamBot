@@ -3,9 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..bot.dependencies import get_bot_manager
-from ..db.repositories import ErrorFilterRepository, NotificationSettingsRepository
-from ..db.repositories.errors import ErrorRepository
-from ..exceptions import log_exceptions
+from ..db.repositories import ErrorFilterRepository, ErrorRepository, NotificationSettingsRepository
 from ..logger import app_logger
 from ..models import (
     ChatNotificationSettingsModel,
@@ -16,6 +14,7 @@ from ..models import (
     MessageType,
     datetime_now,
 )
+from ..utils.decorators import log_exceptions
 
 
 class NotificationService:

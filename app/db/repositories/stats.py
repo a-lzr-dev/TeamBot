@@ -4,9 +4,9 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import ChatMessageModel, ChatModel, MessageType, UserModel, datetime_now
+from ...utils.decorators import log_exceptions
 
 
 class StatsRepository:
@@ -16,12 +16,15 @@ class StatsRepository:
     @log_exceptions(db_logger)
     async def get_full_stats(session: AsyncSession) -> dict[str, Any]:
         """Получение полной статистики"""
+        db_logger.info("📊 [get_full_stats] Getting full statistics")
 
         # Чаты
         total_chats = await session.scalar(select(func.count()).select_from(ChatModel)) or 0
         active_chats = (
             await session.scalar(select(func.count()).select_from(ChatModel).where(ChatModel.FFlagActive)) or 0
         )
+
+        db_logger.debug(f"📊 [get_full_stats] Chats: total={total_chats}, active={active_chats}")
 
         # Сообщения
         total_messages = await session.scalar(select(func.count()).select_from(ChatMessageModel)) or 0
@@ -89,6 +92,9 @@ class StatsRepository:
             .order_by(func.count(ChatMessageModel.FID).desc())
             .limit(5)
         )
+
+        db_logger.debug(f"📝 SQL (top_chats): {top_chats_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         top_chats_result = await session.execute(top_chats_stmt)
         top_chats_list = []
         for row in top_chats_result.all():
@@ -96,7 +102,7 @@ class StatsRepository:
                 {"chat_id": row.FID, "title": row.FTitle or f"Chat {row.FID}", "message_count": row.message_count}
             )
 
-        return {
+        stats = {
             "chats": {"total": total_chats, "active": active_chats, "inactive": total_chats - active_chats},
             "messages": {
                 "total": total_messages,
@@ -108,3 +114,8 @@ class StatsRepository:
             "users": {"total": total_users},
             "top_chats": top_chats_list,
         }
+
+        db_logger.info(
+            f"✅ [get_full_stats] Stats: chats={total_chats}, messages={total_messages}, users={total_users}"
+        )
+        return stats

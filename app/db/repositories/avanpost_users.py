@@ -1,23 +1,214 @@
+"""
+Репозиторий для работы с данными пользователей Avanpost.
+
+Содержит методы для получения данных о пользователях, их заказах, чатах,
+транспорте и других связанных сущностях.
+"""
+
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models.avanpost import (
     AvanpostContactLangModel,
     AvanpostContactModel,
+    AvanpostContactMsgModel,
+    AvanpostMsgModel,
     AvanpostUserChatLangModel,
     AvanpostUserChatModel,
+    AvanpostUserLinkChatContactMsgModel,
+    AvanpostUserMissionLangModel,
+    AvanpostUserMissionModel,
     AvanpostUserOrderLangModel,
+    AvanpostUserOrderLinkMissionModel,
     AvanpostUserOrderModel,
     AvanpostUserVehicleModel,
 )
+from ...utils.decorators import log_exceptions
 
 
 class AvanpostUserRepository:
-    """Репозиторий для работы с данными пользователей Avanpost."""
+    """
+    Репозиторий для работы с данными пользователей Avanpost.
+
+    Группы методов:
+    1. Список пользователей (get_avanpost_users_page)
+    2. Заказы пользователя (get_user_orders, get_user_orders_page)
+    3. Чаты пользователя (get_user_chats, get_user_chats_page)
+    4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page)
+    5. Заказы перевозчика (get_carrier_orders_page)
+    6. Сообщения чата (get_chat_messages_page)
+    7. Вспомогательные методы (get_contact_name)
+    """
+
+    # ==================== 1. СПИСОК ПОЛЬЗОВАТЕЛЕЙ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_avanpost_users_page(
+        session: AsyncSession,
+        page: int = 0,
+        page_size: int = 10,
+        search_query: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Получение списка пользователей Avanpost с пагинацией и поиском.
+
+        Используется для:
+        - Команды /users (административный интерфейс)
+        - Поиска пользователей по имени, телефону или связанному Telegram пользователю
+        - Выбора пользователя для запуска меню действий от его имени
+
+        Args:
+            session: Сессия БД (main)
+            page: Номер страницы (начиная с 0)
+            page_size: Количество пользователей на странице
+            search_query: Поисковый запрос (имя, фамилия, телефон)
+
+        Returns:
+            dict: {
+                "users": list[dict],  # Список пользователей
+                "total": int,         # Общее количество
+                "page": int,          # Текущая страница
+                "total_pages": int,   # Всего страниц
+                "has_prev": bool,     # Есть ли предыдущая страница
+                "has_next": bool,     # Есть ли следующая страница
+                "search_query": str | None  # Текущий поисковый запрос
+            }
+        """
+        db_logger.info(f"📋 [get_avanpost_users_page] START: page={page}, page_size={page_size}, search={search_query}")
+
+        try:
+            from ...models import AvanpostUserLinkModel, AvanpostUserModel, UserModel
+
+            # Базовый запрос с подгрузкой связанных моделей
+            stmt = (
+                select(AvanpostUserModel)
+                .options(selectinload(AvanpostUserModel.user_link).selectinload(AvanpostUserLinkModel.telegram_user))
+                .order_by(AvanpostUserModel.FID)
+            )
+
+            # Применение поискового фильтра
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+
+                conditions = [
+                    AvanpostUserModel.FName.ilike(search_pattern),
+                    AvanpostUserModel.FPhone.ilike(search_pattern),
+                ]
+
+                # Поиск по связанному Telegram пользователю
+                subquery = (
+                    select(AvanpostUserLinkModel.FK_Parent)
+                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
+                    .where(
+                        or_(
+                            UserModel.FFirstName.ilike(search_pattern),
+                            UserModel.FLastName.ilike(search_pattern),
+                            UserModel.FUserName.ilike(search_pattern),
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(AvanpostUserModel.FID.in_(subquery))
+
+                stmt = stmt.where(or_(*conditions))
+                db_logger.debug(f"📝 [get_avanpost_users_page] SQL with search: {stmt}")
+
+            # Подсчет общего количества
+            count_stmt = select(func.count()).select_from(AvanpostUserModel)
+            db_logger.debug(f"📝 [get_avanpost_users_page] Count SQL: {count_stmt}")
+
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                conditions = [
+                    AvanpostUserModel.FName.ilike(search_pattern),
+                    AvanpostUserModel.FPhone.ilike(search_pattern),
+                ]
+                subquery = (
+                    select(AvanpostUserLinkModel.FK_Parent)
+                    .join(UserModel, AvanpostUserLinkModel.FK_Link == UserModel.FID)
+                    .where(
+                        or_(
+                            UserModel.FFirstName.ilike(search_pattern),
+                            UserModel.FLastName.ilike(search_pattern),
+                            UserModel.FUserName.ilike(search_pattern),
+                        )
+                    )
+                    .scalar_subquery()
+                )
+                conditions.append(AvanpostUserModel.FID.in_(subquery))
+                count_stmt = count_stmt.where(or_(*conditions))
+
+            total_result = await session.execute(count_stmt)
+            total = total_result.scalar() or 0
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+            db_logger.debug(f"📊 [get_avanpost_users_page] Total users: {total}, total_pages: {total_pages}")
+
+            # Пагинация
+            offset = page * page_size
+            stmt = stmt.offset(offset).limit(page_size)
+
+            result = await session.execute(stmt)
+            users = result.scalars().all()
+
+            # Форматирование пользователей
+            users_data = []
+            for idx, user in enumerate(users):
+                telegram_user = None
+                if user.user_link and user.user_link.telegram_user:
+                    telegram_user = user.user_link.telegram_user
+
+                fk_user = user.user_link.FK_Link if user.user_link else None
+
+                user_data = {
+                    "id": user.FID,
+                    "name": user.FName or f"User #{user.FID}",
+                    "phone": user.FPhone or "Не указан",
+                    "group_id": user.FK_Group,
+                    "telegram_id": fk_user,
+                    "telegram_name": telegram_user.fullname if telegram_user else None,
+                    "is_authorized": fk_user is not None,
+                }
+                users_data.append(user_data)
+
+                db_logger.debug(
+                    f"  [{idx + 1}] User: id={user.FID}, name={user_data['name']}, "
+                    f"group_id={user.FK_Group}, authorized={user_data['is_authorized']}"
+                )
+
+            db_logger.info(
+                f"✅ [get_avanpost_users_page] FINISH: returned {len(users_data)} users (total={total}, page={page})"
+            )
+
+            return {
+                "users": users_data,
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+                "search_query": search_query,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ [get_avanpost_users_page] Failed: {e}", exc_info=True)
+            return {
+                "users": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": str(e),
+            }
+
+    # ==================== 2. ЗАКАЗЫ ПОЛЬЗОВАТЕЛЯ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -27,7 +218,7 @@ class AvanpostUserRepository:
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
         """
-        Получение списка заказов пользователя.
+        Получение списка заказов заказчиков пользователя.
 
         Args:
             session: Сессия БД
@@ -35,7 +226,7 @@ class AvanpostUserRepository:
             lang_code: Код языка
 
         Returns:
-            list[dict]: Список заказов с полями id, name
+            list[dict]: Список заказов заказчиков с полями id, name
         """
         db_logger.info(f"📋 [get_user_orders] START for user_id={avanpost_user_id}, lang={lang_code}")
 
@@ -56,8 +247,7 @@ class AvanpostUserRepository:
                 .order_by(AvanpostUserOrderModel.FPosition)
             )
 
-            compiled = stmt.compile(compile_kwargs={"literal_binds": True})
-            db_logger.debug(f"📝 [get_user_orders] SQL: {compiled}")
+            db_logger.debug(f"📝 [get_user_orders] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -91,7 +281,7 @@ class AvanpostUserRepository:
         lang_code: str = "RU",
     ) -> dict[str, Any]:
         """
-        Получение списка заказов пользователя с пагинацией и поиском.
+        Получение списка заказов заказчиков пользователя с пагинацией и поиском.
 
         Args:
             session: Сессия БД
@@ -140,6 +330,8 @@ class AvanpostUserRepository:
 
             stmt = stmt.order_by(AvanpostUserOrderModel.FPosition)
 
+            db_logger.debug(f"📝 [get_user_orders_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             # Подсчет общего количества
             count_stmt = (
                 select(func.count())
@@ -155,6 +347,11 @@ class AvanpostUserRepository:
                         )
                     )
                 )
+
+            db_logger.debug(
+                f"📝 [get_user_orders_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
             total_result = await session.execute(count_stmt)
             total = total_result.scalar() or 0
             total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -162,6 +359,10 @@ class AvanpostUserRepository:
             # Пагинация
             offset = page * page_size
             stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_user_orders_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -173,6 +374,11 @@ class AvanpostUserRepository:
                 }
                 for row in rows
             ]
+
+            db_logger.info(
+                f"✅ [get_user_orders_page] FINISH: returned {len(orders)} orders for user {avanpost_user_id} "
+                f"(total={total}, page={page})"
+            )
 
             return {
                 "orders": orders,
@@ -196,6 +402,8 @@ class AvanpostUserRepository:
                 "search_query": search_query,
                 "error": str(e),
             }
+
+    # ==================== 3. ЧАТЫ ПОЛЬЗОВАТЕЛЯ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -234,8 +442,7 @@ class AvanpostUserRepository:
                 .order_by(AvanpostUserChatModel.FID)
             )
 
-            compiled = stmt.compile(compile_kwargs={"literal_binds": True})
-            db_logger.debug(f"📝 [get_user_chats] SQL: {compiled}")
+            db_logger.debug(f"📝 [get_user_chats] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -318,6 +525,8 @@ class AvanpostUserRepository:
 
             stmt = stmt.order_by(AvanpostUserChatModel.FID)
 
+            db_logger.debug(f"📝 [get_user_chats_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             # Подсчет общего количества
             count_stmt = (
                 select(func.count())
@@ -333,6 +542,11 @@ class AvanpostUserRepository:
                         )
                     )
                 )
+
+            db_logger.debug(
+                f"📝 [get_user_chats_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
             total_result = await session.execute(count_stmt)
             total = total_result.scalar() or 0
             total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -340,6 +554,10 @@ class AvanpostUserRepository:
             # Пагинация
             offset = page * page_size
             stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_user_chats_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -351,6 +569,11 @@ class AvanpostUserRepository:
                 }
                 for row in rows
             ]
+
+            db_logger.info(
+                f"✅ [get_user_chats_page] FINISH: returned {len(chats)} chats for user {avanpost_user_id} "
+                f"(total={total}, page={page})"
+            )
 
             return {
                 "chats": chats,
@@ -374,6 +597,8 @@ class AvanpostUserRepository:
                 "search_query": search_query,
                 "error": str(e),
             }
+
+    # ==================== 4. ТРАНСПОРТ ПОЛЬЗОВАТЕЛЯ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -416,8 +641,7 @@ class AvanpostUserRepository:
                 .order_by(AvanpostUserVehicleModel.FPosition)
             )
 
-            compiled = stmt.compile(compile_kwargs={"literal_binds": True})
-            db_logger.debug(f"📝 [get_user_vehicles] SQL: {compiled}")
+            db_logger.debug(f"📝 [get_user_vehicles] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -458,7 +682,7 @@ class AvanpostUserRepository:
         Args:
             session: Сессия БД
             avanpost_user_id: ID пользователя в Avanpost
-            page: Номер страницы (начиная с 0)
+            page: Номер страницы
             page_size: Количество транспорта на странице
             search_query: Поисковый запрос (поиск по названию)
             lang_code: Код языка
@@ -506,6 +730,8 @@ class AvanpostUserRepository:
 
             stmt = stmt.order_by(AvanpostUserVehicleModel.FPosition)
 
+            db_logger.debug(f"📝 [get_user_vehicles_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             # Подсчет общего количества
             count_stmt = (
                 select(func.count())
@@ -521,6 +747,11 @@ class AvanpostUserRepository:
                         .where(AvanpostContactLangModel.FName.ilike(search_pattern))
                     )
                 )
+
+            db_logger.debug(
+                f"📝 [get_user_vehicles_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
             total_result = await session.execute(count_stmt)
             total = total_result.scalar() or 0
             total_pages = (total + page_size - 1) // page_size if total > 0 else 0
@@ -528,6 +759,10 @@ class AvanpostUserRepository:
             # Пагинация
             offset = page * page_size
             stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_user_vehicles_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
 
             result = await session.execute(stmt)
             rows = result.all()
@@ -539,6 +774,11 @@ class AvanpostUserRepository:
                 }
                 for row in rows
             ]
+
+            db_logger.info(
+                f"✅ [get_user_vehicles_page] FINISH: returned {len(vehicles)} vehicles for user {avanpost_user_id} "
+                f"(total={total}, page={page})"
+            )
 
             return {
                 "vehicles": vehicles,
@@ -562,6 +802,347 @@ class AvanpostUserRepository:
                 "search_query": search_query,
                 "error": str(e),
             }
+
+    # ==================== 5. ЗАКАЗЫ ПЕРЕВОЗЧИКА ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_carrier_orders_page(
+        session: AsyncSession,
+        avanpost_user_id: int,
+        order_id: int | None = None,
+        page: int = 0,
+        page_size: int = 10,
+        search_query: str | None = None,
+        lang_code: str = "RU",
+    ) -> dict[str, Any]:
+        """
+        Получение списка заказов перевозчиков для пользователя с пагинацией и поиском.
+
+        Цепочка связей:
+        TAvanpostUsersOrders.FID -> TAvanpostUsersLinksOrdersMissions.FK_Parent
+        -> TAvanpostUsersLinksOrdersMissions.FK_Link -> TAvanpostUsersMissions.FID
+        -> TAvanpostUsersMissionsLangs.FK_Parent
+
+        Args:
+            session: Сессия БД
+            avanpost_user_id: ID пользователя в Avanpost
+            order_id: ID заказа
+            page: Номер страницы
+            page_size: Размер страницы
+            search_query: Поисковый запрос
+            lang_code: Код языка
+
+        Returns:
+            dict: Словарь с данными заказов и пагинацией
+        """
+        db_logger.info(
+            f"📋 [get_carrier_orders_page] START: user_id={avanpost_user_id}, page={page}, search={search_query}"
+        )
+
+        try:
+            # Базовый запрос
+            stmt = (
+                select(
+                    AvanpostUserOrderModel.FID.label("order_id"),
+                    AvanpostUserOrderModel.FPosition.label("order_position"),
+                    AvanpostUserMissionModel.FID.label("mission_id"),
+                    AvanpostUserMissionModel.FFlagCurrent.label("mission_is_current"),
+                    AvanpostUserMissionModel.FFlagNext.label("mission_is_next"),
+                    AvanpostUserMissionLangModel.FName.label("mission_name"),
+                    AvanpostUserMissionLangModel.FInfo.label("mission_info"),
+                )
+                .select_from(AvanpostUserOrderModel)
+                .join(
+                    AvanpostUserOrderLinkMissionModel,
+                    AvanpostUserOrderLinkMissionModel.FK_Parent == AvanpostUserOrderModel.FID,
+                )
+                .join(
+                    AvanpostUserMissionModel,
+                    AvanpostUserMissionModel.FID == AvanpostUserOrderLinkMissionModel.FK_Link,
+                )
+                .outerjoin(
+                    AvanpostUserMissionLangModel,
+                    AvanpostUserMissionLangModel.FK_Parent == AvanpostUserMissionModel.FID,
+                )
+                .where(
+                    AvanpostUserOrderModel.FK_User == avanpost_user_id,
+                    AvanpostUserMissionLangModel.FK_Lang == lang_code,
+                )
+            )
+
+            # Применение фильтра по ID заказа
+            if order_id is not None:
+                stmt = stmt.where(AvanpostUserOrderLinkMissionModel.FK_Parent == order_id)
+
+            # Применение поискового фильтра (по названию миссии)
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                stmt = stmt.where(AvanpostUserMissionLangModel.FName.ilike(search_pattern))
+
+            stmt = stmt.order_by(AvanpostUserOrderModel.FPosition, AvanpostUserOrderModel.FID)
+
+            db_logger.debug(f"📝 [get_carrier_orders_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            # Подсчет общего количества
+            count_stmt = (
+                select(func.count())
+                .select_from(AvanpostUserOrderModel)
+                .join(
+                    AvanpostUserOrderLinkMissionModel,
+                    AvanpostUserOrderLinkMissionModel.FK_Parent == AvanpostUserOrderModel.FID,
+                )
+                .join(
+                    AvanpostUserMissionModel,
+                    AvanpostUserMissionModel.FID == AvanpostUserOrderLinkMissionModel.FK_Link,
+                )
+                .outerjoin(
+                    AvanpostUserMissionLangModel,
+                    AvanpostUserMissionLangModel.FK_Parent == AvanpostUserMissionModel.FID,
+                )
+                .where(
+                    AvanpostUserOrderModel.FK_User == avanpost_user_id,
+                    AvanpostUserMissionLangModel.FK_Lang == lang_code,
+                )
+            )
+
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                count_stmt = count_stmt.where(AvanpostUserMissionLangModel.FName.ilike(search_pattern))
+
+            db_logger.debug(
+                f"📝 [get_carrier_orders_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            total_result = await session.execute(count_stmt)
+            total = total_result.scalar() or 0
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+            # Пагинация
+            offset = page * page_size
+            stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_carrier_orders_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            orders = []
+            for row in rows:
+                orders.append(
+                    {
+                        "id": row.mission_id,
+                        "name": row.mission_name or f"Миссия #{row.mission_id}",
+                        "info": row.mission_info,
+                        "order_id": row.order_id,
+                        "mission_id": row.mission_id,
+                        "is_current": row.mission_is_current,
+                        "is_next": row.mission_is_next,
+                        "order_position": row.order_position,
+                    }
+                )
+
+            db_logger.info(f"✅ [get_carrier_orders_page] FINISH: returned {len(orders)} carrier orders")
+
+            return {
+                "orders": orders,
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+                "search_query": search_query,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ [get_carrier_orders_page] Failed: {e}", exc_info=True)
+            return {
+                "orders": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": str(e),
+            }
+
+    # ==================== 6. СООБЩЕНИЯ ЧАТА ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_chat_messages_page(
+        session: AsyncSession,
+        avanpost_user_id: int,
+        chat_id: int,
+        page: int = 0,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        """
+        Получение списка сообщений в чате с пагинацией.
+
+        Цепочка связей:
+        TAvanpostUsersLinksChatsContactsMsgs.FK_Parent -> TAvanpostContactsMsgs.FID
+        -> TAvanpostContactsMsgs.FK_Link -> TAvanpostMsgs.FID
+
+        Args:
+            session: Сессия БД
+            avanpost_user_id: ID пользователя в Avanpost (не используется в запросе, но нужен для API)
+            chat_id: ID чата (TAvanpostUsersChats.FID)
+            page: Номер страницы
+            page_size: Размер страницы
+
+        Returns:
+            dict: Словарь с данными сообщений и пагинацией
+        """
+        db_logger.info(f"📋 [get_chat_messages_page] START: user_id={avanpost_user_id}, chat_id={chat_id}, page={page}")
+
+        try:
+            # Базовый запрос
+            stmt = (
+                select(
+                    AvanpostContactMsgModel.FID.label("message_id"),
+                    AvanpostContactMsgModel.FDate.label("date"),
+                    AvanpostContactMsgModel.FK_Direction.label("direction"),
+                    AvanpostContactMsgModel.FK_Type.label("type"),
+                    AvanpostContactMsgModel.FK_ContactAuthor.label("author_contact_id"),
+                    AvanpostContactMsgModel.FK_ContactTarget.label("target_contact_id"),
+                    AvanpostMsgModel.FID.label("msg_id"),
+                    AvanpostMsgModel.FText.label("text"),
+                    AvanpostMsgModel.FSize.label("size"),
+                )
+                .select_from(AvanpostUserLinkChatContactMsgModel)
+                .join(
+                    AvanpostContactMsgModel,
+                    AvanpostContactMsgModel.FID == AvanpostUserLinkChatContactMsgModel.FK_Link,
+                )
+                .outerjoin(
+                    AvanpostMsgModel,
+                    AvanpostMsgModel.FID == AvanpostContactMsgModel.FK_Link,
+                )
+                .where(
+                    AvanpostUserLinkChatContactMsgModel.FK_Parent == chat_id,
+                )
+            )
+
+            stmt = stmt.order_by(AvanpostContactMsgModel.FDate.desc())
+
+            db_logger.debug(f"📝 [get_chat_messages_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            # Подсчет общего количества
+            count_stmt = (
+                select(func.count())
+                .select_from(AvanpostUserLinkChatContactMsgModel)
+                .where(AvanpostUserLinkChatContactMsgModel.FK_Parent == chat_id)
+            )
+
+            db_logger.debug(
+                f"📝 [get_chat_messages_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            total_result = await session.execute(count_stmt)
+            total = total_result.scalar() or 0
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+            # Пагинация
+            offset = page * page_size
+            stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_chat_messages_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            messages = []
+            for row in rows:
+                # Получаем имена автора и получателя
+                author_name = await AvanpostUserRepository.get_contact_name(
+                    session, row.author_contact_id, lang_code="RU"
+                )
+                target_name = await AvanpostUserRepository.get_contact_name(
+                    session, row.target_contact_id, lang_code="RU"
+                )
+
+                messages.append(
+                    {
+                        "id": row.message_id,
+                        "date": row.date.isoformat() if row.date else None,
+                        "direction": row.direction,
+                        "type": row.type,
+                        "author_contact_id": row.author_contact_id,
+                        "author_name": author_name,
+                        "target_contact_id": row.target_contact_id,
+                        "target_name": target_name,
+                        "text": row.text,
+                        "size": row.size,
+                        "has_attachments": row.size is not None and row.size > 0,
+                        "msg_id": row.msg_id,
+                    }
+                )
+
+            db_logger.info(f"✅ [get_chat_messages_page] FINISH: returned {len(messages)} messages")
+
+            return {
+                "messages": messages,
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ [get_chat_messages_page] Failed: {e}", exc_info=True)
+            return {
+                "messages": [],
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "error": str(e),
+            }
+
+    # ==================== 7. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_contact_name(
+        session: AsyncSession,
+        contact_id: int | None,
+        lang_code: str = "RU",
+    ) -> str | None:
+        """
+        Получение имени контакта по его ID.
+
+        Args:
+            session: Сессия БД
+            contact_id: ID контакта (TAvanpostContacts.FID)
+            lang_code: Код языка
+
+        Returns:
+            str | None: Имя контакта или None
+        """
+        if not contact_id:
+            return None
+
+        try:
+            stmt = select(AvanpostContactLangModel.FName).where(
+                AvanpostContactLangModel.FK_Parent == contact_id,
+                AvanpostContactLangModel.FK_Lang == lang_code,
+            )
+            db_logger.debug(f"📝 [get_contact_name] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            name = result.scalar_one_or_none()
+            return name or f"Контакт #{contact_id}"
+        except Exception as e:
+            db_logger.error(f"❌ [get_contact_name] Failed: {e}", exc_info=True)
+            return f"Контакт #{contact_id}"
 
 
 __all__ = ["AvanpostUserRepository"]

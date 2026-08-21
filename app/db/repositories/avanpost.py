@@ -5,34 +5,50 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
+from ...utils.decorators import log_exceptions
 
-# ==================== Перечень ВНЕШНИХ ХРАНИМЫХ ПРОЦЕДУР ====================
+# ==================== ПЕРЕЧЕНЬ ВНЕШНИХ ХРАНИМЫХ ПРОЦЕДУР ====================
 #
-# ext.PA_avp_RSAppUsersObjectsContacts_Check
-#   - Проверка пользователя по номеру телефона
-#   - Возвращает: user_id, menu_group_id, contact_id
+# 1. ext.PA_avp_RSAppUsersObjectsContacts_Check
+#    - Проверка пользователя по номеру телефона
+#    - Параметр: @Contact (номер телефона)
+#    - Возвращает: user_id, menu_group_id, contact_id
+#    - Используется в: Авторизация пользователей
 #
-# ext.PA_avp_RSAppBaseData_Load
-#   - Синхронизация базовых данных (справочники)
-#   - Параметр: @Params (JSON с DataTypes, LastSync, Force)
-#   - Возвращает: JSON с Data
+# 2. ext.PA_avp_RSAppBaseData_Load
+#    - Синхронизация базовых данных (справочники)
+#    - Параметр: @Params (JSON с полями DataTypes, LastSync, Force)
+#    - Возвращает: JSON с полем Data (список объектов)
+#    - Формат ответа: [{"SyncType":"System","SyncTime":"...","Data":[...],"Stats":{...}}]
+#    - Используется в: Синхронизация справочников (AVANPOST_BASE_DATA_TYPES)
 #
-# ext.PA_avp_RSAppUserData_Load
-#   - Синхронизация данных пользователя
-#   - Параметры: @Params (JSON с UserId, DataTypes, LastSync, Force)
-#   - Возвращает: JSON с Data
+# 3. ext.PA_avp_RSAppUserData_Load
+#    - Синхронизация данных конкретного пользователя
+#    - Параметр: @Params (JSON с полями UserId, DataTypes, LastSync, Force)
+#    - Возвращает: JSON с полем Data (список объектов)
+#    - Формат ответа: [{"Data": [...]}] или {"Data": [...]}
+#    - Используется в: Синхронизация пользовательских данных
 #
-# ext.PA_avp_RSAppUsersVehicles_Load
-#   - Получение списка ID пользователей из системы
-#   - Возвращает: список user_id
+# 4. ext.PA_avp_RSAppUsers_DefaultAdding_Load
+#    - Получение списка ID пользователей для добавления по умолчанию
+#    - Параметры: отсутствуют
+#    - Возвращает: список user_id
+#    - Используется в: Загрузка пользователей из Avanpost (seed)
 #
 # ======================================================================
 
 
 class AvanpostRepository:
-    """Репозиторий для работы с Avanpost (MSSQL)"""
+    """
+    Репозиторий для работы с Avanpost (MSSQL).
+
+    Предоставляет методы для:
+    - Проверки пользователей по номеру телефона
+    - Получения списка пользователей
+    - Вызова хранимых процедур синхронизации
+    - Проверки существования ошибок
+    """
 
     # ==================== ПОЛЬЗОВАТЕЛИ ====================
 
@@ -45,8 +61,16 @@ class AvanpostRepository:
         """
         Проверка пользователя по номеру телефона через хранимую процедуру.
 
+        Вызывает ext.PA_avp_RSAppUsersObjectsContacts_Check для проверки
+        существования пользователя в системе Avanpost.
+
+        Args:
+            session: Сессия БД (avanpost)
+            phone_number: Номер телефона для проверки
+
         Returns:
-            Tuple[int | None, int | None, int | None]: (user_id, menu_group_id, contact_id) или (None, None, None)
+            tuple[int | None, int | None, int | None]:
+                (user_id, menu_group_id, contact_id) или (None, None, None)
         """
         try:
             sql = """
@@ -58,7 +82,7 @@ class AvanpostRepository:
             row = result.fetchone()
 
             if row:
-                # Проверка сколько колонок вернула процедура
+                # Проверка количества колонок, возвращенных процедурой
                 if len(row) >= 3:
                     user_id = row[0] if row[0] is not None else None
                     menu_group_id = row[1] if row[1] is not None else None
@@ -80,12 +104,14 @@ class AvanpostRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_ids_by_vehicles(
+    async def get_user_ids_default_adding(
         session: AsyncSession,
     ) -> list[int]:
         """
-        Получение списка ID пользователей из Avanpost через хранимую процедуру
-        ext.PA_avp_RSAppUsersVehicles_Load.
+        Получение списка ID пользователей для добавления по умолчанию.
+
+        Вызывает ext.PA_avp_RSAppUsers_DefaultAdding_Load для получения
+        списка пользователей, которые должны быть добавлены в систему.
 
         Args:
             session: Сессия БД (avanpost)
@@ -93,10 +119,10 @@ class AvanpostRepository:
         Returns:
             list[int]: Список ID пользователей (user_id)
         """
-        db_logger.info("📥 Calling ext.PA_avp_RSAppUsersVehicles_Load to get user IDs...")
+        db_logger.info("📥 Calling ext.PA_avp_RSAppUsers_DefaultAdding_Load to get user IDs...")
         try:
             sql = """
-                EXEC ext.PA_avp_RSAppUsersVehicles_Load
+                EXEC ext.PA_avp_RSAppUsers_DefaultAdding_Load
             """
 
             result = await session.execute(text(sql))
@@ -127,13 +153,16 @@ class AvanpostRepository:
         """
         Проверка существования ошибки через хранимую процедуру.
 
+        Используется для проверки, устранена ли ошибка во внешней системе
+        перед ее автоматическим решением.
+
         Args:
             session: Сессия БД (avanpost)
             error_code: Код ошибки
             check_procedure: Имя хранимой процедуры для проверки
 
         Returns:
-            bool: True, если ошибка все еще существует в системе
+            bool: True если ошибка все еще существует в системе
         """
         try:
             sql = f"EXEC {check_procedure} @ErrorCode = :error_code"
@@ -159,6 +188,31 @@ class AvanpostRepository:
         """
         Вызов хранимой процедуры ext.PA_avp_RSAppBaseData_Load.
 
+        Синхронизирует базовые справочные данные из Avanpost.
+
+        СТРУКТУРА ОТВЕТА ПРОЦЕДУРЫ:
+        [
+            {
+                "SyncType": "System",           -- Тип синхронизации
+                "SyncTime": "2026-08-21T19:03:29", -- Время синхронизации
+                "Data": [                        -- Массив блоков данных
+                    {
+                        "DataTypeId": 1,        -- ID типа данных
+                        "FlagExpire": null,     -- Флаг удаления
+                        "Data": [               -- Реальные данные (массив записей)
+                            {"FID": "RU", "FFlagDefault": true},
+                            {"FID": "EN", "FFlagDefault": false}
+                        ]
+                    },
+                    ...
+                ],
+                "Stats": {                       -- Статистика
+                    "Total": 10,
+                    "TablesUpdated": 3
+                }
+            }
+        ]
+
         Args:
             session: Сессия MSSQL (avanpost)
             data_types: Список типов данных для синхронизации
@@ -166,8 +220,9 @@ class AvanpostRepository:
             force: Принудительная синхронизация
 
         Returns:
-            dict: Данные из процедуры
+            dict[str, Any]: Словарь с ключом "Data", содержащим список блоков данных
         """
+        # Подготовка параметров для JSON
         params = {
             "DataTypes": data_types,
             "LastSync": last_sync.isoformat() if last_sync else "1900-01-01T00:00:00",
@@ -196,7 +251,6 @@ class AvanpostRepository:
 
         try:
             first_row = rows[0]
-
             db_logger.debug(f"🔍 First row type: {type(first_row)}")
             db_logger.debug(f"🔍 First row length: {len(first_row)}")
 
@@ -206,65 +260,118 @@ class AvanpostRepository:
 
                 if isinstance(json_data, str):
                     trimmed = json_data.strip()
+
+                    # Проверка, что ответ является JSON
                     if trimmed.startswith("{") or trimmed.startswith("["):
                         try:
                             parsed_data = json.loads(trimmed)
                             db_logger.debug("✅ JSON parsed successfully")
                             db_logger.debug(f"🔍 parsed_data type: {type(parsed_data)}")
 
+                            # ============================================================
+                            # УНИВЕРСАЛЬНАЯ ОБРАБОТКА JSON
+                            # ============================================================
+                            #
+                            # Процедура возвращает JSON в формате массива с одним объектом:
+                            # [{"SyncType":"System","SyncTime":"...","Data":[...],"Stats":{...}}]
+                            #
+                            # Нужно извлечь поле Data и вернуть его содержимое.
+                            # ============================================================
+
+                            # Шаг 1: Извлечение основного объекта данных
                             if isinstance(parsed_data, list):
-                                db_logger.debug(f"🔍 parsed_data is a list, length: {len(parsed_data)}")
-
-                                if parsed_data and isinstance(parsed_data[0], dict):
-                                    if "Data" in parsed_data[0]:
-                                        data_items = parsed_data[0].get("Data", [])
-                                        db_logger.debug(
-                                            f"🔍 Found Data field in first item, length: {len(data_items) if isinstance(data_items, list) else 'not a list'}"
-                                        )
-                                        if isinstance(data_items, list) and data_items:
-                                            if isinstance(data_items[0], dict) and "DataTypeId" in data_items[0]:
-                                                db_logger.debug(
-                                                    f"📊 Extracted {len(data_items)} data items from Data field"
-                                                )
-                                                return {"Data": data_items}
-                                            else:
-                                                db_logger.warning("⚠️ Data field does not contain DataTypeId objects")
-                                                return {"Data": []}
-                                        else:
-                                            return {"Data": []}
-                                    else:
-                                        db_logger.warning("⚠️ First item does not contain 'Data' field")
-                                        return {"Data": []}
-                                else:
-                                    db_logger.warning("⚠️ parsed_data is list but first item is not a dict")
+                                if not parsed_data:
+                                    db_logger.warning("⚠️ Empty list received")
                                     return {"Data": []}
 
-                            elif isinstance(parsed_data, dict):
-                                db_logger.debug(f"🔍 parsed_data is dict, keys: {list(parsed_data.keys())}")
-
-                                if "Data" in parsed_data:
-                                    data_items = parsed_data.get("Data", [])
-                                    if isinstance(data_items, list) and data_items:
-                                        if isinstance(data_items[0], dict) and "DataTypeId" in data_items[0]:
-                                            db_logger.debug(
-                                                f"📊 Extracted {len(data_items)} data items from Data field"
-                                            )
-                                            return {"Data": data_items}
-                                        else:
-                                            db_logger.warning("⚠️ Data field does not contain DataTypeId objects")
-                                            return {"Data": []}
-                                    else:
-                                        return {"Data": []}
-                                else:
-                                    db_logger.warning(f"⚠️ No 'Data' field in response: {list(parsed_data.keys())}")
-                                    return {"Data": []}
-
+                                # Берем первый элемент массива как основной объект данных
+                                data_obj = parsed_data[0]
+                                db_logger.debug("🔍 Extracted first item from list array")
                             else:
-                                db_logger.warning(f"⚠️ Unexpected parsed_data type: {type(parsed_data)}")
+                                # Если вдруг пришел не массив, а объект
+                                data_obj = parsed_data
+
+                            # Шаг 2: Проверка, что data_obj является словарем
+                            if not isinstance(data_obj, dict):
+                                db_logger.warning(f"⚠️ Expected dict, got {type(data_obj)}")
                                 return {"Data": []}
+
+                            db_logger.debug(f"🔍 data_obj keys: {list(data_obj.keys())}")
+
+                            # Шаг 3: Извлечение данных из поля "Data"
+                            if "Data" not in data_obj:
+                                db_logger.debug(
+                                    f"⚠️ No 'Data' field in response. Available keys: {list(data_obj.keys())}"
+                                )
+                                return {"Data": []}
+
+                            raw_data = data_obj.get("Data")
+
+                            if not raw_data:
+                                db_logger.info("ℹ️ 'Data' field is empty")
+                                return {"Data": []}
+
+                            # Шаг 4: Проверка, что raw_data - это список
+                            if not isinstance(raw_data, list):
+                                db_logger.warning(f"⚠️ Expected list, got {type(raw_data)}")
+                                return {"Data": []}
+
+                            db_logger.info(f"✅ Extracted {len(raw_data)} data blocks from 'Data' field")
+
+                            # Шаг 5: Обработка каждого блока данных
+                            # Каждый блок содержит: DataTypeId, FlagExpire, Data (список записей)
+                            result_data = []
+
+                            for block in raw_data:
+                                if not isinstance(block, dict):
+                                    db_logger.warning(f"⚠️ Block is not dict: {type(block)}")
+                                    continue
+
+                                data_type_id = block.get("DataTypeId")
+                                if data_type_id is None:
+                                    db_logger.warning(f"⚠️ DataTypeId is None for block: {list(block.keys())}")
+                                    continue
+
+                                records = block.get("Data")
+                                if not records:
+                                    db_logger.debug(f"ℹ️ No records for DataTypeId {data_type_id}")
+                                    continue
+
+                                flag_expire = block.get("FlagExpire", False)
+
+                                # Проверка, что records - это список
+                                if isinstance(records, list):
+                                    db_logger.debug(
+                                        f"  └─ DataTypeId {data_type_id}: {len(records)} records, "
+                                        f"FlagExpire={flag_expire}"
+                                    )
+                                else:
+                                    db_logger.debug(
+                                        f"  └─ DataTypeId {data_type_id}: single record, FlagExpire={flag_expire}"
+                                    )
+                                    # Если records - не список (одиночный объект), превращаем в список
+                                    records = [records]
+
+                                result_data.append(
+                                    {
+                                        "DataTypeId": data_type_id,
+                                        "FlagExpire": flag_expire,
+                                        "Data": records,
+                                    }
+                                )
+
+                            # Шаг 6: Логируем статистику, если она есть
+                            if "Stats" in data_obj:
+                                stats = data_obj.get("Stats", {})
+                                db_logger.debug(f"📊 Stats from response: {stats}")
+
+                            db_logger.info(f"📊 Total data blocks extracted: {len(result_data)}")
+
+                            return {"Data": result_data}
 
                         except json.JSONDecodeError as e:
                             db_logger.error(f"❌ Failed to parse JSON: {e}")
+                            db_logger.error(f"❌ JSON preview: {trimmed[:500]}...")
                             return {"Data": []}
                     else:
                         db_logger.warning(f"⚠️ Response doesn't start with JSON: {trimmed[:100]}...")
@@ -291,10 +398,27 @@ class AvanpostRepository:
         data_types: list[int],
         last_sync: datetime | None = None,
         force: bool = False,
+        show_logs: bool = True,
     ) -> dict[str, Any]:
-        """Вызов хранимой процедуры ext.PA_avp_RSAppUserData_Load"""
-        import json
+        """
+        Вызов хранимой процедуры ext.PA_avp_RSAppUserData_Load.
 
+        Синхронизирует данные конкретного пользователя из Avanpost.
+        Использует ту же универсальную логику обработки JSON,
+        что и call_base_data_procedure.
+
+        Args:
+            session: Сессия MSSQL (avanpost)
+            user_id: ID пользователя в Avanpost
+            data_types: Список типов данных для синхронизации
+            last_sync: Время последней синхронизации
+            force: Принудительная синхронизация
+            show_logs: Отображение подробного логирования (Debug уровень)
+
+        Returns:
+            dict[str, Any]: Словарь с ключом "Data", содержащим список записей
+        """
+        # Подготовка параметров для JSON
         params = {
             "UserId": user_id,
             "DataTypes": data_types,
@@ -303,7 +427,8 @@ class AvanpostRepository:
         }
         params_json = json.dumps(params, ensure_ascii=False)
 
-        db_logger.debug(f"📤 CALL ext.PA_avp_RSAppUserData_Load Params: {params_json}")
+        if show_logs:
+            db_logger.debug(f"📤 CALL ext.PA_avp_RSAppUserData_Load Params: {params_json}")
 
         sql = text("EXEC ext.PA_avp_RSAppUserData_Load @Params = :params")
         try:
@@ -316,11 +441,13 @@ class AvanpostRepository:
         rows = result.fetchall()
 
         if not rows:
-            db_logger.info("ℹ️ No rows returned from user procedure")
+            if show_logs:
+                db_logger.info("ℹ️ No rows returned from user procedure")
             return {"Data": []}
 
         try:
-            db_logger.debug(f"🔍 User response rows count: {len(rows)}")
+            if show_logs:
+                db_logger.debug(f"🔍 User response rows count: {len(rows)}")
 
             if hasattr(rows[0], "__getitem__") and not isinstance(rows[0], str):
                 first_col = rows[0][0]
@@ -332,30 +459,49 @@ class AvanpostRepository:
                             data = json.loads(trimmed)
                             db_logger.debug(f"🔍 Parsed JSON type: {type(data)}")
 
-                            if isinstance(data, list) and len(data) > 0:
-                                data = data[0]
-                                db_logger.debug(
-                                    f"🔍 Extracted first item from list, keys: {list(data.keys()) if isinstance(data, dict) else 'not dict'}"
-                                )
+                            # ============================================================
+                            # УНИВЕРСАЛЬНАЯ ОБРАБОТКА JSON (аналогично base_data_procedure)
+                            # ============================================================
 
-                            if not isinstance(data, dict):
-                                db_logger.warning(f"⚠️ Expected dict, got {type(data)}")
+                            # Шаг 1: Извлечение основного объекта данных
+                            if isinstance(data, list):
+                                if not data:
+                                    if show_logs:
+                                        db_logger.info("ℹ️ Empty list received")
+                                    return {"Data": []}
+                                data_obj = data[0]
+                                if show_logs:
+                                    db_logger.debug(
+                                        f"🔍 Extracted first item from list, keys: "
+                                        f"{list(data_obj.keys()) if isinstance(data_obj, dict) else 'not dict'}"
+                                    )
+                            else:
+                                data_obj = data
+
+                            # Шаг 2: Проверка, что data_obj является словарем
+                            if not isinstance(data_obj, dict):
+                                db_logger.warning(f"⚠️ Expected dict, got {type(data_obj)}")
                                 return {"Data": []}
 
-                            db_logger.debug(f"🔍 Parsed JSON keys: {list(data.keys())}")
+                            if show_logs:
+                                db_logger.debug(f"🔍 data_obj keys: {list(data_obj.keys())}")
 
-                            if "Data" not in data:
-                                db_logger.warning(f"⚠️ No 'Data' field in response: {list(data.keys())}")
+                            # Шаг 3: Извлечение данных из поля "Data"
+                            if "Data" not in data_obj:
+                                db_logger.debug(f"⚠️ No 'Data' field in response: {list(data_obj.keys())}")
                                 return {"Data": []}
 
-                            raw_data = data.get("Data", [])
+                            raw_data = data_obj.get("Data", [])
 
                             if not raw_data:
-                                db_logger.info("ℹ️ No data in response")
+                                if show_logs:
+                                    db_logger.info("ℹ️ No data in response")
                                 return {"Data": []}
 
-                            db_logger.debug(f"🔍 Raw data length: {len(raw_data)}")
+                            if show_logs:
+                                db_logger.debug(f"🔍 Raw data length: {len(raw_data)}")
 
+                            # Шаг 4: Обработка и структурирование данных
                             result_data = []
 
                             for item in raw_data:
@@ -370,7 +516,8 @@ class AvanpostRepository:
 
                                 records = item.get("Data")
                                 if records is None:
-                                    db_logger.debug(f"ℹ️ No records for DataTypeId {data_type_id}")
+                                    if show_logs:
+                                        db_logger.debug(f"ℹ️ No records for DataTypeId {data_type_id}")
                                     continue
 
                                 flag_expire = item.get("FlagExpire", False)
@@ -388,15 +535,19 @@ class AvanpostRepository:
                                 )
 
                                 records_count = len(records) if isinstance(records, list) else 1
-                                db_logger.debug(
-                                    f"  └─ DataTypeId {data_type_id}: {records_count} records, FlagExpire={flag_expire}"
-                                )
+                                if show_logs:
+                                    db_logger.debug(
+                                        f"  └─ DataTypeId {data_type_id}: {records_count} records, "
+                                        f"FlagExpire={flag_expire}"
+                                    )
 
-                            if "Stats" in data:
-                                stats = data["Stats"]
-                                db_logger.debug(f"📊 Stats from response: {stats}")
+                            if "Stats" in data_obj:
+                                stats = data_obj["Stats"]
+                                if show_logs:
+                                    db_logger.debug(f"📊 Stats from response: {stats}")
 
-                            db_logger.debug(f"📊 Total data blocks: {len(result_data)}")
+                            if show_logs:
+                                db_logger.debug(f"📊 Total data blocks: {len(result_data)}")
 
                             return {"Data": result_data}
 
@@ -407,7 +558,8 @@ class AvanpostRepository:
 
                     elif isinstance(first_col, int | float):
                         if first_col == 0:
-                            db_logger.info("ℹ️ User procedure returned 0 (no data)")
+                            if show_logs:
+                                db_logger.info("ℹ️ User procedure returned 0 (no data)")
                         else:
                             db_logger.warning(f"⚠️ User procedure returned code: {first_col}")
                         return {"Data": []}

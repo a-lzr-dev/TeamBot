@@ -5,7 +5,6 @@ from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import (
     UserRequestAutomationModel,
@@ -13,6 +12,7 @@ from ...models import (
     UserRequestAutomationStatus,
     datetime_now,
 )
+from ...utils.decorators import log_exceptions
 
 
 class AutomationRequestRepository:
@@ -46,6 +46,8 @@ class AutomationRequestRepository:
         Returns:
             UserRequestAutomationModel: Созданная заявка
         """
+        db_logger.info(f"📝 [create] Creating automation request for user {user_id}")
+
         request = UserRequestAutomationModel(
             FK_User=user_id,
             FTitle=title,
@@ -59,7 +61,7 @@ class AutomationRequestRepository:
         await session.flush()
         await session.refresh(request)
 
-        db_logger.info(f"✅ Created automation request #{request.FID} for user {user_id}")
+        db_logger.info(f"✅ [create] Created automation request #{request.FID} for user {user_id}")
         return request
 
     # ==================== ПОЛУЧЕНИЕ ====================
@@ -80,9 +82,19 @@ class AutomationRequestRepository:
         Returns:
             UserRequestAutomationModel | None: Найденная заявка или None
         """
+        db_logger.info(f"🔍 [get_by_id] Getting automation request by ID: {request_id}")
+
         stmt = select(UserRequestAutomationModel).where(UserRequestAutomationModel.FID == request_id)
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         model: UserRequestAutomationModel | None = result.scalar_one_or_none()
+
+        if model:
+            db_logger.info(f"✅ [get_by_id] Found request #{request_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_by_id] Request #{request_id} not found")
+
         return model
 
     @staticmethod
@@ -107,6 +119,8 @@ class AutomationRequestRepository:
         Returns:
             list[UserRequestAutomationModel]: Список заявок
         """
+        db_logger.info(f"📋 [get_by_user] Getting requests for user {user_id}")
+
         stmt = select(UserRequestAutomationModel).where(UserRequestAutomationModel.FK_User == user_id)
 
         if status is not None:
@@ -115,8 +129,13 @@ class AutomationRequestRepository:
         stmt = stmt.order_by(UserRequestAutomationModel.FCreatedAt.desc())
         stmt = stmt.limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        models = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_by_user] Found {len(models)} requests for user {user_id}")
+        return models
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -144,6 +163,10 @@ class AutomationRequestRepository:
         Returns:
             list[UserRequestAutomationModel]: Список заявок
         """
+        db_logger.info(
+            f"📋 [get_all] Getting all requests with filters: status={status}, priority={priority}, user_id={user_id}"
+        )
+
         stmt = select(UserRequestAutomationModel)
 
         if load_user:
@@ -161,8 +184,13 @@ class AutomationRequestRepository:
         stmt = stmt.order_by(UserRequestAutomationModel.FPriority.desc(), UserRequestAutomationModel.FCreatedAt.desc())
         stmt = stmt.limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        models = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_all] Found {len(models)} requests")
+        return models
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -184,6 +212,8 @@ class AutomationRequestRepository:
         Returns:
             list[UserRequestAutomationModel]: Список заявок
         """
+        db_logger.info(f"📋 [get_by_status] Getting requests by status: {status}")
+
         stmt = (
             select(UserRequestAutomationModel)
             .where(UserRequestAutomationModel.FStatus == status)
@@ -191,8 +221,14 @@ class AutomationRequestRepository:
             .limit(limit)
             .offset(offset)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        models = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_by_status] Found {len(models)} requests with status {status}")
+        return models
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -212,6 +248,8 @@ class AutomationRequestRepository:
         Returns:
             list[UserRequestAutomationModel]: Список заявок
         """
+        db_logger.info("📋 [get_pending] Getting pending requests")
+
         stmt = (
             select(UserRequestAutomationModel)
             .where(
@@ -226,8 +264,14 @@ class AutomationRequestRepository:
             .limit(limit)
             .offset(offset)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        models = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_pending] Found {len(models)} pending requests")
+        return models
 
     # ==================== ОБНОВЛЕНИЕ ====================
 
@@ -253,9 +297,12 @@ class AutomationRequestRepository:
         Returns:
             tuple[bool, UserRequestAutomationModel | None]: (успех, обновленная заявка)
         """
+        db_logger.info(f"🔄 [update_status] Updating request #{request_id} status to {status}")
+
         request = await AutomationRequestRepository.get_by_id(session, request_id)
 
         if not request:
+            db_logger.warning(f"⚠️ [update_status] Request #{request_id} not found")
             return False, None
 
         request.FStatus = status
@@ -275,7 +322,7 @@ class AutomationRequestRepository:
         await session.flush()
         await session.refresh(request)
 
-        db_logger.info(f"✅ Updated request #{request_id} status to {status.value}")
+        db_logger.info(f"✅ [update_status] Updated request #{request_id} status to {status}")
         return True, request
 
     @staticmethod
@@ -296,9 +343,12 @@ class AutomationRequestRepository:
         Returns:
             tuple[bool, UserRequestAutomationModel | None]: (успех, обновленная заявка)
         """
+        db_logger.info(f"🔄 [update_priority] Updating request #{request_id} priority to {priority}")
+
         request = await AutomationRequestRepository.get_by_id(session, request_id)
 
         if not request:
+            db_logger.warning(f"⚠️ [update_priority] Request #{request_id} not found")
             return False, None
 
         request.FPriority = priority
@@ -307,7 +357,7 @@ class AutomationRequestRepository:
         await session.flush()
         await session.refresh(request)
 
-        db_logger.info(f"✅ Updated request #{request_id} priority to {priority.value}")
+        db_logger.info(f"✅ [update_priority] Updated request #{request_id} priority to {priority}")
         return True, request
 
     # ==================== СТАТИСТИКА ====================
@@ -332,6 +382,8 @@ class AutomationRequestRepository:
         Returns:
             dict: Статистика
         """
+        db_logger.info(f"📊 [get_stats] Getting stats for user_id={user_id}")
+
         conditions = []
 
         if user_id is not None:
@@ -365,6 +417,8 @@ class AutomationRequestRepository:
         if conditions:
             stmt = stmt.where(and_(*conditions))
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         stats = result.first()
 
@@ -390,6 +444,9 @@ class AutomationRequestRepository:
             priority_stmt = priority_stmt.where(and_(*conditions))
 
         priority_stmt = priority_stmt.group_by(UserRequestAutomationModel.FPriority)
+
+        db_logger.debug(f"📝 SQL (priority): {priority_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         priority_result = await session.execute(priority_stmt)
         by_priority = {row.FPriority.value: row.count for row in priority_result.all()}
 
@@ -401,7 +458,7 @@ class AutomationRequestRepository:
         cancelled = int(stats.cancelled) if stats.cancelled is not None else 0
         rejected = int(stats.rejected) if stats.rejected is not None else 0
 
-        return {
+        result_stats = {
             "total": total,
             "new": new,
             "in_progress": in_progress,
@@ -411,6 +468,9 @@ class AutomationRequestRepository:
             "by_priority": by_priority,
             "completion_rate": (completed / total * 100) if total > 0 else 0,
         }
+
+        db_logger.info(f"✅ [get_stats] Stats: {result_stats}")
+        return result_stats
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -430,22 +490,35 @@ class AutomationRequestRepository:
         Returns:
             bool: Успешно ли удалено
         """
+        db_logger.info(f"🗑️ [delete] Deleting request #{request_id} (soft={soft})")
+
         if soft:
             # Изменение статуса на CANCELLED
             request = await AutomationRequestRepository.get_by_id(session, request_id)
             if not request:
+                db_logger.warning(f"⚠️ [delete] Request #{request_id} not found")
                 return False
 
             request.FStatus = UserRequestAutomationStatus.CANCELLED
             request.FUpdatedAt = datetime_now()
             await session.flush()
+            db_logger.info(f"✅ [delete] Soft-deleted request #{request_id}")
             return True
         else:
             # Удаление
             stmt = delete(UserRequestAutomationModel).where(UserRequestAutomationModel.FID == request_id)
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             await session.commit()
-            return result.rowcount > 0 if hasattr(result, "rowcount") else True
+            success = result.rowcount > 0 if hasattr(result, "rowcount") else True
+
+            if success:
+                db_logger.info(f"✅ [delete] Hard-deleted request #{request_id}")
+            else:
+                db_logger.warning(f"⚠️ [delete] Request #{request_id} not found for hard delete")
+
+            return success
 
 
 __all__ = ["AutomationRequestRepository"]

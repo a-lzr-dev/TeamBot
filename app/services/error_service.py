@@ -1,3 +1,16 @@
+"""
+Сервис управления ошибками.
+
+Отвечает за:
+1. Логирование ошибок из разных компонентов приложения
+2. Управление внешними ошибками из других систем
+3. Решение и переоткрытие ошибок
+4. Получение статистики по ошибкам
+5. Удаление сообщений, связанных с ошибками
+6. Отправку уведомлений об ошибках в Telegram
+7. Группировку и дедупликацию ошибок
+"""
+
 from datetime import datetime
 from typing import Any
 
@@ -6,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db import db_manager
 from ..db.repositories import AvanpostRepository, ErrorRepository, MessageRepository
 from ..dtos.error import CreateErrorDTO, ErrorNotificationDTO
-from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import (
     ChatMessageModel,
@@ -16,11 +28,16 @@ from ..models import (
     ErrorStatus,
     MessageType,
 )
+from ..utils.decorators import log_exceptions
 
-# Репозитории (создаем один раз на уровне модуля)
-_error_repo = ErrorRepository()
-_message_repo = MessageRepository()
-_avanpost_repo = AvanpostRepository()
+# ============================================================
+# РЕПОЗИТОРИИ (СИНГЛТОНЫ)
+# ============================================================
+
+# Репозитории создаются один раз на уровне модуля для переиспользования
+_error_repo = ErrorRepository()  # Репозиторий для работы с ошибками
+_message_repo = MessageRepository()  # Репозиторий для работы с сообщениями
+_avanpost_repo = AvanpostRepository()  # Репозиторий для работы с Avanpost
 
 
 class ErrorService:
@@ -36,15 +53,32 @@ class ErrorService:
     """
 
     def __init__(self) -> None:
-        """Инициализация сервиса ошибок"""
+        """
+        Инициализация сервиса ошибок.
+
+        Создает кеш для группировки ошибок с настраиваемым TTL.
+        """
         self._group_cache: dict[str, dict] = {}
         from ..config import settings
 
         self._cache_ttl = getattr(settings, "ERROR_GROUP_CACHE_TTL_SECONDS", 300)
 
+    # ============================================================
+    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # ============================================================
+
     @staticmethod
     def _to_str_with_value(value: Any | None, default: str) -> str:
-        """Безопасное преобразование значения с атрибутом value в строку."""
+        """
+        Безопасное преобразование значения с атрибутом value в строку.
+
+        Args:
+            value: Значение для преобразования
+            default: Значение по умолчанию
+
+        Returns:
+            str: Строковое представление значения
+        """
         if value is None:
             return default
         if hasattr(value, "value"):
@@ -53,6 +87,135 @@ class ErrorService:
                 return default
             return str(val)
         return str(value)
+
+    @staticmethod
+    def _validate_category(category: Any | None) -> ErrorCategory:
+        """
+        Валидация категории ошибки.
+
+        Args:
+            category: Категория для валидации
+
+        Returns:
+            ErrorCategory: Валидная категория
+        """
+        if category is None:
+            return ErrorCategory.ARBITRARY
+        if isinstance(category, ErrorCategory):
+            return category
+        if isinstance(category, str):
+            try:
+                return ErrorCategory(category)
+            except ValueError:
+                app_logger.warning(f"⚠️ Unknown error category: {category}, using ARBITRARY")
+                return ErrorCategory.ARBITRARY
+        return ErrorCategory.ARBITRARY
+
+    @staticmethod
+    def _validate_severity(severity: Any | None) -> ErrorSeverity:
+        """
+        Валидация серьезности ошибки.
+
+        Args:
+            severity: Серьезность для валидации
+
+        Returns:
+            ErrorSeverity: Валидная серьезность
+        """
+        if severity is None:
+            return ErrorSeverity.ERROR
+        if isinstance(severity, ErrorSeverity):
+            return severity
+        if isinstance(severity, str):
+            try:
+                return ErrorSeverity(severity)
+            except ValueError:
+                app_logger.warning(f"⚠️ Unknown error severity: {severity}, using ERROR")
+                return ErrorSeverity.ERROR
+        return ErrorSeverity.ERROR
+
+    @staticmethod
+    def _determine_category(component: str) -> ErrorCategory:
+        """
+        Определение категории по компоненту.
+
+        Args:
+            component: Имя компонента
+
+        Returns:
+            ErrorCategory: Определенная категория
+        """
+        component_lower = component.lower()
+        if "api" in component_lower or "bot" in component_lower:
+            return ErrorCategory.TASK_EXECUTION
+        elif "db" in component_lower or "database" in component_lower:
+            return ErrorCategory.SYSTEM
+        else:
+            return ErrorCategory.ARBITRARY
+
+    @staticmethod
+    def _determine_severity(error: Exception) -> ErrorSeverity:
+        """
+        Определение серьезности по типу ошибки.
+
+        Args:
+            error: Исключение
+
+        Returns:
+            ErrorSeverity: Определенная серьезность
+        """
+        error_type = type(error).__name__.lower()
+        critical_types = ["criticalerror", "fatalerror", "systemexit"]
+        error_types = ["valueerror", "typeerror", "attributeerror", "keyerror", "indexerror", "runtimeerror"]
+
+        if any(t in error_type for t in critical_types):
+            return ErrorSeverity.CRITICAL
+        elif any(t in error_type for t in error_types):
+            return ErrorSeverity.ERROR
+        else:
+            return ErrorSeverity.ERROR
+
+    @staticmethod
+    def _get_traceback(error: Exception) -> str | None:
+        """
+        Получение traceback ошибки.
+
+        Args:
+            error: Исключение
+
+        Returns:
+            str | None: Текст traceback или None
+        """
+        import traceback
+
+        try:
+            tb_lines = traceback.format_exception(type(error), error, error.__traceback__)
+            return "".join(tb_lines)[:1000]
+        except Exception:
+            return None
+
+    @staticmethod
+    def _format_details(error: Exception, component: str, context: dict[str, Any] | None) -> str | None:
+        """
+        Форматирование деталей ошибки.
+
+        Args:
+            error: Исключение
+            component: Компонент
+            context: Контекст ошибки
+
+        Returns:
+            str | None: Отформатированные детали
+        """
+        details = [f"Component: {component}", f"Error type: {type(error).__name__}"]
+        if context:
+            details.append("Context:")
+            details.extend(f"  {key}: {value}" for key, value in context.items())
+        return "\n".join(details)
+
+    # ============================================================
+    # ЛОГИРОВАНИЕ ОШИБОК
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def log_error(
@@ -70,6 +233,20 @@ class ErrorService:
     ) -> tuple[ErrorModel | None, ChatMessageModel | None]:
         """
         Логирование ошибки из любого компонента приложения.
+
+        Args:
+            error: Исключение
+            session: Сессия БД (опционально)
+            component: Компонент, в котором произошла ошибка
+            user_id: ID пользователя (опционально)
+            chat_id: ID чата (опционально)
+            message_id: ID сообщения (опционально)
+            category: Категория ошибки (опционально)
+            severity: Серьезность ошибки (опционально)
+            context: Дополнительный контекст
+
+        Returns:
+            tuple[ErrorModel | None, ChatMessageModel | None]: (модель ошибки, модель сообщения)
         """
         if session is None:
             async with db_manager.get_session() as new_session:
@@ -110,10 +287,27 @@ class ErrorService:
         severity: Any | None = None,
         context: dict[str, Any] | None = None,
     ) -> tuple[ErrorModel | None, ChatMessageModel | None]:
-        """Реализация логирования ошибки"""
+        """
+        Реализация логирования ошибки.
+
+        Args:
+            error: Исключение
+            session: Сессия БД
+            component: Компонент
+            user_id: ID пользователя
+            chat_id: ID чата
+            message_id: ID сообщения
+            category: Категория
+            severity: Серьезность
+            context: Контекст
+
+        Returns:
+            tuple[ErrorModel | None, ChatMessageModel | None]: (модель ошибки, модель сообщения)
+        """
         category_enum = self._validate_category(category)
         severity_enum = self._validate_severity(severity)
 
+        # Подготовка данных ошибки
         error_type = type(error).__name__
         error_message = str(error) or error_type
         error_code = error_type[:50]
@@ -121,6 +315,7 @@ class ErrorService:
         details = self._format_details(error, component, context)
         traceback_text = self._get_traceback(error)
 
+        # Создание ошибки в БД
         error_model = await _error_repo.create_error(
             session=session,
             error_code=error_code,
@@ -134,6 +329,7 @@ class ErrorService:
             group_hash=_error_repo.create_group_hash(error_code, error_message, component),
         )
 
+        # Сохранение сообщения в чате (если указан chat_id)
         chat_message = None
         if chat_id and await _error_repo.chat_exists(session, chat_id):
             chat_message = await _error_repo.save_message(
@@ -149,6 +345,7 @@ class ErrorService:
                 component=component,
             )
 
+        # Связывание ошибки с сообщением
         if error_model and chat_message:
             await _error_repo.link_message(
                 session=session,
@@ -159,6 +356,10 @@ class ErrorService:
         await session.commit()
 
         return error_model, chat_message
+
+    # ============================================================
+    # ЛОГИРОВАНИЕ ВНЕШНИХ ОШИБОК
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def log_external_error(
@@ -177,7 +378,26 @@ class ErrorService:
         chat_ids: list[int] | None = None,
         send_to_telegram: bool = True,
     ) -> ErrorModel:
-        """Логирование внешней ошибки из другой системы"""
+        """
+        Логирование внешней ошибки из другой системы.
+
+        Args:
+            error_code: Код ошибки
+            error_message: Сообщение об ошибке
+            source_system: Система-источник
+            session: Сессия БД (опционально)
+            user_id: ID пользователя (опционально)
+            user_login: Логин пользователя (опционально)
+            category: Категория ошибки (опционально)
+            severity: Серьезность ошибки (опционально)
+            details: Детали ошибки (опционально)
+            source_module: Модуль-источник (опционально)
+            chat_ids: Список ID чатов для отправки уведомлений (опционально)
+            send_to_telegram: Отправлять ли уведомление в Telegram
+
+        Returns:
+            ErrorModel: Созданная или обновленная модель ошибки
+        """
         category_str = self._to_str_with_value(category, "external")
         severity_str = self._to_str_with_value(severity, "error")
 
@@ -222,10 +442,20 @@ class ErrorService:
         create_dto: CreateErrorDTO,
         session: AsyncSession,
     ) -> ErrorModel:
-        """Реализация логирования внешней ошибки"""
+        """
+        Реализация логирования внешней ошибки.
+
+        Args:
+            create_dto: DTO для создания ошибки
+            session: Сессия БД
+
+        Returns:
+            ErrorModel: Созданная или обновленная модель ошибки
+        """
         category_enum = self._validate_category(create_dto.category)
         severity_enum = self._validate_severity(create_dto.severity)
 
+        # Создание хеша для группировки
         group_hash = _error_repo.create_group_hash(
             create_dto.error_code,
             create_dto.error_message,
@@ -272,7 +502,7 @@ class ErrorService:
 
                     await log_handler_service.send_notification(error)
 
-                return error
+                return error  # type: ignore[no-any-return]
 
             existing = updated_error
 
@@ -300,7 +530,8 @@ class ErrorService:
 
                 await log_handler_service.send_notification(existing)
 
-            return existing
+            # Явное приведение типа для mypy
+            return existing  # type: ignore[no-any-return]
 
         # Создание новой ошибки через репозиторий
         error = await _error_repo.create_error(
@@ -346,7 +577,12 @@ class ErrorService:
 
             await log_handler_service.send_notification(error)
 
-        return error
+        # Явное приведение типа для mypy
+        return error  # type: ignore[no-any-return]
+
+    # ============================================================
+    # ОТПРАВКА УВЕДОМЛЕНИЙ
+    # ============================================================
 
     @staticmethod
     async def _send_error_notification(
@@ -357,6 +593,15 @@ class ErrorService:
     ) -> int | None:
         """
         Отправка уведомления об ошибке в Telegram.
+
+        Args:
+            chat_id: ID чата
+            notification_dto: DTO для уведомления
+            is_repeat: Является ли это повторным уведомлением
+            lifetime_seconds: Время жизни сообщения
+
+        Returns:
+            int | None: ID отправленного сообщения или None
         """
         try:
             from ..bot.dependencies import get_bot_manager
@@ -393,6 +638,10 @@ class ErrorService:
             app_logger.error(f"❌ Failed to send Telegram message: {e}")
             return None
 
+    # ============================================================
+    # УПРАВЛЕНИЕ ОШИБКАМИ
+    # ============================================================
+
     @log_exceptions(app_logger)
     async def check_and_resolve_error(
         self,
@@ -403,6 +652,15 @@ class ErrorService:
     ) -> tuple[bool, str | None]:
         """
         Проверка и решение ошибки.
+
+        Args:
+            error_id: ID ошибки
+            resolved_by: ID пользователя, решающего ошибку
+            session: Сессия БД (опционально)
+            check_procedure: Хранимая процедура для проверки существования ошибки
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
         if session is None:
             async with db_manager.get_session() as new_session:
@@ -429,6 +687,15 @@ class ErrorService:
     ) -> tuple[bool, str | None]:
         """
         Реализация проверки и решения ошибки.
+
+        Args:
+            error_id: ID ошибки
+            resolved_by: ID пользователя
+            session: Сессия БД
+            check_procedure: Хранимая процедура
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
         error = await _error_repo.get_error_by_id(session, error_id)
 
@@ -454,7 +721,8 @@ class ErrorService:
                 app_logger.error(f"Failed to check error via procedure: {e}")
                 return False, f"Check failed: {str(e)}"
 
-        return await _error_repo.resolve_error(
+        # Решение ошибки через репозиторий
+        return await _error_repo.resolve_error(  # type: ignore[no-any-return]
             session=session,
             error_id=error_id,
             resolved_by=resolved_by,
@@ -468,12 +736,23 @@ class ErrorService:
     ) -> tuple[bool, str | None]:
         """
         Переоткрытие ранее решенной ошибки.
+
+        Args:
+            error_id: ID ошибки
+            session: Сессия БД (опционально)
+
+        Returns:
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await _error_repo.reopen_error(session=new_session, error_id=error_id)
+                return await _error_repo.reopen_error(session=new_session, error_id=error_id)  # type: ignore[no-any-return]
         else:
-            return await _error_repo.reopen_error(session=session, error_id=error_id)
+            return await _error_repo.reopen_error(session=session, error_id=error_id)  # type: ignore[no-any-return]
+
+    # ============================================================
+    # УДАЛЕНИЕ СООБЩЕНИЙ ОШИБКИ
+    # ============================================================
 
     @log_exceptions(app_logger)
     async def delete_error_messages(
@@ -484,6 +763,14 @@ class ErrorService:
     ) -> dict[str, Any]:
         """
         Удаление всех сообщений, связанных с ошибкой.
+
+        Args:
+            error_id: ID ошибки
+            session: Сессия БД (опционально)
+            delete_from_telegram: Удалять ли сообщения из Telegram
+
+        Returns:
+            dict[str, Any]: Результат операции
         """
         if session is None:
             async with db_manager.get_session() as new_session:
@@ -507,6 +794,14 @@ class ErrorService:
     ) -> dict[str, Any]:
         """
         Реализация удаления всех сообщений, связанных с ошибкой.
+
+        Args:
+            error_id: ID ошибки
+            session: Сессия БД
+            delete_from_telegram: Удалять ли сообщения из Telegram
+
+        Returns:
+            dict[str, Any]: Результат операции
         """
         app_logger.info(f"🗑️ Deleting messages for error {error_id}")
 
@@ -537,12 +832,12 @@ class ErrorService:
 
             result["messages_found"] = len(messages)
 
-            #  Удаление из Telegram
+            # Удаление из Telegram
             if delete_from_telegram:
                 telethon_deleted = await self._delete_messages_from_bot(messages)
                 result["messages_deleted_telegram"] = telethon_deleted
 
-            #  Использование репозитория для массового удаления в БД
+            # Использование репозитория для массового удаления в БД
             message_ids = [msg.FID for msg in messages]
             db_deleted = await _message_repo.mark_messages_deleted_by_ids(
                 session=session,
@@ -574,6 +869,10 @@ class ErrorService:
             result["errors"].append(str(e))
             return result
 
+    # ============================================================
+    # СТАТИСТИКА
+    # ============================================================
+
     @log_exceptions(app_logger)
     async def get_error_stats(
         self,
@@ -582,19 +881,30 @@ class ErrorService:
         end_date: datetime | None = None,
         category: Any | None = None,
     ) -> dict[str, Any]:
-        """Получение статистики ошибок"""
+        """
+        Получение статистики ошибок.
+
+        Args:
+            session: Сессия БД (опционально)
+            start_date: Начальная дата
+            end_date: Конечная дата
+            category: Категория ошибок
+
+        Returns:
+            dict[str, Any]: Статистика ошибок
+        """
         category_enum = self._validate_category(category) if category is not None else None
 
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await _error_repo.get_stats(
+                return await _error_repo.get_stats(  # type: ignore[no-any-return]
                     session=new_session,
                     start_date=start_date,
                     end_date=end_date,
                     category=category_enum,
                 )
         else:
-            return await _error_repo.get_stats(
+            return await _error_repo.get_stats(  # type: ignore[no-any-return]
                 session=session,
                 start_date=start_date,
                 end_date=end_date,
@@ -609,97 +919,37 @@ class ErrorService:
     ) -> dict[str, Any]:
         """
         Получение статистики пользователя по решению ошибок.
+
+        Args:
+            user_id: ID пользователя
+            session: Сессия БД (опционально)
+
+        Returns:
+            dict[str, Any]: Статистика пользователя
         """
         if session is None:
             async with db_manager.get_session() as new_session:
-                return await _error_repo.get_user_stats(
+                return await _error_repo.get_user_stats(  # type: ignore[no-any-return]
                     session=new_session,
                     user_id=user_id,
                 )
         else:
-            return await _error_repo.get_user_stats(
+            return await _error_repo.get_user_stats(  # type: ignore[no-any-return]
                 session=session,
                 user_id=user_id,
             )
 
-    @staticmethod
-    def _validate_category(category: Any | None) -> ErrorCategory:
-        """Валидация категории ошибки."""
-        if category is None:
-            return ErrorCategory.ARBITRARY
-        if isinstance(category, ErrorCategory):
-            return category
-        if isinstance(category, str):
-            try:
-                return ErrorCategory(category)
-            except ValueError:
-                app_logger.warning(f"⚠️ Unknown error category: {category}, using ARBITRARY")
-                return ErrorCategory.ARBITRARY
-        return ErrorCategory.ARBITRARY
-
-    @staticmethod
-    def _validate_severity(severity: Any | None) -> ErrorSeverity:
-        """Валидация серьезности ошибки."""
-        if severity is None:
-            return ErrorSeverity.ERROR
-        if isinstance(severity, ErrorSeverity):
-            return severity
-        if isinstance(severity, str):
-            try:
-                return ErrorSeverity(severity)
-            except ValueError:
-                app_logger.warning(f"⚠️ Unknown error severity: {severity}, using ERROR")
-                return ErrorSeverity.ERROR
-        return ErrorSeverity.ERROR
-
-    @staticmethod
-    def _determine_category(component: str) -> ErrorCategory:
-        """Определение категории по компоненту."""
-        component_lower = component.lower()
-        if "api" in component_lower or "bot" in component_lower:
-            return ErrorCategory.TASK_EXECUTION
-        elif "db" in component_lower or "database" in component_lower:
-            return ErrorCategory.SYSTEM
-        else:
-            return ErrorCategory.ARBITRARY
-
-    @staticmethod
-    def _determine_severity(error: Exception) -> ErrorSeverity:
-        """Определение серьезности по типу ошибки."""
-        error_type = type(error).__name__.lower()
-        critical_types = ["criticalerror", "fatalerror", "systemexit"]
-        error_types = ["valueerror", "typeerror", "attributeerror", "keyerror", "indexerror", "runtimeerror"]
-
-        if any(t in error_type for t in critical_types):
-            return ErrorSeverity.CRITICAL
-        elif any(t in error_type for t in error_types):
-            return ErrorSeverity.ERROR
-        else:
-            return ErrorSeverity.ERROR
-
-    @staticmethod
-    def _get_traceback(error: Exception) -> str | None:
-        """Получение traceback ошибки."""
-        import traceback
-
-        try:
-            tb_lines = traceback.format_exception(type(error), error, error.__traceback__)
-            return "".join(tb_lines)[:1000]
-        except Exception:
-            return None
-
-    @staticmethod
-    def _format_details(error: Exception, component: str, context: dict[str, Any] | None) -> str | None:
-        """Форматирование деталей ошибки."""
-        details = [f"Component: {component}", f"Error type: {type(error).__name__}"]
-        if context:
-            details.append("Context:")
-            details.extend(f"  {key}: {value}" for key, value in context.items())
-        return "\n".join(details)
+    # ============================================================
+    # ОЧИСТКА СТАРЫХ СООБЩЕНИЙ
+    # ============================================================
 
     async def _cleanup_old_messages(self, session: AsyncSession, error: ErrorModel) -> None:
         """
         Очистка старых сообщений, связанных с ошибкой.
+
+        Args:
+            session: Сессия БД
+            error: Модель ошибки
         """
         app_logger.info(f"🧹 Cleaning up old messages for existing error {error.FID}")
 
@@ -739,7 +989,15 @@ class ErrorService:
 
     @staticmethod
     async def _delete_messages_from_bot(messages: list[ChatMessageModel]) -> int:
-        """Удаление сообщений Bot-ом"""
+        """
+        Удаление сообщений Bot-ом.
+
+        Args:
+            messages: Список сообщений для удаления
+
+        Returns:
+            int: Количество удаленных сообщений
+        """
         deleted = 0
         try:
             from ..bot.dependencies import get_bot_manager

@@ -1,3 +1,16 @@
+"""
+Модуль управления FastAPI приложением для TeamBot.
+
+Этот модуль предоставляет класс APIManager, который реализует паттерн Singleton
+для управления жизненным циклом HTTP API сервера. Он отвечает за:
+- Инициализацию FastAPI приложения
+- Настройку middleware (CORS, аутентификация, логирование, метрики)
+- Регистрацию роутеров API
+- Управление запуском и остановкой Uvicorn сервера
+- Обработку ошибок на уровне приложения
+- Предоставление debug-эндпоинтов для мониторинга
+"""
+
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
@@ -10,7 +23,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from ..config import settings
 from ..db.repositories import MessageRepository
-from ..exceptions import AppError, DatabaseError, handle_exception, log_exceptions
+from ..exceptions import AppError, DatabaseError
 from ..logger import api_logger
 from ..middlewares.api import (
     APILoggingMiddleware,
@@ -21,6 +34,7 @@ from ..middlewares.api import (
 )
 from ..models import datetime_now
 from ..services import error_service
+from ..utils.decorators import handle_exception, log_exceptions
 from .routers import (
     admin_router,
     automation_router,
@@ -33,16 +47,44 @@ from .routers import (
 
 
 class APIManager:
-    """Менеджер для управления FastAPI приложением"""
+    """
+    Менеджер для управления FastAPI приложением.
+
+    Реализует паттерн Singleton для обеспечения единственного экземпляра
+    менеджера API во всём приложении. Управляет жизненным циклом HTTP сервера,
+    включая инициализацию, запуск, остановку и перезапуск.
+
+    Атрибуты:
+        host (str): Хост для запуска сервера (из настроек)
+        port (int): Порт для запуска сервера (из настроек)
+        is_running (bool): Флаг запущен ли сервер
+        is_initialized (bool): Флаг инициализировано ли приложение
+        app (FastAPI): Экземпляр FastAPI приложения
+
+    Методы:
+        initialize(): Инициализация FastAPI приложения и настройка компонентов
+        start(): Запуск Uvicorn сервера
+        stop(): Остановка сервера и очистка ресурсов
+        restart(): Перезапуск сервера
+        get_status(): Получение текущего статуса менеджера
+        health_check(): Проверка работоспособности
+    """
 
     _instance: Optional["APIManager"] = None
 
     def __new__(cls) -> Any:
+        """Реализация Singleton: создаёт экземпляр только при первом вызове."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self) -> None:
+        """
+        Инициализация экземпляра менеджера.
+
+        Настройка выполняется только один раз благодаря флагу _initialized.
+        Создаются необходимые репозитории и устанавливаются начальные значения.
+        """
         if hasattr(self, "_initialized"):
             return
 
@@ -66,7 +108,19 @@ class APIManager:
     @staticmethod
     @asynccontextmanager
     async def _lifespan(_app: FastAPI) -> AsyncGenerator[None]:
-        """Управление жизненным циклом API"""
+        """
+        Контекстный менеджер жизненного цикла FastAPI приложения.
+
+        Выполняется автоматически при запуске и остановке приложения.
+        При старте: логирует запуск.
+        При остановке: корректно завершает работу Telegram бота.
+
+        Args:
+            _app: Экземпляр FastAPI (не используется)
+
+        Yields:
+            None: Позволяет приложению работать между стартом и остановкой
+        """
         # Startup
         api_logger.info("🚀 API starting up...")
         yield  # Приложение работает здесь
@@ -92,7 +146,18 @@ class APIManager:
 
     @log_exceptions(api_logger)
     async def initialize(self) -> None:
-        """Инициализация API приложения"""
+        """
+        Инициализация API приложения.
+
+        Выполняет полную настройку FastAPI приложения:
+        1. Создание экземпляра FastAPI с метаданными
+        2. Настройка всех middleware
+        3. Подключение роутеров
+        4. Настройка обработчиков ошибок
+        5. Добавление debug-эндпоинтов
+
+        Если менеджер уже инициализирован, метод ничего не делает.
+        """
         if self._initialized and self._app:
             api_logger.warning("⚠️ API Manager already initialized")
             return
@@ -126,7 +191,17 @@ class APIManager:
         api_logger.info("✅ API Manager initialized")
 
     def _setup_middleware(self) -> None:
-        """Настройка middleware"""
+        """
+        Настройка middleware для FastAPI приложения.
+
+        Добавляет в следующем порядке:
+        1. CORS - разрешение кросс-доменных запросов
+        2. Rate Limit - ограничение частоты запросов
+        3. Auth - проверка аутентификации
+        4. Exception Handler - глобальная обработка ошибок
+        5. Logging - логирование запросов
+        6. Metrics - сбор метрик
+        """
         if not self._app:
             raise RuntimeError("App not initialized")
 
@@ -162,7 +237,7 @@ class APIManager:
         self._app.add_middleware(MetricsMiddleware)
 
     def _setup_routers(self) -> None:
-        """Подключение роутеров"""
+        """Подключение всех роутеров API к приложению."""
         if not self._app:
             raise RuntimeError("App not initialized")
 
@@ -175,12 +250,22 @@ class APIManager:
         self._app.include_router(automation_router, prefix="/api/v1")
 
     def _setup_exception_handlers(self) -> None:
-        """Настройка обработчиков исключений"""
+        """
+        Настройка глобальных обработчиков исключений.
+
+        Регистрирует обработчики для:
+        - DatabaseError: ошибки базы данных (HTTP 503)
+        - AppError: ошибки приложения (HTTP 400 или 500)
+        - Exception: все остальные исключения (HTTP 500)
+
+        Все ошибки логируются и отправляются в сервис ошибок.
+        """
         if not self._app:
             raise RuntimeError("App not initialized")
 
         @self._app.exception_handler(DatabaseError)
         async def database_error_handler(request: Request, exc: DatabaseError) -> JSONResponse:
+            """Обработчик ошибок базы данных."""
             api_logger.error(f"❌ Database error: {exc}")
 
             await error_service.log_error(
@@ -205,6 +290,7 @@ class APIManager:
 
         @self._app.exception_handler(AppError)
         async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+            """Обработчик ошибок приложения."""
             await handle_exception(exc)
 
             await error_service.log_error(
@@ -231,6 +317,7 @@ class APIManager:
 
         @self._app.exception_handler(Exception)
         async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+            """Глобальный обработчик всех непредвиденных исключений."""
             await handle_exception(exc)
 
             await error_service.log_error(
@@ -255,13 +342,25 @@ class APIManager:
             )
 
     def _setup_endpoints(self) -> None:
-        """Настройка дополнительных эндпоинтов"""
+        """
+        Настройка дополнительных HTTP эндпоинтов.
+
+        Добавляет служебные эндпоинты для:
+        - Главная страница (информация об API)
+        - Health check (простой)
+        - Версия приложения
+        - Отладка middleware
+        - Отладка заголовков
+        - Статус бота
+        - Список маршрутов
+        """
         if not self._app:
             raise RuntimeError("App not initialized")
 
         @self._app.get("/")
         @log_exceptions(api_logger)
         async def root() -> dict[str, Any]:
+            """Главная страница с информацией об API."""
             return {
                 "name": "TeamBot API",
                 "version": "1.0.0",
@@ -275,11 +374,13 @@ class APIManager:
         @self._app.get("/health")
         @log_exceptions(api_logger)
         async def health_simple() -> dict[str, Any]:
+            """Простой эндпоинт для проверки работоспособности."""
             return {"status": "ok", "timestamp": datetime_now().isoformat() + "Z"}
 
         @self._app.get("/version")
         @log_exceptions(api_logger)
         async def version() -> dict[str, Any]:
+            """Эндпоинт с информацией о версии и окружении."""
             return {
                 "version": "1.0.0",
                 "environment": getattr(settings, "APP_ENV", "production"),
@@ -290,6 +391,7 @@ class APIManager:
         @self._app.get("/debug/middleware")
         @log_exceptions(api_logger)
         async def debug_middleware(request: Request) -> dict[str, Any]:
+            """Debug-эндпоинт для проверки загрузки middleware."""
             return {
                 "middleware_loaded": True,
                 "metrics_middleware_available": hasattr(request.app.state, "metrics_middleware"),
@@ -301,6 +403,7 @@ class APIManager:
         @self._app.get("/debug/headers")
         @log_exceptions(api_logger)
         async def debug_headers(request: Request) -> dict[str, Any]:
+            """Debug-эндпоинт для просмотра заголовков запроса."""
             headers = dict(request.headers)
             if "authorization" in headers:
                 headers["authorization"] = "***"
@@ -316,6 +419,7 @@ class APIManager:
         @self._app.get("/debug/bot-status")
         @log_exceptions(api_logger)
         async def debug_bot_status() -> dict[str, Any]:
+            """Debug-эндпоинт для проверки статуса Telegram бота."""
             try:
                 from ..bot.dependencies import get_bot_manager
 
@@ -333,6 +437,7 @@ class APIManager:
         @self._app.get("/debug/routes")
         @log_exceptions(api_logger)
         async def debug_routes() -> dict[str, Any]:
+            """Debug-эндпоинт для просмотра всех зарегистрированных маршрутов."""
             routes = []
 
             if self._app is None:
@@ -368,20 +473,37 @@ class APIManager:
 
     @property
     def app(self) -> FastAPI:
+        """
+        Получение экземпляра FastAPI приложения.
+
+        Returns:
+            FastAPI: Экземпляр приложения
+
+        Raises:
+            RuntimeError: Если менеджер не инициализирован
+        """
         if not self._app:
             raise RuntimeError("API Manager not initialized. Call initialize() first.")
         return self._app
 
     @property
     def is_running(self) -> bool:
+        """bool: Флаг, указывает запущен ли сервер."""
         return self._is_running
 
     @property
     def is_initialized(self) -> bool:
+        """bool: Флаг, указывает инициализирован ли менеджер."""
         return self._initialized
 
     @property
     def server_info(self) -> dict[str, Any]:
+        """
+        Получение информации о сервере.
+
+        Returns:
+            dict: Словарь с информацией о состоянии сервера
+        """
         return {
             "host": self.host,
             "port": self.port,
@@ -397,6 +519,15 @@ class APIManager:
 
     @log_exceptions(api_logger)
     async def start(self) -> None:
+        """
+        Запуск Uvicorn сервера.
+
+        Если сервер уже запущен, метод ничего не делает.
+        Если менеджер не инициализирован, автоматически вызывает initialize().
+
+        Создаёт асинхронную задачу для запуска сервера и добавляет её
+        в список отслеживаемых задач.
+        """
         if self._is_running:
             api_logger.warning("⚠️ API already running")
             return
@@ -413,6 +544,12 @@ class APIManager:
         api_logger.info(f"✅ API started on {self.host}:{self.port}")
 
     async def _run_server(self) -> None:
+        """
+        Внутренний метод для запуска Uvicorn сервера.
+
+        Создаёт конфигурацию Uvicorn и запускает сервер.
+        Обрабатывает отмену задачи и ошибки.
+        """
         try:
             if self._app is None:
                 api_logger.error("❌ App is not initialized")
@@ -444,6 +581,15 @@ class APIManager:
 
     @log_exceptions(api_logger)
     async def stop(self) -> None:
+        """
+        Остановка сервера и очистка ресурсов.
+
+        Если сервер не запущен, метод ничего не делает.
+        При остановке:
+        1. Устанавливает флаг should_exit для Uvicorn сервера
+        2. Отменяет все отслеживаемые асинхронные задачи
+        3. Очищает список задач
+        """
         if not self._is_running:
             api_logger.warning("⚠️ API not running")
             return
@@ -477,6 +623,11 @@ class APIManager:
 
     @log_exceptions(api_logger)
     async def restart(self) -> None:
+        """
+        Перезапуск сервера.
+
+        Выполняет остановку с ожиданием 0.5 секунды, затем запуск.
+        """
         api_logger.info("🔄 API restarting...")
         await self.stop()
         await asyncio.sleep(0.5)
@@ -484,6 +635,12 @@ class APIManager:
         api_logger.info("✅ API restarted")
 
     async def get_status(self) -> dict[str, Any]:
+        """
+        Получение текущего статуса менеджера.
+
+        Returns:
+            dict: Словарь с информацией о состоянии
+        """
         return {
             "is_running": self._is_running,
             "is_initialized": self._initialized,
@@ -497,6 +654,12 @@ class APIManager:
         }
 
     async def health_check(self) -> bool:
+        """
+        Проверка работоспособности API.
+
+        Returns:
+            bool: True если API работает, False в противном случае
+        """
         try:
             if not self._is_running:
                 return False

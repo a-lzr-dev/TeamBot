@@ -4,10 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from telethon.errors import FloodWaitError
 
 from ....core.services import BaseService
-from ....db.repositories.chats import ChatRepository
-from ....exceptions import log_exceptions
+from ....db.repositories import ChatRepository
 from ....logger import bot_logger
 from ....models import ChatModel, ChatType
+from ....utils.decorators import log_exceptions
 from ...clients.telethon_client import TelethonClient
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ class TelethonChatService(BaseService):
         if not self._initialized:
             await self.initialize()
 
-        return await ChatRepository.get_chats(session, is_active=is_active)
+        return await ChatRepository.get_chats(session, is_active=is_active)  # type: ignore[no-any-return]
 
     @log_exceptions(bot_logger)
     async def get_chat_from_telegram(self, chat_id: int) -> dict[str, Any] | None:
@@ -85,7 +85,7 @@ class TelethonChatService(BaseService):
         self, session: AsyncSession, chat_id: int, chat_type: str, title: str | None = None, is_active: bool = True
     ) -> ChatModel:
         """Сохранение чата в БД"""
-        return await ChatRepository.save_chat(
+        return await ChatRepository.save_chat(  # type: ignore[no-any-return]
             session=session, chat_id=chat_id, chat_type=chat_type, title=title, is_active=is_active
         )
 

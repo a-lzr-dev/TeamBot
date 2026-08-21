@@ -1,3 +1,15 @@
+"""
+Модели данных Avanpost для синхронизации с внешней системой.
+
+Отвечают за:
+1. Хранение справочных данных (языки, группы, типы сообщений и т.д.)
+2. Хранение пользовательских данных (пользователи, чаты, заказы)
+3. Хранение системных данных (типы данных, записи синхронизации)
+4. Определение связей между моделями (foreign keys, relationships)
+5. Предоставление маппинга типов данных для синхронизации
+6. Константы для группировки типов данных
+"""
+
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -1197,20 +1209,20 @@ class AvanpostUserOrderLangModel(BaseModel):
 class AvanpostUserOrderLinkMissionModel(BaseModel):
     """Связь заказов пользователей и заданий (TRSAppUsersObjectsLinksMissions)"""
 
-    __tablename__ = "TAvanpostUsersLinksContactsMissions"
+    __tablename__ = "TAvanpostUsersLinksOrdersMissions"
     __table_args__ = (
-        PrimaryKeyConstraint("FK_Parent", "FK_Link", name="PK_Avp_UsersLinksContactsMissions"),
+        PrimaryKeyConstraint("FK_Parent", "FK_Link", name="PK_Avp_UsersLinksOrdersMissions"),
         ForeignKeyConstraint(
             ["FK_Parent"],
             ["TAvanpostUsersOrders.FID"],
             ondelete="CASCADE",
-            name="FK_Avp_UsersLinksContactsMissions_Parent",
+            name="FK_Avp_UsersLinksOrdersMissions_Parent",
         ),
         ForeignKeyConstraint(
             ["FK_Link"],
             ["TAvanpostUsersMissions.FID"],
             ondelete="CASCADE",
-            name="FK_Avp_UsersLinksContactsMissions_Link",
+            name="FK_Avp_UsersLinksOrdersMissions_Link",
         ),
     )
 
@@ -1509,16 +1521,19 @@ AVANPOST_BASE_DATA_TYPES: list[int] = (
     list(range(1, 18)) + list(range(101, 109)) + list(range(201, 206)) + list(range(301, 304))
 )
 
-AVANPOST_USER_DATA_TYPES: list[int] = [
+AVANPOST_USER_DATA_BASE_TYPES: list[int] = [
     401,  # Пользователи
-    402,  # Чаты
-    403,  # Переводы чатов
     501,  # Статусы пользователей
-    502,  # Связи пользователей с контактами
     503,  # Задания
     504,  # Переводы заданий
     505,  # Пункты заданий
     506,  # Переводы пунктов
+]
+
+AVANPOST_USER_DATA_DETAILS_TYPES: list[int] = [
+    402,  # Чаты
+    403,  # Переводы чатов
+    502,  # Связи пользователей с контактами
     507,  # Заказы
     508,  # Переводы заказов
     509,  # Связи заказов с заданиями
@@ -1530,7 +1545,7 @@ AVANPOST_USER_DATA_TYPES: list[int] = [
     605,  # Связи пользователей с контрольными сообщениями
 ]
 
-# ============ ЭКСПОРТ ============
+AVANPOST_USER_DATA_ALL_TYPES: list[int] = sorted(AVANPOST_USER_DATA_BASE_TYPES + AVANPOST_USER_DATA_DETAILS_TYPES)
 
 __all__ = [
     # Базовые справочники
@@ -1604,5 +1619,7 @@ __all__ = [
     "get_avanpost_model",
     "get_avanpost_table_name",
     "AVANPOST_BASE_DATA_TYPES",
-    "AVANPOST_USER_DATA_TYPES",
+    "AVANPOST_USER_DATA_ALL_TYPES",
+    "AVANPOST_USER_DATA_BASE_TYPES",
+    "AVANPOST_USER_DATA_DETAILS_TYPES",
 ]

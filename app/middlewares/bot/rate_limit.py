@@ -144,7 +144,6 @@ class RateLimitMiddleware(BaseMiddleware):
                 message = "⛔ Вы заблокированы за чрезмерную активность."
         else:
             if is_command:
-                # Используем публичный метод для получения конфигурации
                 config = rate_limit_manager.get_config(RateLimitScope.COMMAND)
                 period = config.period if config else self.command_period
 

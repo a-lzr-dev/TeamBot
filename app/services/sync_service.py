@@ -15,11 +15,12 @@ from app.core.converters import (
     member_status_from_telethon,
     user_info_from_telethon,
 )
-from app.core.services.interfaces import ISyncService
-from app.db.repositories import ChatRepository, UserRepository
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
-from app.models import ChatMemberStatus, ChatModel, UserChatMemberModel, datetime_now
+
+from ..core.services.interfaces import ISyncService
+from ..db.repositories import ChatRepository, UserRepository
+from ..logger import bot_logger
+from ..models import ChatMemberStatus, ChatModel, UserChatMemberModel, datetime_now
+from ..utils.decorators import log_exceptions
 
 SyncStats = dict[str, bool | int | str | list | dict | None]
 
@@ -66,7 +67,7 @@ class SyncService(ISyncService):
         bot_logger.info("✅ Sync Service initialized")
 
     @log_exceptions(bot_logger)
-    async def sync_chat_members(  # type: ignore[override]
+    async def sync_chat_members(
         self,
         chat_id: int,
         session: AsyncSession,
@@ -140,7 +141,7 @@ class SyncService(ISyncService):
             return {"success": False, "error": str(e), "chat_id": chat_id}
 
     @log_exceptions(bot_logger)
-    async def sync_all_chats(  # type: ignore[override]
+    async def sync_all_chats(
         self,
         session: AsyncSession,
         force: bool = False,
@@ -338,7 +339,6 @@ class ChatSyncEngine:
                 for member in members
             ]
 
-            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ДЕАКТИВАЦИИ УЧАСТНИКОВ
             deactivated_count = await chat_repo.deactivate_missing_members(
                 session=session,
                 chat_id=normalized_chat_id,
@@ -352,7 +352,6 @@ class ChatSyncEngine:
 
             for member in members:
                 try:
-                    # ИСПОЛЬЗУЕМ UserRepository ДЛЯ СОХРАНЕНИЯ ПОЛЬЗОВАТЕЛЯ
                     await user_repo.save_user(
                         session=session,
                         user_id=member.FID,
@@ -362,14 +361,12 @@ class ChatSyncEngine:
                         username=member.FUserName,
                     )
 
-                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ПРОВЕРКИ СУЩЕСТВОВАНИЯ УЧАСТНИКА
                     existing = await chat_repo.get_chat_member_by_keys(
                         session=session,
                         user_id=member.FID,
                         chat_id=normalized_chat_id,
                     )
 
-                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ СОХРАНЕНИЯ УЧАСТНИКА
                     await chat_repo.save_chat_member(
                         session=session,
                         user_id=member.FID,
@@ -389,7 +386,6 @@ class ChatSyncEngine:
             stats["processed"] = processed_count
             stats["added"] = added_count
 
-            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ОБНОВЛЕНИЯ ВРЕМЕНИ СИНХРОНИЗАЦИИ
             await chat_repo.update_sync_time(
                 session=session,
                 chat_id=normalized_chat_id,
@@ -470,7 +466,6 @@ class ChatSyncEngine:
             # Активные ID чатов из Telegram
             active_ids = {chat.FID for chat in chats}
 
-            # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ ДЕАКТИВАЦИИ ЧАТОВ
             deactivated_chats = await chat_repo.deactivate_missing_chats(
                 session=session,
                 active_chat_ids=active_ids,
@@ -482,7 +477,6 @@ class ChatSyncEngine:
                 try:
                     is_new = chat.FID not in db_chats_ids
 
-                    # ИСПОЛЬЗУЕМ ChatRepository ДЛЯ СОХРАНЕНИЯ ЧАТА
                     await chat_repo.save_chat(
                         session=session,
                         chat_id=chat.FID,
@@ -583,7 +577,7 @@ class ChatSyncEngine:
             is_megagroup = hasattr(chat_entity, "megagroup") and chat_entity.megagroup
             is_group = hasattr(chat_entity, "group") and chat_entity.group
 
-            # Для супергрупп и каналов используем GetParticipantsRequest
+            # Использование GetParticipantsRequest для супергрупп и каналов
             if is_channel or is_megagroup:
                 bot_logger.debug(f"🔄 Getting members for channel/supergroup: {chat_id}")
 
@@ -634,7 +628,7 @@ class ChatSyncEngine:
                         bot_logger.error(f"❌ Getting participants failed: {e}", exc_info=True)
                         break
 
-            # Для обычных групп используем get_participants
+            # Использование get_participants для обычных групп
             elif is_group:
                 bot_logger.debug(f"🔄 Getting members for regular group: {chat_id}")
 
@@ -747,11 +741,11 @@ class ChatSyncEngine:
                     break
 
                 try:
-                    # Пропускаем диалоги с пользователями (личные чаты)
+                    # Пропуск диалогов с пользователями (личные чаты)
                     if dialog.is_user:
                         continue
 
-                    # Проверяем, есть ли бот в чате через Aiogram
+                    # Проверка, есть ли бот в чате через Aiogram
                     bot_in_chat = await ChatSyncEngine._check_bot_in_chat_aiogram(bot, dialog.id)
 
                     if not bot_in_chat:

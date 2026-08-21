@@ -5,7 +5,6 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import (
     ChatMessageModel,
@@ -20,6 +19,7 @@ from ...models import (
     UserModel,
     datetime_now,
 )
+from ...utils.decorators import log_exceptions
 
 
 class ErrorRepository:
@@ -61,6 +61,8 @@ class ErrorRepository:
         Returns:
             ErrorModel: Созданная ошибка
         """
+        db_logger.info(f"🆕 [create_error] Creating error: code={error_code}, source={source_system}")
+
         if group_hash is None:
             group_hash = ErrorRepository.create_group_hash(error_code, error_message, source_system)
 
@@ -83,6 +85,8 @@ class ErrorRepository:
 
         session.add(error)
         await session.flush()
+
+        db_logger.info(f"✅ [create_error] Created error #{error.FID} with group_hash={group_hash[:8]}...")
         return error
 
     # ==================== ПОИСК И ПОЛУЧЕНИЕ ====================
@@ -103,9 +107,20 @@ class ErrorRepository:
         Returns:
             ErrorModel | None: Найденная ошибка или None
         """
+        db_logger.info(f"🔍 [get_error_by_id] Getting error by ID: {error_id}")
+
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         error: ErrorModel | None = result.scalar_one_or_none()
+
+        if error:
+            db_logger.info(f"✅ [get_error_by_id] Found error #{error_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_error_by_id] Error #{error_id} not found")
+
         return error
 
     @staticmethod
@@ -126,6 +141,8 @@ class ErrorRepository:
         Returns:
             ErrorModel | None: Найденная ошибка или None
         """
+        db_logger.info(f"🔍 [find_existing_error] Finding existing error by hash: {group_hash[:8]}...")
+
         if statuses is None:
             statuses = [ErrorStatus.NEW, ErrorStatus.IN_PROGRESS]
 
@@ -133,8 +150,17 @@ class ErrorRepository:
             ErrorModel.FGroupHash == group_hash,
             ErrorModel.FStatus.in_(statuses),
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         error: ErrorModel | None = result.scalar_one_or_none()
+
+        if error:
+            db_logger.info(f"✅ [find_existing_error] Found existing error #{error.FID}")
+        else:
+            db_logger.debug(f"ℹ️ [find_existing_error] No existing error found for hash {group_hash[:8]}...")
+
         return error
 
     @staticmethod
@@ -169,6 +195,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info(f"📋 [get_errors] Getting errors with filters: status={status}, category={category}")
+
         stmt = select(ErrorModel)
 
         if status is not None:
@@ -194,8 +222,13 @@ class ErrorRepository:
 
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_errors] Found {len(errors)} errors")
+        return errors
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -217,6 +250,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info(f"📋 [get_errors_by_status] Getting errors by status: {status}")
+
         stmt = (
             select(ErrorModel)
             .where(ErrorModel.FStatus == status)
@@ -224,8 +259,14 @@ class ErrorRepository:
             .limit(limit)
             .offset(offset)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_errors_by_status] Found {len(errors)} errors with status {status}")
+        return errors
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -249,6 +290,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info(f"📋 [get_errors_by_user] Getting errors for user {user_id}")
+
         stmt = select(ErrorModel).where(ErrorModel.FUserID == user_id)
 
         if status is not None:
@@ -256,8 +299,13 @@ class ErrorRepository:
 
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_errors_by_user] Found {len(errors)} errors for user {user_id}")
+        return errors
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -281,6 +329,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info(f"📋 [get_errors_by_source] Getting errors from source: {source_system}")
+
         stmt = select(ErrorModel).where(ErrorModel.FSourceSystem == source_system)
 
         if status is not None:
@@ -288,8 +338,13 @@ class ErrorRepository:
 
         stmt = stmt.order_by(ErrorModel.FCreatedAt.desc()).limit(limit).offset(offset)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_errors_by_source] Found {len(errors)} errors from source {source_system}")
+        return errors
 
     # ==================== ОБНОВЛЕНИЕ ОШИБКИ ====================
 
@@ -311,14 +366,18 @@ class ErrorRepository:
         Returns:
             ErrorModel | None: Обновленная ошибка или None
         """
+        db_logger.info(f"🔄 [increment_occurrences] Incrementing occurrences for error #{error_id}")
+
         stmt = select(ErrorModel).where(ErrorModel.FID == error_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         error = result.scalar_one_or_none()
 
         # Проверка типа
         if error is None:
-            return None
-        if not isinstance(error, ErrorModel):
+            db_logger.warning(f"⚠️ [increment_occurrences] Error #{error_id} not found")
             return None
 
         error.FCountOccurrences += 1
@@ -327,7 +386,9 @@ class ErrorRepository:
             error.FErrorDetails = details[:1000]
 
         await session.flush()
-        return error
+
+        db_logger.info(f"✅ [increment_occurrences] Error #{error_id} now has {error.FCountOccurrences} occurrences")
+        return error  # type: ignore[no-any-return]
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -349,12 +410,16 @@ class ErrorRepository:
         Returns:
             tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
+        db_logger.info(f"✅ [resolve_error] Resolving error #{error_id} by user {resolved_by}")
+
         error = await ErrorRepository.get_error_by_id(session, error_id)
 
         if not error:
+            db_logger.warning(f"⚠️ [resolve_error] Error #{error_id} not found")
             return False, "Error not found"
 
         if error.FStatus == ErrorStatus.RESOLVED:
+            db_logger.warning(f"⚠️ [resolve_error] Error #{error_id} already resolved")
             return False, "Error already resolved"
 
         error.FStatus = ErrorStatus.RESOLVED
@@ -364,6 +429,8 @@ class ErrorRepository:
             error.FResolvedNote = resolved_note[:1000]
 
         await session.commit()
+
+        db_logger.info(f"✅ [resolve_error] Error #{error_id} resolved by user {resolved_by}")
         return True, "Error resolved successfully"
 
     @staticmethod
@@ -382,12 +449,16 @@ class ErrorRepository:
         Returns:
             tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
+        db_logger.info(f"🔄 [reopen_error] Reopening error #{error_id}")
+
         error = await ErrorRepository.get_error_by_id(session, error_id)
 
         if not error:
+            db_logger.warning(f"⚠️ [reopen_error] Error #{error_id} not found")
             return False, "Error not found"
 
         if error.FStatus != ErrorStatus.RESOLVED:
+            db_logger.warning(f"⚠️ [reopen_error] Error #{error_id} is not resolved (status={error.FStatus})")
             return False, "Error is not resolved"
 
         error.FStatus = ErrorStatus.REOPENED
@@ -397,6 +468,8 @@ class ErrorRepository:
         error.FResolvedAt = None
 
         await session.commit()
+
+        db_logger.info(f"✅ [reopen_error] Error #{error_id} reopened (reopened_count={error.FReopenedCount})")
         return True, "Error reopened"
 
     @staticmethod
@@ -419,9 +492,12 @@ class ErrorRepository:
         Returns:
             ErrorModel | None: Обновленная ошибка или None
         """
+        db_logger.info(f"🔄 [update_error_status] Updating error #{error_id} status to {status}")
+
         error = await ErrorRepository.get_error_by_id(session, error_id)
 
         if not error:
+            db_logger.warning(f"⚠️ [update_error_status] Error #{error_id} not found")
             return None
 
         error.FStatus = status
@@ -429,7 +505,9 @@ class ErrorRepository:
             error.FResolvedNote = note[:1000]
 
         await session.flush()
-        return error
+
+        db_logger.info(f"✅ [update_error_status] Error #{error_id} status updated to {status}")
+        return error  # type: ignore[no-any-return]
 
     # ==================== СВЯЗЬ С СООБЩЕНИЯМИ ====================
 
@@ -451,15 +529,21 @@ class ErrorRepository:
         Returns:
             ErrorMessageLinkModel | None: Созданная связь или None
         """
+        db_logger.info(f"🔗 [link_message] Linking error #{error_id} with message #{message_id}")
+
         # Проверка, нет ли уже такой связи
         stmt = select(ErrorMessageLinkModel).where(
             ErrorMessageLinkModel.FK_Error == error_id,
             ErrorMessageLinkModel.FK_Message == message_id,
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         existing: ErrorMessageLinkModel | None = result.scalar_one_or_none()
 
         if existing is not None:
+            db_logger.debug(f"ℹ️ [link_message] Link already exists between #{error_id} and #{message_id}")
             return existing
 
         link = ErrorMessageLinkModel(
@@ -468,6 +552,8 @@ class ErrorRepository:
         )
         session.add(link)
         await session.flush()
+
+        db_logger.info(f"✅ [link_message] Created link between error #{error_id} and message #{message_id}")
         return link
 
     @staticmethod
@@ -488,13 +574,26 @@ class ErrorRepository:
         Returns:
             bool: Успешно ли удалено
         """
+        db_logger.info(f"🔗 [unlink_message] Unlinking error #{error_id} from message #{message_id}")
+
         stmt = delete(ErrorMessageLinkModel).where(
             ErrorMessageLinkModel.FK_Error == error_id,
             ErrorMessageLinkModel.FK_Message == message_id,
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
-        return result.rowcount > 0 if hasattr(result, "rowcount") else False
+
+        success = result.rowcount > 0 if hasattr(result, "rowcount") else False
+
+        if success:
+            db_logger.info(f"✅ [unlink_message] Unlinked error #{error_id} from message #{message_id}")
+        else:
+            db_logger.warning(f"⚠️ [unlink_message] Link not found between #{error_id} and #{message_id}")
+
+        return success
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -512,10 +611,18 @@ class ErrorRepository:
         Returns:
             int: Количество удаленных связей
         """
+        db_logger.info(f"🔗 [unlink_all_messages] Unlinking all messages from error #{error_id}")
+
         stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error == error_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
+
         rowcount = result.rowcount if hasattr(result, "rowcount") else 0
+
+        db_logger.info(f"✅ [unlink_all_messages] Unlinked {rowcount} messages from error #{error_id}")
         return rowcount
 
     @staticmethod
@@ -534,13 +641,21 @@ class ErrorRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
+        db_logger.info(f"📋 [get_linked_messages] Getting messages linked to error #{error_id}")
+
         stmt = (
             select(ChatMessageModel)
             .join(ErrorMessageLinkModel, ErrorMessageLinkModel.FK_Message == ChatMessageModel.FID)
             .where(ErrorMessageLinkModel.FK_Error == error_id)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        messages = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_linked_messages] Found {len(messages)} messages linked to error #{error_id}")
+        return messages
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -558,9 +673,17 @@ class ErrorRepository:
         Returns:
             int: Количество сообщений
         """
+        db_logger.info(f"📊 [get_linked_message_count] Getting linked message count for error #{error_id}")
+
         stmt = select(func.count()).select_from(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error == error_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return result.scalar() or 0
+        count = result.scalar() or 0
+
+        db_logger.info(f"✅ [get_linked_message_count] Error #{error_id} has {count} linked messages")
+        return count
 
     # ==================== УДАЛЕНИЕ ОШИБКИ ====================
 
@@ -582,26 +705,39 @@ class ErrorRepository:
         Returns:
             bool: Успешно ли удалено
         """
+        db_logger.info(f"🗑️ [delete_error] Deleting error #{error_id}")
+
         error = await ErrorRepository.get_error_by_id(session, error_id)
 
         if not error:
+            db_logger.warning(f"⚠️ [delete_error] Error #{error_id} not found")
             return False
 
         if delete_linked:
             # Удаление связей
             stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error == error_id)
+
+            db_logger.debug(f"📝 SQL (delete links): {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             await session.execute(stmt)
 
         # Удаление ошибки
         stmt = delete(ErrorModel).where(ErrorModel.FID == error_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
 
-        # Используем rowcount как int с явным приведением
         rowcount = getattr(result, "rowcount", 0)
-        if isinstance(rowcount, int):
-            return rowcount > 0
-        return False
+        success = rowcount > 0 if isinstance(rowcount, int) else False
+
+        if success:
+            db_logger.info(f"✅ [delete_error] Error #{error_id} deleted")
+        else:
+            db_logger.warning(f"⚠️ [delete_error] Error #{error_id} not found")
+
+        return success
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -622,19 +758,30 @@ class ErrorRepository:
             int: Количество удаленных ошибок
         """
         if not error_ids:
+            db_logger.debug("ℹ️ [delete_errors_batch] No error IDs provided")
             return 0
+
+        db_logger.info(f"🗑️ [delete_errors_batch] Batch deleting {len(error_ids)} errors")
 
         if delete_linked:
             # Удаление связей
             stmt = delete(ErrorMessageLinkModel).where(ErrorMessageLinkModel.FK_Error.in_(error_ids))
+
+            db_logger.debug(f"📝 SQL (delete links): {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             await session.execute(stmt)
 
         # Удаление ошибки
         stmt = delete(ErrorModel).where(ErrorModel.FID.in_(error_ids))
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         await session.commit()
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(error_ids)
+
+        db_logger.info(f"✅ [delete_errors_batch] Deleted {rowcount} errors")
         return rowcount
 
     # ==================== СТАТИСТИКА ====================
@@ -659,6 +806,8 @@ class ErrorRepository:
         Returns:
             dict: Статистика
         """
+        db_logger.info(f"📊 [get_stats] Getting error stats: start={start_date}, end={end_date}")
+
         if not start_date:
             start_date = datetime_now() - timedelta(days=7)
         if not end_date:
@@ -680,6 +829,8 @@ class ErrorRepository:
         if category is not None:
             stmt = stmt.where(ErrorModel.FCategory == category)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         stats = result.first()
 
@@ -699,7 +850,7 @@ class ErrorRepository:
                 },
             }
 
-        return {
+        stats_dict = {
             "total": stats.total or 0,
             "total_occurrences": stats.total_occurrences or 0,
             "new": stats.new or 0,
@@ -713,6 +864,9 @@ class ErrorRepository:
                 "end": end_date.isoformat(),
             },
         }
+
+        db_logger.info(f"✅ [get_stats] Stats: total={stats_dict['total']}, resolved={stats_dict['resolved']}")
+        return stats_dict
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -730,10 +884,14 @@ class ErrorRepository:
         Returns:
             dict: Статистика пользователя
         """
+        db_logger.info(f"📊 [get_user_stats] Getting stats for user {user_id}")
+
         total_stmt = select(
             func.count(ErrorModel.FID).label("total"),
             func.count(ErrorModel.FID).filter(ErrorModel.FStatus == ErrorStatus.RESOLVED).label("resolved"),
         ).where(ErrorModel.FResolvedBy == user_id)
+
+        db_logger.debug(f"📝 SQL (total): {total_stmt.compile(compile_kwargs={'literal_binds': True})}")
 
         total_result = await session.execute(total_stmt)
         total_stats = total_result.first()
@@ -762,18 +920,25 @@ class ErrorRepository:
             .limit(30)
         )
 
+        db_logger.debug(f"📝 SQL (daily): {daily_stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         daily_result = await session.execute(daily_stmt)
         daily = [
             {"date": row.date.isoformat() if row.date else None, "resolved": row.resolved} for row in daily_result.all()
         ]
 
-        return {
+        result = {
             "user_id": user_id,
             "total_solved": total_stats.resolved or 0,
             "total_errors": total_stats.total or 0,
             "success_rate": (total_stats.resolved / total_stats.total * 100) if total_stats.total else 0,
             "daily": daily,
         }
+
+        db_logger.info(
+            f"✅ [get_user_stats] User {user_id}: solved={result['total_solved']}, rate={result['success_rate']:.1f}%"
+        )
+        return result
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -795,6 +960,8 @@ class ErrorRepository:
         Returns:
             list[dict]: Список лидеров
         """
+        db_logger.info(f"🏆 [get_top_resolvers] Getting top {limit} resolvers")
+
         conditions = [ErrorModel.FStatus == ErrorStatus.RESOLVED]
 
         if start_date is not None:
@@ -817,8 +984,10 @@ class ErrorRepository:
             .limit(limit)
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return [
+        resolvers = [
             {
                 "first_name": row.first_name,
                 "last_name": row.last_name,
@@ -827,6 +996,9 @@ class ErrorRepository:
             }
             for row in result.all()
         ]
+
+        db_logger.info(f"✅ [get_top_resolvers] Found top {len(resolvers)} resolvers")
+        return resolvers
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -846,6 +1018,8 @@ class ErrorRepository:
         Returns:
             dict: Статистика по категориям
         """
+        db_logger.info("📊 [get_category_stats] Getting category stats")
+
         if not start_date:
             start_date = datetime_now() - timedelta(days=7)
         if not end_date:
@@ -863,13 +1037,15 @@ class ErrorRepository:
             .group_by(ErrorModel.FCategory)
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         category_stats: dict[str, int] = {}
         for row in result.all():
-            # Используем getattr для безопасного получения значения
             count_value = getattr(row, "count", 0)
-            # Принудительно преобразуем в int
             category_stats[row.FCategory.value] = int(count_value) if count_value is not None else 0
+
+        db_logger.info(f"✅ [get_category_stats] Stats: {category_stats}")
         return category_stats
 
     @staticmethod
@@ -890,6 +1066,8 @@ class ErrorRepository:
         Returns:
             dict: Статистика по уровням серьезности
         """
+        db_logger.info("📊 [get_severity_stats] Getting severity stats")
+
         if not start_date:
             start_date = datetime_now() - timedelta(days=7)
         if not end_date:
@@ -907,13 +1085,15 @@ class ErrorRepository:
             .group_by(ErrorModel.FSeverity)
         )
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         severity_stats: dict[str, int] = {}
         for row in result.all():
-            # Используем getattr для безопасного получения значения
             count_value = getattr(row, "count", 0)
-            # Принудительно преобразуем в int
             severity_stats[row.FSeverity.value] = int(count_value) if count_value is not None else 0
+
+        db_logger.info(f"✅ [get_severity_stats] Stats: {severity_stats}")
         return severity_stats
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
@@ -952,12 +1132,21 @@ class ErrorRepository:
         """
         if not chat_id:
             return False
+
+        db_logger.info(f"🔍 [chat_exists] Checking if chat {chat_id} exists")
+
         try:
             stmt = select(ChatModel).where(ChatModel.FID == chat_id)
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
-            return result.scalar_one_or_none() is not None
+            exists = result.scalar_one_or_none() is not None
+
+            db_logger.info(f"✅ [chat_exists] Chat {chat_id} exists: {exists}")
+            return exists
         except Exception as e:
-            db_logger.warning(f"⚠️ Failed to check chat existence: {e}")
+            db_logger.warning(f"⚠️ [chat_exists] Failed to check chat existence: {e}")
             return False
 
     @staticmethod
@@ -992,8 +1181,10 @@ class ErrorRepository:
         Returns:
             ChatMessageModel | None: Созданное сообщение или None
         """
+        db_logger.info(f"💾 [save_message] Saving error message to chat {chat_id}: {error_type}")
+
         if not chat_id:
-            db_logger.warning("⚠️ Cannot save message: chat_id is None")
+            db_logger.warning("⚠️ [save_message] Cannot save message: chat_id is None")
             return None
 
         message_text = f"❌ Ошибка в {component}: {error_type}"
@@ -1016,6 +1207,8 @@ class ErrorRepository:
         )
         session.add(chat_message)
         await session.flush()
+
+        db_logger.info(f"✅ [save_message] Saved error message to chat {chat_id}")
         return chat_message
 
     @staticmethod
@@ -1034,9 +1227,20 @@ class ErrorRepository:
         Returns:
             ErrorModel | None: Найденная ошибка или None
         """
+        db_logger.info(f"🔍 [get_error_by_group_hash] Getting error by hash: {group_hash[:8]}...")
+
         stmt = select(ErrorModel).where(ErrorModel.FGroupHash == group_hash)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         error: ErrorModel | None = result.scalar_one_or_none()
+
+        if error:
+            db_logger.info(f"✅ [get_error_by_group_hash] Found error #{error.FID}")
+        else:
+            db_logger.warning(f"⚠️ [get_error_by_group_hash] No error found for hash {group_hash[:8]}...")
+
         return error
 
     @staticmethod
@@ -1061,6 +1265,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info(f"📋 [get_errors_by_date_range] Getting errors from {start_date} to {end_date}")
+
         stmt = (
             select(ErrorModel)
             .where(
@@ -1071,8 +1277,14 @@ class ErrorRepository:
             .limit(limit)
             .offset(offset)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_errors_by_date_range] Found {len(errors)} errors in range")
+        return errors
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1092,6 +1304,8 @@ class ErrorRepository:
         Returns:
             list[ErrorModel]: Список ошибок
         """
+        db_logger.info("📋 [get_unresolved_errors] Getting unresolved errors")
+
         stmt = (
             select(ErrorModel)
             .where(ErrorModel.FStatus.in_([ErrorStatus.NEW, ErrorStatus.IN_PROGRESS, ErrorStatus.REOPENED]))
@@ -1099,8 +1313,14 @@ class ErrorRepository:
             .limit(limit)
             .offset(offset)
         )
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        errors = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_unresolved_errors] Found {len(errors)} unresolved errors")
+        return errors
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1116,18 +1336,22 @@ class ErrorRepository:
         Returns:
             dict: Количество ошибок по статусам
         """
+        db_logger.info("📊 [get_errors_count_by_status] Getting error counts by status")
+
         stmt = select(
             ErrorModel.FStatus,
             func.count(ErrorModel.FID).label("count"),
         ).group_by(ErrorModel.FStatus)
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         status_stats: dict[str, int] = {}
         for row in result.all():
-            # Используем getattr для безопасного получения значения
             count_value = getattr(row, "count", 0)
-            # Принудительно преобразуем в int
             status_stats[row.FStatus.value] = int(count_value) if count_value is not None else 0
+
+        db_logger.info(f"✅ [get_errors_count_by_status] Stats: {status_stats}")
         return status_stats
 
 

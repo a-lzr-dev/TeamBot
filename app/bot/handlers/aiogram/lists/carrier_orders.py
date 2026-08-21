@@ -1,12 +1,12 @@
 """
-Обработчик списка чатов пользователя (FK_Type=9).
+Обработчик списка заказов перевозчика (FK_Type=11).
 
 Поддерживает:
 - Пагинацию
-- Поиск по названию чата
-- Выбор чата для просмотра сообщений
+- Поиск по названию
+- Отображение детальной информации о заказах
 - Навигацию между страницами
-- Переход из меню действий (FK_Type=9 - Открытие списка чатов)
+- Переход из списка заказов заказчика (FK_Type=8 -> FK_Type=11)
 """
 
 from typing import Any
@@ -22,45 +22,46 @@ from .....db.repositories import AvanpostUserRepository
 from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
-from ..states import SubMenuStates
+from ..states import CarrierOrderStates
 
 # Создание роутера для обработки callback-запросов
-router = Router(name="aiogram_chats_list")
+router = Router(name="aiogram_carrier_orders_list")
 
 # Репозиторий для работы с данными пользователей Avanpost
 _avanpost_user_repo = AvanpostUserRepository()
 
 
-class ChatsListHandler(GenericListCallbackHandler):
+class CarrierOrdersListHandler(GenericListCallbackHandler):
     """
-    Обработчик списка чатов пользователя (FK_Type=9).
+    Обработчик списка заказов перевозчика (FK_Type=11).
 
     Наследуется от GenericListCallbackHandler для универсальной обработки:
     - Отображение списка с пагинацией
     - Поиск по названию
-    - Обработка выбора чата (переход к сообщениям чата)
+    - Обработка выбора элемента
     - Навигация между страницами
 
     Особенности:
-    - Загружает данные через get_user_chats_page
-    - При выборе чата переходит к деталям чата (ChatDetailsHandler)
-    - Использует иконку "💬" для чатов
+    - Загружает данные через get_carrier_orders_page
+    - Отображает дополнительную информацию (статус, приоритет)
+    - Поддерживает переход из списка заказов заказчика
+    - Использует buttons_per_row=1 для детального отображения
     """
 
     def __init__(self) -> None:
         """
-        Инициализация обработчика списка чатов.
+        Инициализация обработчика списка заказов перевозчика.
 
         Устанавливает:
-        - Префикс callback_data: "chats"
-        - Тип списка: "chats"
+        - Префикс callback_data: "carrier_orders"
+        - Тип списка: "carrier_orders"
         - Размер страницы: 10 элементов
         - Состояния для просмотра и поиска
         """
-        super().__init__(prefix="chats", list_type="chats")
+        super().__init__(prefix="carrier_orders", list_type="заказов перевозчиков")
         self.PAGE_SIZE = 10
-        self.STATE_VIEWING = SubMenuStates.viewing_chats
-        self.STATE_SEARCHING = SubMenuStates.searching_chats
+        self.STATE_VIEWING = CarrierOrderStates.viewing_orders
+        self.STATE_SEARCHING = CarrierOrderStates.searching_orders
 
     async def load_data(
         self,
@@ -70,7 +71,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
-        Загрузка данных чатов из БД.
+        Загрузка данных заказов перевозчика из БД.
 
         Args:
             session: Сессия БД
@@ -80,7 +81,7 @@ class ChatsListHandler(GenericListCallbackHandler):
 
         Returns:
             dict: Словарь с данными:
-                - items: Список чатов
+                - items: Список заказов перевозчика
                 - total: Общее количество
                 - page: Текущая страница
                 - total_pages: Всего страниц
@@ -90,6 +91,7 @@ class ChatsListHandler(GenericListCallbackHandler):
                 - error: Сообщение об ошибке (если есть)
         """
         avanpost_user_id = kwargs.get("avanpost_user_id")
+        order_id = kwargs.get("order_id")
         if not avanpost_user_id:
             return {
                 "items": [],
@@ -104,16 +106,17 @@ class ChatsListHandler(GenericListCallbackHandler):
 
         try:
             # Получение данных через репозиторий
-            data = await _avanpost_user_repo.get_user_chats_page(
+            data = await _avanpost_user_repo.get_carrier_orders_page(
                 session=session,
                 avanpost_user_id=avanpost_user_id,
+                order_id=order_id,
                 page=page,
                 page_size=self.PAGE_SIZE,
                 search_query=search_query,
             )
 
             return {
-                "items": data.get("chats", []),
+                "items": data.get("orders", []),
                 "total": data.get("total", 0),
                 "page": data.get("page", 0),
                 "total_pages": data.get("total_pages", 0),
@@ -122,7 +125,7 @@ class ChatsListHandler(GenericListCallbackHandler):
                 "search_query": data.get("search_query"),
             }
         except Exception as e:
-            bot_logger.error(f"❌ Failed to load chats: {e}", exc_info=True)
+            bot_logger.error(f"❌ Failed to load carrier orders: {e}", exc_info=True)
             return {
                 "items": [],
                 "total": 0,
@@ -143,7 +146,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """
-        Отображение списка чатов пользователя.
+        Отображение списка заказов перевозчика.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -166,6 +169,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         # Получение ID пользователя Avanpost из состояния или параметров
         state_data = await state.get_data()
         avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
+        order_id = state_data.get("selected_order_id") or kwargs.get("order_id")
         group_id = state_data.get("group_id")
         selected_user_id = state_data.get("selected_user_id")
         selected_user_name = state_data.get("selected_user_name")
@@ -183,13 +187,19 @@ class ChatsListHandler(GenericListCallbackHandler):
         try:
             # Загрузка данных
             async with db_manager.get_session() as session:
-                data = await self.load_data(session, page, search_query, avanpost_user_id=avanpost_user_id)
+                data = await self.load_data(
+                    session,
+                    page,
+                    search_query,
+                    avanpost_user_id=avanpost_user_id,
+                    order_id=order_id,
+                )
 
             # Проверка ошибок загрузки
             if data.get("error"):
                 await bot_manager.send_message(
                     chat_id=chat_id,
-                    text=f"❌ Ошибка загрузки чатов: {data['error']}",
+                    text=f"❌ Ошибка загрузки заказов: {data['error']}",
                     message_type=MessageType.COMMAND_ACTION_INFO,
                     delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
                     parse_mode="Markdown",
@@ -201,13 +211,29 @@ class ChatsListHandler(GenericListCallbackHandler):
             current_page = data["page"]
             total_pages = data["total_pages"]
 
-            # Если чаты не найдены
+            # Если заказы не найдены
             if total == 0:
-                empty_text = "💬 **Мои чаты**\n\n"
+                empty_text = "📋 **Заказы перевозчиков**\n\n"
                 if search_query:
-                    empty_text += f"🔍 По запросу `{search_query}` чаты не найдены."
+                    empty_text += f"🔍 По запросу `{search_query}` заказы не найдены."
                 else:
-                    empty_text += "Нет чатов."
+                    empty_text += "Нет заказов."
+
+                # Формирование кнопки "Назад к заказам"
+                extra_buttons = []
+                parent_item_id = state_data.get("parent_item_id")
+
+                # Если есть order_id - мы пришли из заказов заказчика
+                if order_id is not None:
+                    extra_buttons.append(("🔙 Назад к заказам", "orders_back_to_list"))
+                elif parent_item_id:
+                    extra_buttons.append(("🔙 Назад к действиям", f"action_back_{parent_item_id}"))
+
+                # Кнопка "В главное меню"
+                if group_id:
+                    extra_buttons.append(("🏠 В главное меню", "action_home"))
+
+                keyboard = self.get_back_keyboard(state, extra_buttons)
 
                 await bot_manager.send_message(
                     chat_id=chat_id,
@@ -215,7 +241,7 @@ class ChatsListHandler(GenericListCallbackHandler):
                     message_type=MessageType.COMMAND_ACTION_INFO,
                     delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
                     parse_mode="Markdown",
-                    reply_markup=self.get_back_keyboard(state),
+                    reply_markup=keyboard,
                 )
                 return
 
@@ -223,25 +249,28 @@ class ChatsListHandler(GenericListCallbackHandler):
             start_item = current_page * self.PAGE_SIZE + 1
             end_item = min(start_item + self.PAGE_SIZE - 1, total)
 
-            text = "💬 **Мои чаты**\n\n"
+            text = "📋 **Заказы перевозчиков**\n\n"
             if search_query:
                 text += f"🔍 **Поиск:** `{search_query}`\n"
             text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
             text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
 
-            # Создание клавиатуры
+            # Создание клавиатуры с дополнительной информацией
             builder = ListKeyboardBuilder(
-                callback_prefix="chats",
-                buttons_per_row=2,
-                item_icon="💬",
-                max_name_length=30,
+                callback_prefix="carrier_orders",
+                buttons_per_row=1,
+                item_icon="🚛",
+                max_name_length=120,
             )
 
             # Добавление кнопок навигации
             parent_item_id = state_data.get("parent_item_id")
             extra_buttons = []
 
-            if parent_item_id:
+            # Если есть order_id - мы пришли из заказов заказчика
+            if order_id is not None:
+                extra_buttons.append(("🔙 Назад к заказам", "orders_back_to_list"))
+            elif parent_item_id:
                 extra_buttons.append(("🔙 Назад к действиям", f"action_back_{parent_item_id}"))
 
             # Кнопка "В главное меню"
@@ -254,7 +283,7 @@ class ChatsListHandler(GenericListCallbackHandler):
                 total_pages=total_pages,
                 search_query=search_query,
                 extra_buttons=extra_buttons if extra_buttons else None,
-                item_name_formatter=lambda item: self._format_chat_item(item),
+                item_name_formatter=lambda item: self._format_order_item(item),
             )
 
             # Сохранение состояния
@@ -280,10 +309,10 @@ class ChatsListHandler(GenericListCallbackHandler):
             )
 
         except Exception as e:
-            bot_logger.error(f"❌ Failed to show chats: {e}", exc_info=True)
+            bot_logger.error(f"❌ Failed to show carrier orders: {e}", exc_info=True)
             await bot_manager.send_message(
                 chat_id=chat_id,
-                text="❌ Произошла ошибка при загрузке чатов. Попробуйте позже.",
+                text="❌ Произошла ошибка при загрузке заказов. Попробуйте позже.",
                 message_type=MessageType.COMMAND_ACTION_INFO,
                 delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
                 parse_mode="Markdown",
@@ -297,57 +326,23 @@ class ChatsListHandler(GenericListCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """
-        Обработка выбора чата - переход к просмотру сообщений чата.
+        Обработка выбора заказа перевозчика.
 
-        При выборе чата происходит переход к обработчику деталей чата
-        (ChatDetailsHandler), который показывает сообщения.
+        При выборе заказа показывается детальная информация о заказе.
 
         Args:
             callback: CallbackQuery от пользователя
             state: Состояние FSM
-            item_id: ID выбранного чата
+            item_id: ID выбранного заказа (ID миссии)
             **kwargs: Дополнительные параметры
         """
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(
-            text=f"💬 Открытие чата #{item_id}...",
+            text=f"📋 Детали заказа перевозчика #{item_id}",
             event=callback,
         )
 
-        # Переход к обработчику деталей чата
-        from .chat_details import ChatDetailsStates, show_chat_details
-
-        # Получение данных из состояния
-        state_data = await state.get_data()
-        avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
-        parent_item_id = state_data.get("parent_item_id")
-        group_id = state_data.get("group_id")
-        selected_user_id = state_data.get("selected_user_id")
-        selected_user_name = state_data.get("selected_user_name")
-
-        if not avanpost_user_id:
-            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
-            return
-
-        # Сохранение состояния для просмотра сообщений
-        await state.update_data(
-            selected_chat_id=item_id,
-            chat_details_page=0,
-            parent_item_id=parent_item_id,
-            group_id=group_id,
-            selected_user_id=selected_user_id,
-            selected_user_name=selected_user_name,
-        )
-        await state.set_state(ChatDetailsStates.viewing_messages)
-
-        # Отображение сообщений чата
-        await show_chat_details(
-            event=callback,
-            state=state,
-            avanpost_user_id=avanpost_user_id,
-            chat_id=item_id,
-            page=0,
-        )
+        # TODO: Добавить отображение детальной информации о заказе перевозчика
 
     async def get_state_keys(self) -> dict[str, str]:
         """
@@ -363,12 +358,12 @@ class ChatsListHandler(GenericListCallbackHandler):
                 - total_pages: Ключ для общего количества страниц
         """
         return {
-            "page": "chats_page",
-            "search_query": "chats_search_query",
-            "page_before_search": "chats_page_before_search",
-            "search_message_id": "chats_search_message_id",
-            "total": "chats_total",
-            "total_pages": "chats_total_pages",
+            "page": "carrier_orders_page",
+            "search_query": "carrier_orders_search_query",
+            "page_before_search": "carrier_orders_page_before_search",
+            "search_message_id": "carrier_orders_search_message_id",
+            "total": "carrier_orders_total",
+            "total_pages": "carrier_orders_total_pages",
         }
 
     @staticmethod
@@ -391,117 +386,175 @@ class ChatsListHandler(GenericListCallbackHandler):
         return None
 
     @staticmethod
-    def get_back_keyboard(state: FSMContext) -> Any:
+    def get_back_keyboard(
+        state: FSMContext,
+        extra_buttons: list[tuple[str, str]] | None = None,
+    ) -> Any:
         """
         Создание клавиатуры с кнопкой "Назад".
 
         Args:
-            state: Состояние FSM
+            state: Состояние FSM (не используется, но сохраняется для единообразия)
+            extra_buttons: Список дополнительных кнопок (текст, callback_data)
 
         Returns:
             InlineKeyboardMarkup: Клавиатура с кнопкой назад
         """
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        state_data = state.get_data()
-        group_id = state_data.get("group_id")
-        parent_item_id = state_data.get("parent_item_id")
-
+        # Базовые кнопки
         buttons = []
 
-        if parent_item_id:
-            buttons.append(
-                InlineKeyboardButton(text="🔙 Назад к действиям", callback_data=f"action_back_{parent_item_id}")
-            )
+        # Дополнительные кнопки
+        if extra_buttons:
+            for text, callback_data in extra_buttons:
+                buttons.append(InlineKeyboardButton(text=text, callback_data=callback_data))
 
-        if group_id:
-            buttons.append(InlineKeyboardButton(text="🏠 В главное меню", callback_data="action_home"))
-
+        # Кнопка закрытия, если нет других кнопок
         if not buttons:
-            buttons.append(InlineKeyboardButton(text="❌ Закрыть", callback_data="chats_close"))
+            buttons.append(InlineKeyboardButton(text="❌ Закрыть", callback_data="carrier_orders_close"))
 
         return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
     @staticmethod
-    def _format_chat_item(item: dict[str, Any]) -> str:
+    def _format_order_item(item: dict[str, Any]) -> str:
         """
-        Форматирование элемента чата для отображения.
+        Форматирование элемента заказа перевозчика с дополнительной информацией.
+
+        Отображает:
+        - Название заказа
+        - Дополнительную информацию (маршрут, статус, приоритет)
+        - Индикаторы текущего/следующего заказа
 
         Args:
-            item: Словарь с данными чата
+            item: Словарь с данными заказа
 
         Returns:
-            str: Отформатированное название чата
+            str: Отформатированное описание заказа
         """
         name = item.get("name")
         if name is None:
             item_id = item.get("id", "?")
-            name = f"Чат #{item_id}"
-        return name
+            name = f"Заказ перевозчика #{item_id}"
+
+        info = item.get("info")
+        if info:
+            info_preview = info[:100] + "..." if len(info) > 100 else info
+            return f"{name}\n   📝 {info_preview}"
+
+        return f"{name}"
 
 
 # Создание глобальных экземпляров для использования в других модулях
-chats_handler = ChatsListHandler()
-chats_search_handler = GenericSearchHandler(chats_handler)
+carrier_orders_handler = CarrierOrdersListHandler()
+carrier_orders_search_handler = GenericSearchHandler(carrier_orders_handler)
 
 
-async def show_chats_list(
+async def show_carrier_orders_list(
     event: Message | CallbackQuery,
     state: FSMContext,
+    order_id: int | None = None,
     page: int = 0,
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
     """
-    Внешняя функция для отображения списка чатов.
+    Внешняя функция для отображения списка заказов перевозчика.
 
     Используется для вызова из других модулей (например, из actions.py
-    при FK_Type=9 - Открытие списка чатов).
+    при FK_Type=11 или из orders.py при переходе из заказов заказчика).
 
     Args:
         event: Событие (Message или CallbackQuery)
         state: Состояние FSM
+        order_id: ID заказа заказчика
         page: Номер страницы
         search_query: Поисковый запрос
-        **kwargs: Дополнительные параметры (avanpost_user_id)
+        **kwargs: Дополнительные параметры
     """
-    await chats_handler.show_list(event, state, page, search_query, **kwargs)
+    await carrier_orders_handler.show_list(event, state, page, search_query, order_id=order_id, **kwargs)
 
 
-# Регистрация обработчиков колбэков для чатов
-@router.callback_query(lambda c: c.data.startswith("chats_"))
-async def handle_chats_callback(callback: CallbackQuery, state: FSMContext) -> None:
+# Регистрация обработчиков в роутере
+@router.callback_query(lambda c: c.data == "carrier_orders_back")
+async def handle_carrier_orders_back(callback: CallbackQuery, state: FSMContext) -> None:
+    """Возврат к списку заказов заказчика."""
+    from ....dependencies import get_bot_manager
+    from .orders import show_orders_list
+
+    bot_manager = get_bot_manager()
+    await bot_manager.send_toast(text="🔙 Возврат к заказам...", event=callback)
+
+    # Получение данных из состояния
+    state_data = await state.get_data()
+    avanpost_user_id = state_data.get("avanpost_user_id")
+    parent_item_id = state_data.get("parent_item_id")
+    group_id = state_data.get("group_id")
+    selected_user_id = state_data.get("selected_user_id")
+    selected_user_name = state_data.get("selected_user_name")
+
+    if not avanpost_user_id:
+        await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+        return
+
+    # Переключение состояния на просмотр заказов заказчика
+    from ..states import SubMenuStates
+
+    await state.set_state(SubMenuStates.viewing_orders)
+    await state.update_data(
+        orders_page=0,
+        orders_search_query=None,
+        parent_item_id=parent_item_id,
+        avanpost_user_id=avanpost_user_id,
+        selected_order_id=None,
+        group_id=group_id,
+        selected_user_id=selected_user_id,
+        selected_user_name=selected_user_name,
+    )
+
+    # Отображение списка заказов заказчика
+    await show_orders_list(
+        event=callback,
+        state=state,
+        avanpost_user_id=avanpost_user_id,
+        page=0,
+    )
+
+
+@router.callback_query(lambda c: c.data.startswith("carrier_orders_"))
+async def handle_carrier_orders_callback(callback: CallbackQuery, state: FSMContext) -> None:
     """
-    Обработчик всех callback-запросов, начинающихся с "chats_".
+    Обработчик всех callback-запросов, начинающихся с "carrier_orders_".
 
     Поддерживает:
     - Навигацию по страницам
-    - Выбор чата
+    - Выбор заказа
     - Закрытие списка
-    - Поиск по чатам
+    - Поиск по заказам
 
     Args:
         callback: CallbackQuery от пользователя
         state: Состояние FSM
     """
-    await chats_handler.handle(callback, state)
+    await carrier_orders_handler.handle(callback, state)
 
 
 # Регистрация обработчика поисковых запросов
-@router.message(SubMenuStates.searching_chats)
-async def handle_chats_search(message: Message, state: FSMContext) -> None:
+@router.message(CarrierOrderStates.searching_orders)
+async def handle_carrier_orders_search(message: Message, state: FSMContext) -> None:
     """
-    Обработчик текстовых сообщений в режиме поиска чатов.
+    Обработчик текстовых сообщений в режиме поиска заказов перевозчика.
 
     Args:
         message: Сообщение от пользователя
         state: Состояние FSM
     """
-    await chats_search_handler.handle_search_query(message, state)
+    await carrier_orders_search_handler.handle_search_query(message, state)
 
 
 __all__ = [
     "router",
-    "show_chats_list",
-    "chats_handler",
+    "show_carrier_orders_list",
+    "carrier_orders_handler",
+    "CarrierOrderStates",
 ]

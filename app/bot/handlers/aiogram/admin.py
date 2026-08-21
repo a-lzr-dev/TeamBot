@@ -1,3 +1,33 @@
+"""
+Модуль административных обработчиков AIogram.
+
+Этот модуль предоставляет обработчики для административных команд:
+- Рассылка сообщений (broadcast)
+- Удаление сообщений
+- Управление администраторами
+- Синхронизация с Avanpost
+- Загрузка пользователей из транспортных средств
+
+Команды:
+    /broadcast - Массовая рассылка сообщений
+    /delete - Удаление сообщения по ID
+    /cancel - Отмена текущей операции
+    /admins - Просмотр списка администраторов
+    /add_admin <id> - Добавление администратора
+    /remove_admin <id> - Удаление администратора
+    /sync_base - Синхронизация справочных данных
+    /sync_contacts - Синхронизация контактов
+    /sync_user <id> - Синхронизация пользователя
+    /sync_all_users - Синхронизация всех пользователей
+    /sync_light - Стандартная синхронизация
+    /sync_force - Полная синхронизация (Force)
+    /sync_vehicles - Загрузка пользователей из ТС
+
+Состояния FSM:
+    BroadcastStates - Для процесса рассылки
+    DeleteMessageStates - Для процесса удаления сообщений
+"""
+
 from aiogram import Bot, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
@@ -5,19 +35,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from app.bot.dependencies import get_bot_manager
-from app.bot.keyboards import AdminKeyboard
-from app.config import settings
-from app.db import ChatRepository, MessageRepository, UserRepository, db_manager
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
-from app.models import MessageActionType, MessageType
-from app.services.avanpost_sync_service import AvanpostSyncService
-from app.services.seed_service import AvanpostSeedService
+from ....bot.dependencies import get_bot_manager
+from ....bot.keyboards import AdminKeyboard
+from ....config import settings
+from ....db import db_manager
+from ....db.repositories import ChatRepository, MessageRepository, UserRepository
+from ....logger import bot_logger
+from ....models import MessageActionType, MessageType
+from ....services.avanpost_sync_service import AvanpostSyncService
+from ....services.seed_service import AvanpostSeedService
+from ....utils.decorators import log_exceptions
 
+# Создание роутера для административных команд
 router = Router(name="aiogram_admin")
 
-# Репозитории (создаем один раз на уровне модуля)
+# Репозитории (создаются один раз на уровне модуля)
 _chat_repo = ChatRepository()
 _message_repo = MessageRepository()
 _user_repo = UserRepository()
@@ -29,29 +61,35 @@ _user_repo = UserRepository()
 
 
 class BroadcastStates(StatesGroup):
-    """Состояния для рассылки"""
+    """Состояния для процесса массовой рассылки."""
 
-    waiting_for_text = State()
-    waiting_for_confirmation = State()
+    waiting_for_text = State()  # Ожидание текста сообщения
+    waiting_for_confirmation = State()  # Ожидание подтверждения
 
 
 class DeleteMessageStates(StatesGroup):
-    """Состояния для удаления сообщения"""
+    """Состояния для процесса удаления сообщения."""
 
-    waiting_for_chat_id = State()
-    waiting_for_message_id = State()
-    waiting_for_confirmation = State()
+    waiting_for_chat_id = State()  # Ожидание ID чата
+    waiting_for_message_id = State()  # Ожидание ID сообщения
+    waiting_for_confirmation = State()  # Ожидание подтверждения
 
 
 # ============================================================
-# УПРАВЛЕНИЕ РАССЫЛКОЙ
+# 1. УПРАВЛЕНИЕ РАССЫЛКОЙ
 # ============================================================
 
 
 @router.message(Command("broadcast"))
 @log_exceptions(bot_logger)
 async def cmd_broadcast(message: Message, state: FSMContext) -> None:
-    """Команда для рассылки сообщений всем чатам"""
+    """
+    Команда для массовой рассылки сообщений во все чаты.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     # Проверка прав администратора
@@ -73,6 +111,7 @@ async def cmd_broadcast(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Установка состояния ожидания текста
     await state.set_state(BroadcastStates.waiting_for_text)
 
     await bot_manager.send_answer(
@@ -90,7 +129,13 @@ async def cmd_broadcast(message: Message, state: FSMContext) -> None:
 @router.message(BroadcastStates.waiting_for_text)
 @log_exceptions(bot_logger)
 async def broadcast_get_text(message: Message, state: FSMContext) -> None:
-    """Получение текста для рассылки"""
+    """
+    Получение текста для рассылки.
+
+    Args:
+        message: Сообщение с текстом
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -123,9 +168,8 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Получение количества чатов через репозиторий
+    # Получение количества активных чатов
     async with db_manager.get_session() as session:
-        # ИСПОЛЬЗУЕМ chat_repo ДЛЯ ПОЛУЧЕНИЯ ЧАТОВ
         chats = await _chat_repo.get_chats(session, is_active=True)
         chat_count = len(chats)
 
@@ -139,7 +183,7 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Сохранение информации о сообщении и отправителе
+    # Сохранение данных в состоянии
     await state.update_data(
         text=message.text,
         parse_mode="HTML",
@@ -152,6 +196,7 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
 
     keyboard = AdminKeyboard.get_broadcast_confirm_keyboard()
 
+    # Запрос подтверждения
     await bot_manager.send_answer(
         text=f"📊 **Подтверждение рассылки**\n\n"
         f"Текст будет отправлен в **{chat_count}** чатов.\n\n"
@@ -169,7 +214,13 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
 @router.message(BroadcastStates.waiting_for_confirmation)
 @log_exceptions(bot_logger)
 async def broadcast_confirm(message: Message, state: FSMContext) -> None:
-    """Подтверждение рассылки"""
+    """
+    Подтверждение или отмена рассылки.
+
+    Args:
+        message: Сообщение с подтверждением
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     # Проверка отмены
@@ -211,7 +262,7 @@ async def broadcast_confirm(message: Message, state: FSMContext) -> None:
         )
         return
 
-    # Отображение Toast - заменено на обычное сообщение
+    # Уведомление о начале рассылки
     await bot_manager.send_answer(
         text="🔄 Начинаю рассылку...",
         event=message,
@@ -261,14 +312,24 @@ async def broadcast_confirm(message: Message, state: FSMContext) -> None:
 
 
 # ============================================================
-# УПРАВЛЕНИЕ УДАЛЕНИЕМ СООБЩЕНИЙ
+# 2. УПРАВЛЕНИЕ УДАЛЕНИЕМ СООБЩЕНИЙ
 # ============================================================
 
 
 @router.message(Command("delete"))
 @log_exceptions(bot_logger)
 async def cmd_delete_message(message: Message, state: FSMContext) -> None:
-    """Команда для удаления сообщения по ID"""
+    """
+    Команда для удаления сообщения по ID.
+
+    Поддерживает два формата:
+    - /delete chat_id message_id (сразу с аргументами)
+    - /delete (интерактивный ввод)
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     # Проверка прав администратора
@@ -293,6 +354,7 @@ async def cmd_delete_message(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Проверка наличия аргументов в команде
     args = command_text.split()
     if len(args) >= 3:
         # Если аргументы переданы сразу: /delete chat_id message_id
@@ -311,6 +373,7 @@ async def cmd_delete_message(message: Message, state: FSMContext) -> None:
             )
             return
 
+    # Интерактивный режим - запрос ID чата
     await state.set_state(DeleteMessageStates.waiting_for_chat_id)
     await bot_manager.send_answer(
         text="📨 **Удаление сообщения**\n\n"
@@ -325,9 +388,16 @@ async def cmd_delete_message(message: Message, state: FSMContext) -> None:
 @router.message(DeleteMessageStates.waiting_for_chat_id)
 @log_exceptions(bot_logger)
 async def delete_get_chat_id(message: Message, state: FSMContext) -> None:
-    """Получение ID чата для удаления"""
+    """
+    Получение ID чата для удаления.
+
+    Args:
+        message: Сообщение с ID чата
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка отмены
     if message.text and message.text.lower() in ["/cancel", "отмена", "cancel"]:
         await state.clear()
         await bot_manager.send_answer(
@@ -352,6 +422,7 @@ async def delete_get_chat_id(message: Message, state: FSMContext) -> None:
         chat_id = int(text.strip())
         await state.update_data(chat_id=chat_id)
         await state.set_state(DeleteMessageStates.waiting_for_message_id)
+
         await bot_manager.send_answer(
             text=f"📨 ID чата: `{chat_id}`\n\n"
             "Теперь введите ID сообщения для удаления.\n"
@@ -373,9 +444,16 @@ async def delete_get_chat_id(message: Message, state: FSMContext) -> None:
 @router.message(DeleteMessageStates.waiting_for_message_id)
 @log_exceptions(bot_logger)
 async def delete_get_message_id(message: Message, state: FSMContext) -> None:
-    """Получение ID сообщения для удаления"""
+    """
+    Получение ID сообщения для удаления.
+
+    Args:
+        message: Сообщение с ID сообщения
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка отмены
     if message.text and message.text.lower() in ["/cancel", "отмена", "cancel"]:
         await state.clear()
         await bot_manager.send_answer(
@@ -410,7 +488,13 @@ async def delete_get_message_id(message: Message, state: FSMContext) -> None:
 
 
 async def process_delete_confirmation(message: Message, state: FSMContext) -> None:
-    """Подтверждение удаления сообщения"""
+    """
+    Запрос подтверждения удаления сообщения.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     data = await state.get_data()
@@ -437,9 +521,17 @@ async def process_delete_confirmation(message: Message, state: FSMContext) -> No
 @router.message(DeleteMessageStates.waiting_for_confirmation)
 @log_exceptions(bot_logger)
 async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None:
-    """Подтверждение удаления сообщения"""
+    """
+    Подтверждение удаления сообщения.
+
+    Args:
+        message: Сообщение с подтверждением
+        state: Состояние FSM
+        _bot: Экземпляр Bot для удаления из Telegram
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка отмены
     if message.text and message.text.lower() in ["нет", "no", "n", "отмена", "cancel"]:
         await state.clear()
         await bot_manager.send_answer(
@@ -450,6 +542,7 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
         )
         return
 
+    # Проверка подтверждения
     if not message.text or message.text.lower() not in ["да", "yes", "y", "д"]:
         await bot_manager.send_answer(
             text="Пожалуйста, ответьте 'да' или 'нет'.",
@@ -459,6 +552,7 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
         )
         return
 
+    # Получение данных из состояния
     data = await state.get_data()
     chat_id = data.get("chat_id")
     message_id = data.get("message_id")
@@ -474,12 +568,11 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
         return
 
     try:
+        # Отметка сообщения как удаленного в БД
         async with db_manager.get_session() as session:
-            # ИСПОЛЬЗУЕМ message_repo ДЛЯ ПОЛУЧЕНИЯ СООБЩЕНИЯ
             db_message = await _message_repo.get_message_by_id(session, message_id)
 
             if db_message:
-                # ИСПОЛЬЗУЕМ message_repo ДЛЯ ОТМЕТКИ СООБЩЕНИЯ КАК УДАЛЕННОГО
                 deleted_count = await _message_repo.mark_messages_as_deleted(
                     session=session,
                     message_ids=[message_id],
@@ -517,17 +610,15 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
                     parse_mode="Markdown",
                 )
 
-            # Коммит выполняется внутри репозитория, но для надежности делаем явный
             await session.commit()
 
-        # Пытаемся удалить из Telegram (если бот имеет права)
+        # Удаление из Telegram (если бот имеет права)
         try:
             if chat_id is not None and message_id is not None:
                 await _bot.delete_message(chat_id, message_id)
                 if message.from_user:
                     bot_logger.info(f"✅ Message {message_id} deleted from Telegram by admin {message.from_user.id}")
         except TelegramAPIError as e:
-            # Если не удалось удалить из Telegram - логируем, но не прерываем
             bot_logger.warning(f"⚠️ Could not delete message {message_id} from Telegram: {e}")
 
     except TelegramAPIError as e:
@@ -549,10 +640,21 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
         await state.clear()
 
 
+# ============================================================
+# 3. ОТМЕНА ОПЕРАЦИЙ
+# ============================================================
+
+
 @router.message(Command("cancel"))
 @log_exceptions(bot_logger)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    """Отмена текущей операции"""
+    """
+    Отмена текущей операции.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     current_state = await state.get_state()
@@ -575,14 +677,19 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 
 
 # ============================================================
-# УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
+# 4. УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
 # ============================================================
 
 
 @router.message(Command("admins"))
 @log_exceptions(bot_logger)
 async def cmd_admins(message: Message) -> None:
-    """Просмотр списка администраторов"""
+    """
+    Просмотр списка администраторов.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -616,7 +723,12 @@ async def cmd_admins(message: Message) -> None:
 @router.message(Command("add_admin"))
 @log_exceptions(bot_logger)
 async def cmd_add_admin(message: Message) -> None:
-    """Добавление администратора"""
+    """
+    Добавление администратора.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -628,7 +740,7 @@ async def cmd_add_admin(message: Message) -> None:
         )
         return
 
-    # Сохраняем текст команды до удаления
+    # Сохранение текста команды до удаления
     command_text = message.text or ""
 
     if command_text is None:
@@ -697,7 +809,12 @@ async def cmd_add_admin(message: Message) -> None:
 @router.message(Command("remove_admin"))
 @log_exceptions(bot_logger)
 async def cmd_remove_admin(message: Message) -> None:
-    """Удаление администратора"""
+    """
+    Удаление администратора.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -718,7 +835,7 @@ async def cmd_remove_admin(message: Message) -> None:
         )
         return
 
-    # Сохраняем текст команды до удаления
+    # Сохранение текста команды до удаления
     command_text = message.text or ""
 
     if command_text is None:
@@ -792,14 +909,19 @@ async def cmd_remove_admin(message: Message) -> None:
 
 
 # ============================================================
-# СИНХРОНИЗАЦИЯ AVANPOST
+# 5. СИНХРОНИЗАЦИЯ AVANPOST
 # ============================================================
 
 
 @router.message(Command("sync_base"))
 @log_exceptions(bot_logger)
 async def cmd_sync_base(message: Message) -> None:
-    """Синхронизация справочных данных (модели до 205)."""
+    """
+    Синхронизация справочных данных (модели до 205).
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -810,7 +932,6 @@ async def cmd_sync_base(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск синхронизации справочников...", event=message)
 
     try:
-        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
@@ -839,7 +960,12 @@ async def cmd_sync_base(message: Message) -> None:
 @router.message(Command("sync_contacts"))
 @log_exceptions(bot_logger)
 async def cmd_sync_contacts(message: Message) -> None:
-    """Синхронизация контактов (модели 301-303)."""
+    """
+    Синхронизация контактов (модели 301-303).
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -850,14 +976,13 @@ async def cmd_sync_contacts(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск синхронизации контактов...", event=message)
 
     try:
-        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
         stats = await sync_service.sync_base_data(force=False)
         stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
-        # Фильтруем статистику только для контактов
+        # Фильтрация статистики только для контактов
         table_stats = stats_dict.get("table_stats", {})
         contact_tables = ["TAvanpostContacts", "TAvanpostContactsLangs", "TAvanpostContactsLinks"]
         contact_stats = {k: v for k, v in table_stats.items() if k in contact_tables}
@@ -888,7 +1013,12 @@ async def cmd_sync_contacts(message: Message) -> None:
 @router.message(Command("sync_user"))
 @log_exceptions(bot_logger)
 async def cmd_sync_user(message: Message) -> None:
-    """Синхронизация данных конкретного пользователя."""
+    """
+    Синхронизация данных конкретного пользователя.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -919,7 +1049,6 @@ async def cmd_sync_user(message: Message) -> None:
         user_id = int(parts[1])
         await bot_manager.send_answer(text=f"🔄 Запуск синхронизации для пользователя {user_id}...", event=message)
 
-        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
@@ -936,7 +1065,7 @@ async def cmd_sync_user(message: Message) -> None:
             f"❌ Ошибок: {len(stats_dict.get('error_messages', []))}"
         )
 
-        # Показываем детали по таблицам, если есть изменения
+        # Отображение деталей по таблицам, если есть изменения
         table_stats = stats_dict.get("table_stats", {})
         changed_tables = {
             k: v
@@ -962,7 +1091,12 @@ async def cmd_sync_user(message: Message) -> None:
 @router.message(Command("sync_all_users"))
 @log_exceptions(bot_logger)
 async def cmd_sync_all_users(message: Message) -> None:
-    """Синхронизация данных всех пользователей."""
+    """
+    Синхронизация данных всех пользователей.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -977,7 +1111,6 @@ async def cmd_sync_all_users(message: Message) -> None:
     )
 
     try:
-        # ИСПОЛЬЗУЕМ AvanpostSyncService
         sync_service = AvanpostSyncService()
         await sync_service.initialize()
 
@@ -1007,7 +1140,12 @@ async def cmd_sync_all_users(message: Message) -> None:
 @router.message(Command("sync_light"))
 @log_exceptions(bot_logger)
 async def cmd_sync_light(message: Message) -> None:
-    """Стандартная синхронизация (без Force)."""
+    """
+    Стандартная синхронизация (без Force).
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -1018,7 +1156,6 @@ async def cmd_sync_light(message: Message) -> None:
     await bot_manager.send_answer(text="🔄 Запуск стандартной синхронизации...", event=message)
 
     try:
-        # ИСПОЛЬЗУЕМ db_manager.sync_avanpost() ВМЕСТО ПРЯМОГО ВЫЗОВА
         result = await db_manager.sync_avanpost(force=False)
 
         if result.get("success"):
@@ -1046,7 +1183,12 @@ async def cmd_sync_light(message: Message) -> None:
 @router.message(Command("sync_force"))
 @log_exceptions(bot_logger)
 async def cmd_sync_force(message: Message) -> None:
-    """Полная синхронизация с Force=True."""
+    """
+    Полная синхронизация с Force=True.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -1060,7 +1202,6 @@ async def cmd_sync_force(message: Message) -> None:
     )
 
     try:
-        # ИСПОЛЬЗУЕМ db_manager.sync_avanpost() ВМЕСТО ПРЯМОГО ВЫЗОВА
         result = await db_manager.sync_avanpost(force=True)
 
         if result.get("success"):
@@ -1086,14 +1227,19 @@ async def cmd_sync_force(message: Message) -> None:
 
 
 # ============================================================
-# ЗАГРУЗКА ПОЛЬЗОВАТЕЛЕЙ ИЗ VEHICLES
+# 6. ЗАГРУЗКА ПОЛЬЗОВАТЕЛЕЙ ИЗ VEHICLES
 # ============================================================
 
 
 @router.message(Command("sync_vehicles"))
 @log_exceptions(bot_logger)
 async def cmd_sync_vehicles(message: Message) -> None:
-    """Загрузка пользователей из Avanpost Vehicles."""
+    """
+    Загрузка пользователей из Avanpost Vehicles.
+
+    Args:
+        message: Сообщение от пользователя
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
@@ -1107,9 +1253,8 @@ async def cmd_sync_vehicles(message: Message) -> None:
     )
 
     try:
-        # ИСПОЛЬЗУЕМ AvanpostSeedService
         async with db_manager.get_session() as session:
-            result = await AvanpostSeedService.seed_avanpost_users_all_vehicles(
+            result = await AvanpostSeedService.seed_avanpost_users_all(
                 session=session,
                 create_sync_records=True,
             )
@@ -1133,14 +1278,20 @@ async def cmd_sync_vehicles(message: Message) -> None:
 
 
 # ============================================================
-# ОБРАБОТЧИКИ КОЛБЭКОВ
+# 7. ОБРАБОТЧИКИ КОЛБЭКОВ
 # ============================================================
 
 
 @router.callback_query(lambda c: c.data in ["broadcast_confirm", "broadcast_cancel"])
 @log_exceptions(bot_logger)
 async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков для рассылки"""
+    """
+    Обработка колбэков для рассылки.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
     from ...callbacks.admin import admin_callback_handler
 
     await admin_callback_handler.handle(callback, state)
@@ -1149,7 +1300,13 @@ async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) 
 @router.callback_query(lambda c: c.data in ["delete_confirm", "delete_cancel"])
 @log_exceptions(bot_logger)
 async def handle_delete_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков для удаления"""
+    """
+    Обработка колбэков для удаления.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
     from ...callbacks.admin import admin_callback_handler
 
     await admin_callback_handler.handle(callback, state)

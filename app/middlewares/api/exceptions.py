@@ -5,8 +5,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from ...exceptions import AppError, handle_exception
+from ...exceptions import AppError
 from ...logger import api_logger
+from ...utils.decorators import handle_exception
 
 
 class ExceptionHandlerMiddleware(BaseHTTPMiddleware):

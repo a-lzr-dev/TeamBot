@@ -4,9 +4,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import ErrorFilterModel, ErrorModel
+from ...utils.decorators import log_exceptions
 
 
 class ErrorFilterRepository:
@@ -30,13 +30,20 @@ class ErrorFilterRepository:
         Returns:
             list[ErrorFilterModel]: Список фильтров
         """
+        db_logger.info(f"📋 [get_filters_by_chat] Getting filters for chat {chat_id}")
+
         stmt = select(ErrorFilterModel).where(ErrorFilterModel.FK_Chat == chat_id)
 
         if active_only:
             stmt = stmt.where(ErrorFilterModel.FIsActive.is_(True))
 
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        return list(result.scalars().all())
+        filters = list(result.scalars().all())
+
+        db_logger.info(f"✅ [get_filters_by_chat] Found {len(filters)} filters for chat {chat_id}")
+        return filters
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -56,6 +63,8 @@ class ErrorFilterRepository:
         Returns:
             bool: Фильтруется ли ошибка
         """
+        db_logger.info(f"🔍 [is_error_filtered] Checking if error #{error.FID} is filtered in chat {chat_id}")
+
         filters = await ErrorFilterRepository.get_filters_by_chat(session, chat_id)
 
         for filter_ in filters:
@@ -76,6 +85,9 @@ class ErrorFilterRepository:
                 if filter_.FIsRegex:
                     try:
                         if re.search(filter_.FPattern, error.FErrorMessage):
+                            db_logger.debug(
+                                f"✅ [is_error_filtered] Error #{error.FID} filtered by regex: {filter_.FPattern}"
+                            )
                             return True
                     except re.error:
                         continue
@@ -83,10 +95,17 @@ class ErrorFilterRepository:
                     pattern_type = filter_.FPatternType
                     if pattern_type == "exact":
                         if error.FErrorMessage == filter_.FPattern:
+                            db_logger.debug(
+                                f"✅ [is_error_filtered] Error #{error.FID} filtered by exact match: {filter_.FPattern}"
+                            )
                             return True
                     elif pattern_type == "contains" and filter_.FPattern.lower() in error.FErrorMessage.lower():
+                        db_logger.debug(
+                            f"✅ [is_error_filtered] Error #{error.FID} filtered by contains: {filter_.FPattern}"
+                        )
                         return True
 
+        db_logger.debug(f"ℹ️ [is_error_filtered] Error #{error.FID} not filtered")
         return False
 
     @staticmethod
@@ -119,6 +138,8 @@ class ErrorFilterRepository:
         Returns:
             ErrorFilterModel: Созданный фильтр
         """
+        db_logger.info(f"🆕 [create_filter] Creating filter for chat {chat_id}: pattern={pattern}")
+
         filter_ = ErrorFilterModel(
             FK_Chat=chat_id,
             FPattern=pattern,
@@ -132,6 +153,8 @@ class ErrorFilterRepository:
         )
         session.add(filter_)
         await session.flush()
+
+        db_logger.info(f"✅ [create_filter] Created filter #{filter_.FID} for chat {chat_id}")
         return filter_
 
     @staticmethod
@@ -152,11 +175,17 @@ class ErrorFilterRepository:
         Returns:
             ErrorFilterModel | None: Обновленный фильтр или None
         """
+        db_logger.info(f"🔄 [update_filter] Updating filter #{filter_id}")
+
         stmt = select(ErrorFilterModel).where(ErrorFilterModel.FID == filter_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         filter_: ErrorFilterModel | None = result.scalar_one_or_none()
 
         if filter_ is None:
+            db_logger.warning(f"⚠️ [update_filter] Filter #{filter_id} not found")
             return None
 
         for key, value in kwargs.items():
@@ -164,6 +193,8 @@ class ErrorFilterRepository:
                 setattr(filter_, key, value)
 
         await session.flush()
+
+        db_logger.info(f"✅ [update_filter] Updated filter #{filter_id}")
         return filter_
 
     @staticmethod
@@ -182,15 +213,23 @@ class ErrorFilterRepository:
         Returns:
             bool: Успешно ли удалено
         """
+        db_logger.info(f"🗑️ [delete_filter] Deleting filter #{filter_id}")
+
         stmt = select(ErrorFilterModel).where(ErrorFilterModel.FID == filter_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         filter_ = result.scalar_one_or_none()
 
         if not filter_:
+            db_logger.warning(f"⚠️ [delete_filter] Filter #{filter_id} not found")
             return False
 
         filter_.FIsActive = False
         await session.flush()
+
+        db_logger.info(f"✅ [delete_filter] Filter #{filter_id} deactivated")
         return True
 
     @staticmethod
@@ -209,13 +248,21 @@ class ErrorFilterRepository:
         Returns:
             bool: Успешно ли активировано
         """
+        db_logger.info(f"🔄 [activate_filter] Activating filter #{filter_id}")
+
         stmt = select(ErrorFilterModel).where(ErrorFilterModel.FID == filter_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
         filter_ = result.scalar_one_or_none()
 
         if not filter_:
+            db_logger.warning(f"⚠️ [activate_filter] Filter #{filter_id} not found")
             return False
 
         filter_.FIsActive = True
         await session.flush()
+
+        db_logger.info(f"✅ [activate_filter] Filter #{filter_id} activated")
         return True

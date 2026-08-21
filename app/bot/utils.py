@@ -1,3 +1,31 @@
+"""
+Модуль конвертеров и валидаторов для работы с данными Telegram.
+
+Этот модуль предоставляет функции и классы для:
+1. Конвертации данных между различными форматами:
+   - Из объектов Telegram API (Aiogram, Telethon) в словари/модели
+   - Из словарей в модели данных
+   - Определение типов чатов, статусов участников, медиа-файлов
+
+2. Валидации данных:
+   - Проверка ID чатов, пользователей, сообщений
+   - Валидация текстов, команд, номеров телефонов, email
+   - Rate limiting для ограничения запросов
+
+3. Обработки текста:
+   - Извлечение упоминаний, хэштегов, ссылок
+   - Санитайзинг и обрезание текста
+   - Парсинг команд и аргументов
+
+Основные компоненты:
+    - UserConverter: Утилиты для работы с пользователями
+    - Validator: Базовые проверки данных
+    - TextValidator: Валидация и обработка текста
+    - CommandValidator: Работа с командами
+    - DataValidator: Проверка структур данных
+    - RateLimitValidator: Ограничение частоты запросов
+"""
+
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -31,7 +59,18 @@ from ..models import ChatMessageModel, ChatModel, ChatType, UserModel
 
 
 def dict_to_user_model(data: dict[str, Any]) -> UserModel:
-    """Создание модели пользователя из словаря"""
+    """
+    Создание модели пользователя из словаря.
+
+    Используется для преобразования данных из внешних источников
+    в объект UserModel для сохранения в базе данных.
+
+    Args:
+        data: Словарь с данными пользователя
+
+    Returns:
+        UserModel: Объект модели пользователя
+    """
     return UserModel(
         FID=data.get("user_id", 0),
         FUserName=data.get("username", ""),
@@ -42,7 +81,18 @@ def dict_to_user_model(data: dict[str, Any]) -> UserModel:
 
 
 def chat_info_from_telethon(telethon_chat: Any) -> dict[str, Any]:
-    """Извлечение информации о чате из объекта Telethon"""
+    """
+    Извлечение информации о чате из объекта Telethon.
+
+    Преобразует объект чата Telethon в универсальный словарь
+    с основными полями.
+
+    Args:
+        telethon_chat: Объект чата Telethon
+
+    Returns:
+        dict: Словарь с информацией о чате
+    """
     if telethon_chat is None:
         return {
             "chat_id": 0,
@@ -73,7 +123,17 @@ def chat_info_from_telethon(telethon_chat: Any) -> dict[str, Any]:
 
 
 def chat_info_from_aiogram(aiogram_chat: Any) -> dict[str, Any]:
-    """Извлечение информации о чате из объекта Aiogram"""
+    """
+    Извлечение информации о чате из объекта Aiogram.
+
+    Преобразует объект чата Aiogram в универсальный словарь.
+
+    Args:
+        aiogram_chat: Объект чата Aiogram
+
+    Returns:
+        dict: Словарь с информацией о чате
+    """
     if aiogram_chat is None:
         return {
             "chat_id": 0,
@@ -92,7 +152,15 @@ def chat_info_from_aiogram(aiogram_chat: Any) -> dict[str, Any]:
 
 
 def dict_to_chat_model(data: dict[str, Any]) -> ChatModel:
-    """Создание модели чата из словаря"""
+    """
+    Создание модели чата из словаря.
+
+    Args:
+        data: Словарь с данными чата
+
+    Returns:
+        ChatModel: Объект модели чата
+    """
     chat_type = data.get("type")
     if isinstance(chat_type, str):
         chat_type = chat_type_from_string(chat_type)
@@ -109,7 +177,15 @@ def dict_to_chat_model(data: dict[str, Any]) -> ChatModel:
 
 
 def message_info_from_telethon(telethon_message: Any) -> dict[str, Any]:
-    """Извлечение информации о сообщении из объекта Telethon"""
+    """
+    Извлечение информации о сообщении из объекта Telethon.
+
+    Args:
+        telethon_message: Объект сообщения Telethon
+
+    Returns:
+        dict: Словарь с информацией о сообщении
+    """
     if telethon_message is None:
         return {
             "message_id": 0,
@@ -154,7 +230,15 @@ def message_info_from_telethon(telethon_message: Any) -> dict[str, Any]:
 
 
 def message_info_from_aiogram(aiogram_message: Any) -> dict[str, Any]:
-    """Извлечение информации о сообщении из объекта Aiogram"""
+    """
+    Извлечение информации о сообщении из объекта Aiogram.
+
+    Args:
+        aiogram_message: Объект сообщения Aiogram
+
+    Returns:
+        dict: Словарь с информацией о сообщении
+    """
     if aiogram_message is None:
         return {
             "message_id": 0,
@@ -182,17 +266,28 @@ def message_info_from_aiogram(aiogram_message: Any) -> dict[str, Any]:
 
 
 def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: Any) -> None:
-    """Сохранение информации о медиа-файле в модель сообщения"""
+    """
+    Сохранение информации о медиа-файле в модель сообщения.
+
+    Извлекает данные о прикрепленных файлах из объекта Telethon
+    и сохраняет их в модель для дальнейшей записи в БД.
+
+    Args:
+        chat_message: Модель сообщения для заполнения
+        telethon_message: Объект сообщения Telethon
+    """
     if chat_message is None or telethon_message is None:
         return
 
     try:
+        # Обработка фото
         if hasattr(telethon_message, "photo") and telethon_message.photo:
             photo = telethon_message.photo[-1] if hasattr(telethon_message.photo, "__len__") else telethon_message.photo
             chat_message.FK_File = getattr(photo, "file_id", None)
             chat_message.FK_FileUnique = getattr(photo, "file_unique_id", None)
             chat_message.FFileSize = getattr(photo, "file_size", None)
 
+        # Обработка документа
         elif hasattr(telethon_message, "document") and telethon_message.document:
             doc = telethon_message.document
             chat_message.FK_File = getattr(doc, "file_id", None)
@@ -200,6 +295,7 @@ def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: A
             chat_message.FFileSize = getattr(doc, "file_size", None)
             chat_message.FMimeType = getattr(doc, "mime_type", None)
 
+        # Обработка видео
         elif hasattr(telethon_message, "video") and telethon_message.video:
             video = telethon_message.video
             chat_message.FK_File = getattr(video, "file_id", None)
@@ -207,6 +303,7 @@ def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: A
             chat_message.FFileSize = getattr(video, "file_size", None)
             chat_message.FMimeType = getattr(video, "mime_type", None)
 
+        # Обработка аудио
         elif hasattr(telethon_message, "audio") and telethon_message.audio:
             audio = telethon_message.audio
             chat_message.FK_File = getattr(audio, "file_id", None)
@@ -214,12 +311,14 @@ def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: A
             chat_message.FFileSize = getattr(audio, "file_size", None)
             chat_message.FMimeType = getattr(audio, "mime_type", None)
 
+        # Обработка голосового
         elif hasattr(telethon_message, "voice") and telethon_message.voice:
             voice = telethon_message.voice
             chat_message.FK_File = getattr(voice, "file_id", None)
             chat_message.FK_FileUnique = getattr(voice, "file_unique_id", None)
             chat_message.FFileSize = getattr(voice, "file_size", None)
 
+        # Обработка стикера
         elif hasattr(telethon_message, "sticker") and telethon_message.sticker:
             sticker = telethon_message.sticker
             chat_message.FK_File = getattr(sticker, "file_id", None)
@@ -233,7 +332,15 @@ def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: A
 
 
 def _get_telethon_media_type(message: Any) -> str:
-    """Определение типа медиа для сообщения Telethon"""
+    """
+    Определение типа медиа для сообщения Telethon.
+
+    Args:
+        message: Объект сообщения Telethon
+
+    Returns:
+        str: Тип медиа (text, photo, video, audio, document, и т.д.)
+    """
     try:
         if getattr(message, "text", None):
             return "text"
@@ -279,7 +386,15 @@ def _get_telethon_media_type(message: Any) -> str:
 
 
 def _get_aiogram_media_type(message: Any) -> str:
-    """Определение типа медиа для сообщения Aiogram"""
+    """
+    Определение типа медиа для сообщения Aiogram.
+
+    Args:
+        message: Объект сообщения Aiogram
+
+    Returns:
+        str: Тип медиа (text, photo, video, audio, document, и т.д.)
+    """
     if not message:
         return "unknown"
 
@@ -324,11 +439,21 @@ def _get_aiogram_media_type(message: Any) -> str:
 
 
 class UserConverter:
-    """Утилиты для работы с пользователями"""
+    """Утилиты для работы с пользователями Telegram."""
 
     @staticmethod
     def get_full_name(first_name: str | None = None, last_name: str | None = None, username: str | None = None) -> str:
-        """Получение полного имени пользователя"""
+        """
+        Получение полного имени пользователя.
+
+        Args:
+            first_name: Имя пользователя
+            last_name: Фамилия пользователя
+            username: Username пользователя
+
+        Returns:
+            str: Полное имя пользователя
+        """
         if first_name and last_name:
             return f"{first_name} {last_name}"
         elif first_name:
@@ -346,7 +471,18 @@ class UserConverter:
         username: str | None = None,
         user_id: int | None = None,
     ) -> str:
-        """Получение отображаемого имени пользователя"""
+        """
+        Получение отображаемого имени пользователя.
+
+        Args:
+            first_name: Имя пользователя
+            last_name: Фамилия пользователя
+            username: Username пользователя
+            user_id: ID пользователя
+
+        Returns:
+            str: Отображаемое имя
+        """
         full_name = UserConverter.get_full_name(first_name, last_name)
 
         if full_name and full_name != "Unknown User":
@@ -361,7 +497,18 @@ class UserConverter:
     def get_mention(
         user_id: int, first_name: str | None = None, last_name: str | None = None, username: str | None = None
     ) -> str:
-        """Получение упоминания пользователя"""
+        """
+        Получение упоминания пользователя в формате Markdown.
+
+        Args:
+            user_id: ID пользователя
+            first_name: Имя пользователя
+            last_name: Фамилия пользователя
+            username: Username пользователя
+
+        Returns:
+            str: Упоминание в формате [имя](tg://user?id=id)
+        """
         display_name = UserConverter.get_display_name(first_name, last_name, username)
         return f"[{display_name}](tg://user?id={user_id})"
 
@@ -370,11 +517,20 @@ class UserConverter:
 
 
 class Validator:
-    """Базовый класс для валидаторов"""
+    """Базовый класс для валидаторов с общими проверками."""
 
     @staticmethod
     def validate_not_empty(value: Any, field_name: str) -> bool:
-        """Проверка, что значение не пустое"""
+        """
+        Проверка, что значение не пустое.
+
+        Args:
+            value: Проверяемое значение
+            field_name: Название поля для логирования
+
+        Returns:
+            bool: True если значение не пустое
+        """
         if value is None:
             bot_logger.warning(f"⚠️ {field_name} is None")
             return False
@@ -391,7 +547,18 @@ class Validator:
 
     @staticmethod
     def validate_length(value: str, field_name: str, min_len: int = 1, max_len: int = 4096) -> bool:
-        """Проверка длины строки"""
+        """
+        Проверка длины строки.
+
+        Args:
+            value: Строка для проверки
+            field_name: Название поля для логирования
+            min_len: Минимальная длина
+            max_len: Максимальная длина
+
+        Returns:
+            bool: True если длина в допустимых пределах
+        """
         if not Validator.validate_not_empty(value, field_name):
             return False
 
@@ -407,7 +574,16 @@ class Validator:
 
     @staticmethod
     def validate_positive_int(value: int, field_name: str) -> bool:
-        """Проверка, что число положительное"""
+        """
+        Проверка, что число положительное.
+
+        Args:
+            value: Число для проверки
+            field_name: Название поля для логирования
+
+        Returns:
+            bool: True если число положительное
+        """
         if not isinstance(value, int):
             bot_logger.warning(f"⚠️ {field_name} is not an integer: {type(value)}")
             return False
@@ -420,26 +596,35 @@ class Validator:
 
     @staticmethod
     def validate_chat_id(chat_id: int) -> bool:
-        """Валидация ID чата"""
+        """Валидация ID чата."""
         return Validator.validate_positive_int(abs(chat_id), "chat_id")
 
     @staticmethod
     def validate_user_id(user_id: int) -> bool:
-        """Валидация ID пользователя"""
+        """Валидация ID пользователя."""
         return Validator.validate_positive_int(user_id, "user_id")
 
     @staticmethod
     def validate_message_id(message_id: int) -> bool:
-        """Валидация ID сообщения"""
+        """Валидация ID сообщения."""
         return Validator.validate_positive_int(message_id, "message_id")
 
 
 class TextValidator:
-    """Валидатор текстовых данных"""
+    """Валидатор текстовых данных."""
 
     @staticmethod
     def sanitize_text(text: str, max_length: int = 4096) -> str:
-        """Санитайзинг текста (очистка от опасных символов)"""
+        """
+        Санитайзинг текста (очистка от опасных символов).
+
+        Args:
+            text: Исходный текст
+            max_length: Максимальная длина
+
+        Returns:
+            str: Очищенный текст
+        """
         if not text:
             return ""
 
@@ -460,7 +645,15 @@ class TextValidator:
 
     @staticmethod
     def validate_parse_mode(parse_mode: str | None) -> str | None:
-        """Валидация режима парсинга"""
+        """
+        Валидация режима парсинга.
+
+        Args:
+            parse_mode: Режим парсинга
+
+        Returns:
+            str | None: Валидный режим или None
+        """
         if parse_mode is None:
             return None
 
@@ -475,7 +668,7 @@ class TextValidator:
 
     @staticmethod
     def extract_mentions(text: str) -> list[str]:
-        """Извлечение упоминаний из текста"""
+        """Извлечение упоминаний (@username) из текста."""
         if not text:
             return []
 
@@ -484,7 +677,7 @@ class TextValidator:
 
     @staticmethod
     def extract_hashtags(text: str) -> list[str]:
-        """Извлечение хэштегов из текста"""
+        """Извлечение хэштегов (#tag) из текста."""
         if not text:
             return []
 
@@ -493,7 +686,7 @@ class TextValidator:
 
     @staticmethod
     def extract_links(text: str) -> list[str]:
-        """Извлечение ссылок из текста"""
+        """Извлечение ссылок (http://, https://) из текста."""
         if not text:
             return []
 
@@ -502,7 +695,17 @@ class TextValidator:
 
     @staticmethod
     def truncate_text(text: str, max_length: int = 100, suffix: str = "...") -> str:
-        """Обрезание текста до указанной длины"""
+        """
+        Обрезание текста до указанной длины.
+
+        Args:
+            text: Исходный текст
+            max_length: Максимальная длина
+            suffix: Суффикс для обрезанного текста
+
+        Returns:
+            str: Обрезанный текст
+        """
         if not text:
             return ""
 
@@ -513,11 +716,19 @@ class TextValidator:
 
 
 class CommandValidator:
-    """Валидатор команд"""
+    """Валидатор команд Telegram."""
 
     @staticmethod
     def validate_command(command: str) -> bool:
-        """Валидация команды"""
+        """
+        Валидация команды.
+
+        Args:
+            command: Команда (должна начинаться с /)
+
+        Returns:
+            bool: True если команда валидна
+        """
         if not command:
             return False
 
@@ -529,7 +740,15 @@ class CommandValidator:
 
     @staticmethod
     def parse_command(text: str) -> dict[str, Any]:
-        """Парсинг команды"""
+        """
+        Парсинг команды и аргументов.
+
+        Args:
+            text: Текст с командой
+
+        Returns:
+            dict: Словарь с командами и аргументами
+        """
         if not text or not text.startswith("/"):
             return {}
 
@@ -550,7 +769,16 @@ class CommandValidator:
 
     @staticmethod
     def is_admin_command(command: str, admin_commands: list[str] | None = None) -> bool:
-        """Проверка, является ли команда административной"""
+        """
+        Проверка, является ли команда административной.
+
+        Args:
+            command: Команда для проверки
+            admin_commands: Список административных команд
+
+        Returns:
+            bool: True если команда административная
+        """
         if admin_commands is None:
             admin_commands = ["/sync", "/stats", "/broadcast"]
 
@@ -558,11 +786,20 @@ class CommandValidator:
 
 
 class DataValidator:
-    """Валидатор данных"""
+    """Валидатор структур данных."""
 
     @staticmethod
     def validate_dict_keys(data: dict[str, Any], required_keys: list[str]) -> bool:
-        """Проверка наличия обязательных ключей в словаре"""
+        """
+        Проверка наличия обязательных ключей в словаре.
+
+        Args:
+            data: Проверяемый словарь
+            required_keys: Список обязательных ключей
+
+        Returns:
+            bool: True если все ключи присутствуют
+        """
         for key in required_keys:
             if key not in data:
                 bot_logger.warning(f"⚠️ Missing required key: {key}")
@@ -572,7 +809,16 @@ class DataValidator:
 
     @staticmethod
     def validate_dict_types(data: dict[str, Any], type_map: dict[str, type]) -> bool:
-        """Проверка типов значений в словаре"""
+        """
+        Проверка типов значений в словаре.
+
+        Args:
+            data: Проверяемый словарь
+            type_map: Словарь {ключ: ожидаемый_тип}
+
+        Returns:
+            bool: True если все типы соответствуют
+        """
         for key, expected_type in type_map.items():
             if key in data and not isinstance(data[key], expected_type):
                 bot_logger.warning(
@@ -584,7 +830,15 @@ class DataValidator:
 
     @staticmethod
     def validate_phone_number(phone: str) -> bool:
-        """Валидация номера телефона"""
+        """
+        Валидация номера телефона.
+
+        Args:
+            phone: Номер телефона
+
+        Returns:
+            bool: True если номер валиден
+        """
         if not phone:
             return False
 
@@ -593,7 +847,15 @@ class DataValidator:
 
     @staticmethod
     def validate_email(email: str) -> bool:
-        """Валидация email"""
+        """
+        Валидация email.
+
+        Args:
+            email: Email адрес
+
+        Returns:
+            bool: True если email валиден
+        """
         if not email:
             return False
 
@@ -602,7 +864,15 @@ class DataValidator:
 
     @staticmethod
     def validate_username(username: str) -> bool:
-        """Валидация username"""
+        """
+        Валидация username.
+
+        Args:
+            username: Username для проверки
+
+        Returns:
+            bool: True если username валиден
+        """
         if not username:
             return False
 
@@ -613,15 +883,35 @@ class DataValidator:
 
 
 class RateLimitValidator:
-    """Валидатор для rate limiting"""
+    """
+    Валидатор для rate limiting.
+
+    Отслеживает количество запросов от одного источника
+    и ограничивает их частоту.
+    """
 
     def __init__(self, limit: int = 10, period: int = 60) -> None:
+        """
+        Инициализация валидатора.
+
+        Args:
+            limit: Максимальное количество запросов
+            period: Период в секундах
+        """
         self.limit = limit
         self.period = period
         self._requests: dict[str, list[datetime]] = {}
 
     def is_allowed(self, key: str) -> bool:
-        """Проверка, разрешен ли запрос"""
+        """
+        Проверка, разрешен ли запрос.
+
+        Args:
+            key: Уникальный ключ источника
+
+        Returns:
+            bool: True если запрос разрешен
+        """
         now = datetime.now()
 
         if key in self._requests:
@@ -638,14 +928,30 @@ class RateLimitValidator:
         return True
 
     def get_remaining(self, key: str) -> int:
-        """Получение оставшегося количества запросов"""
+        """
+        Получение оставшегося количества запросов.
+
+        Args:
+            key: Уникальный ключ источника
+
+        Returns:
+            int: Оставшееся количество запросов
+        """
         if key not in self._requests:
             return self.limit
 
         return max(0, self.limit - len(self._requests[key]))
 
     def get_reset_time(self, key: str) -> datetime | None:
-        """Получение времени сброса"""
+        """
+        Получение времени сброса лимита.
+
+        Args:
+            key: Уникальный ключ источника
+
+        Returns:
+            datetime | None: Время сброса
+        """
         if key not in self._requests or not self._requests[key]:
             return None
 

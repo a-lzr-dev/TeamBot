@@ -8,9 +8,9 @@ from ....core.converters import (
 )
 from ....db.manager import db_manager
 from ....db.repositories import ChatRepository, UserRepository
-from ....exceptions import log_exceptions
 from ....logger import bot_logger
 from ....models import ChatMemberStatus, datetime_now
+from ....utils.decorators import log_exceptions
 
 # Репозитории (создаем один раз на уровне модуля)
 _user_repo = UserRepository()

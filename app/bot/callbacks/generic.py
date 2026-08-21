@@ -1,9 +1,46 @@
 """
-Универсальные обработчики колбэков для типовых операций:
-- Пагинация
-- Поиск
-- Выбор элемента
+Универсальные обработчики колбэков для типовых операций.
+
+Этот модуль предоставляет универсальные обработчики для работы со списками:
+- Пагинация (переключение страниц)
+- Поиск элементов
+- Выбор элемента из списка
 - Закрытие списка
+
+Основные компоненты:
+    - GenericListCallbackHandler: Универсальный обработчик списков
+    - GenericSearchHandler: Обработчик текстовых поисковых запросов
+    - Протоколы для типизации
+
+Принцип работы:
+    1. Обработчик получает callback_data с префиксом
+    2. Парсит команду (page, select, search, close)
+    3. Вызывает соответствующий метод для загрузки данных и отображения
+    4. Поддерживает поиск и пагинацию
+
+Использование:
+    class MyListHandler(GenericListCallbackHandler):
+        async def load_data(self, session, page, search_query, **kwargs):
+            # Загрузка данных из БД
+            items = await repo.get_items(page, search_query)
+            return {
+                "items": items,
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+            }
+
+        async def show_list(self, event, state, page=0, search_query=None, **kwargs):
+            data = await self.load_data(...)
+            text = self.format_list_text("Мой список", data)
+            keyboard = self.get_list_keyboard(data)
+            await self.send_list_message(event, text, keyboard)
+
+        async def on_select(self, callback, state, item_id, **kwargs):
+            # Обработка выбора элемента
+            ...
 """
 
 from __future__ import annotations
@@ -30,31 +67,48 @@ T = TypeVar("T")
 
 
 class ListItemData(Protocol):
-    """Протокол для элемента списка"""
+    """Протокол для элемента списка с обязательными полями id и name."""
 
     id: int
     name: str
 
 
 class ListStateProtocol(Protocol):
-    """Протокол для состояния списка"""
+    """Протокол для состояния списка с информацией о пагинации."""
 
     @property
-    def page(self) -> int: ...
+    def page(self) -> int:
+        """Текущая страница."""
+        ...
+
     @property
-    def search_query(self) -> str | None: ...
+    def search_query(self) -> str | None:
+        """Поисковый запрос."""
+        ...
+
     @property
-    def total(self) -> int: ...
+    def total(self) -> int:
+        """Общее количество элементов."""
+        ...
+
     @property
-    def total_pages(self) -> int: ...
+    def total_pages(self) -> int:
+        """Общее количество страниц."""
+        ...
+
     @property
-    def has_prev(self) -> bool: ...
+    def has_prev(self) -> bool:
+        """Есть ли предыдущая страница."""
+        ...
+
     @property
-    def has_next(self) -> bool: ...
+    def has_next(self) -> bool:
+        """Есть ли следующая страница."""
+        ...
 
 
 class ListHandlerProtocol(Protocol):
-    """Протокол для обработчика списка"""
+    """Протокол для обработчика списка с основными методами."""
 
     async def show_list(
         self,
@@ -63,7 +117,9 @@ class ListHandlerProtocol(Protocol):
         page: int = 0,
         search_query: str | None = None,
         **kwargs: Any,
-    ) -> None: ...
+    ) -> None:
+        """Отображение списка."""
+        ...
 
     async def load_data(
         self,
@@ -71,7 +127,9 @@ class ListHandlerProtocol(Protocol):
         page: int,
         search_query: str | None,
         **kwargs: Any,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        """Загрузка данных для списка."""
+        ...
 
     async def on_select(
         self,
@@ -79,9 +137,13 @@ class ListHandlerProtocol(Protocol):
         state: FSMContext,
         item_id: int,
         **kwargs: Any,
-    ) -> None: ...
+    ) -> None:
+        """Обработка выбора элемента."""
+        ...
 
-    async def get_state_keys(self) -> dict[str, str]: ...
+    async def get_state_keys(self) -> dict[str, str]:
+        """Получение ключей для состояния."""
+        ...
 
 
 # ============================================================
@@ -93,29 +155,39 @@ class GenericListCallbackHandler(BaseCallbackHandler):
     """
     Универсальный обработчик для списков с пагинацией и поиском.
 
-    Поддерживает:
-    - page_<page>[_search_<query>] - переключение страницы
-    - search - переход в режим поиска
-    - cancel_search - отмена поиска
-    - close - закрытие списка
-    - select_<id> - выбор элемента
+    Поддерживает следующие команды:
+        - page_<page>[_search_<query>] - переключение страницы
+        - search - переход в режим поиска
+        - cancel_search - отмена поиска
+        - close - закрытие списка
+        - select_<id> - выбор элемента
 
-    Usage:
+    Для использования необходимо переопределить методы:
+        - load_data(): Загрузка данных из БД
+        - show_list(): Отображение списка
+        - on_select(): Обработка выбора элемента
+
+    Пример:
         class MyListHandler(GenericListCallbackHandler):
             async def load_data(self, session, page, search_query, **kwargs):
-                # Загрузка данных из БД
-                return {"items": [...], "total": 10, "total_pages": 2, ...}
+                items = await repo.get_items(page, search_query)
+                return {
+                    "items": items,
+                    "total": len(items),
+                    "page": page,
+                    "total_pages": 1,
+                    "has_prev": False,
+                    "has_next": False,
+                }
 
             async def show_list(self, event, state, page=0, search_query=None, **kwargs):
-                # Отображение списка
                 data = await self.load_data(...)
-                text = self.format_list_text(data)
+                text = self.format_list_text("Мой список", data)
                 keyboard = self.get_list_keyboard(data)
                 await self.send_list_message(event, text, keyboard)
 
             async def on_select(self, callback, state, item_id, **kwargs):
-                # Действие при выборе элемента
-                ...
+                await callback.answer(f"Выбран элемент {item_id}")
     """
 
     # Имена для callback_data (можно переопределить в наследниках)
@@ -127,20 +199,40 @@ class GenericListCallbackHandler(BaseCallbackHandler):
     PREFIX_PAGE = "page_"
     PREFIX_ACTION = "action_"
 
-    # Состояния (можно переопределить)
+    # Состояния FSM (можно переопределить)
     STATE_VIEWING = None
     STATE_SEARCHING = None
 
-    # Настройки
+    # Настройки отображения
     PAGE_SIZE = 10
     MAX_PREVIEW_LENGTH = 20
 
     def __init__(self, prefix: str | None = None, list_type: str = "list"):
+        """
+        Инициализация обработчика списка.
+
+        Args:
+            prefix: Префикс для callback_data (опционально)
+            list_type: Тип списка для ключей состояния
+        """
         super().__init__(prefix or f"{self.PREFIX_LIST}{list_type}_")
         self.list_type = list_type
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """Основной метод обработки колбэков"""
+        """
+        Основной метод обработки колбэков.
+
+        Определяет тип колбэка (page, select, search, close)
+        и вызывает соответствующий обработчик.
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            Any: Результат обработки
+        """
         callback_data = callback.data
         bot_logger.debug(f"🔍 [GenericListCallbackHandler] Received: {callback_data}, prefix={self.prefix}")
 
@@ -148,12 +240,12 @@ class GenericListCallbackHandler(BaseCallbackHandler):
             await CallbackHandler.answer(callback, "Неизвестное действие")
             return None
 
-        # Проверка, чтобы профекс заканчивался на "_"
+        # Проверка, чтобы префикс заканчивался на "_"
         prefix_with_underscore = self.prefix if self.prefix.endswith("_") else f"{self.prefix}_"
 
-        # Проверка, начинается ли callback_data с префикса (с подчеркиванием)
+        # Проверка, начинается ли callback_data с префикса
         if callback_data.startswith(prefix_with_underscore):
-            # Удаление префикса полностью
+            # Удаление префикса
             rest = callback_data[len(prefix_with_underscore) :]
             bot_logger.debug(f"🔍 [GenericListCallbackHandler] rest={rest}")
 
@@ -192,7 +284,12 @@ class GenericListCallbackHandler(BaseCallbackHandler):
     # ==================== ОБРАБОТЧИКИ ====================
 
     async def _handle_close(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Закрытие списка"""
+        """
+        Закрытие списка.
+
+        Удаляет сообщение со списком и очищает состояние.
+        Если находимся в режиме поиска - возвращает к списку.
+        """
         await CallbackHandler.answer(callback)
 
         # Проверка, не находится ли в режиме поиска
@@ -216,10 +313,15 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         await self._on_closed(callback, state, **kwargs)
 
     async def _handle_search(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Переход в режим поиска"""
+        """
+        Переход в режим поиска.
+
+        Удаляет текущее сообщение и отправляет приглашение для ввода запроса.
+        """
         bot_logger.debug(f"🔍 [_handle_search] START: {callback.data}")
         await CallbackHandler.answer(callback, "🔍 Введите поисковый запрос", show_alert=False)
 
+        # Установка состояния поиска
         if self.STATE_SEARCHING:
             await state.set_state(self.STATE_SEARCHING)
 
@@ -247,14 +349,27 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         await self._on_search_started(callback, state, **kwargs)
 
     async def _handle_cancel_search(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Отмена поиска - возврат к списку"""
+        """
+        Отмена поиска - возврат к списку.
+
+        Восстанавливает состояние до поиска и отображает список.
+        """
         await CallbackHandler.answer(callback, "👥 Возврат к списку", show_alert=False)
         await self._return_to_list_from_search(callback, state, **kwargs)
 
     async def _handle_page(
-        self, callback: CallbackQuery, state: FSMContext, data_parts: list[str], **kwargs: Any
+        self,
+        callback: CallbackQuery,
+        state: FSMContext,
+        data_parts: list[str],
+        **kwargs: Any,
     ) -> None:
-        """Обработка пагинации"""
+        """
+        Обработка пагинации.
+
+        Извлекает номер страницы и поисковый запрос из callback_data
+        и отображает соответствующую страницу.
+        """
         await CallbackHandler.answer(callback)
 
         try:
@@ -289,9 +404,17 @@ class GenericListCallbackHandler(BaseCallbackHandler):
             await CallbackHandler.answer(callback, "Неверный формат данных")
 
     async def _handle_select(
-        self, callback: CallbackQuery, state: FSMContext, data_parts: list[str], **kwargs: Any
+        self,
+        callback: CallbackQuery,
+        state: FSMContext,
+        data_parts: list[str],
+        **kwargs: Any,
     ) -> None:
-        """Обработка выбора элемента"""
+        """
+        Обработка выбора элемента.
+
+        Извлекает ID элемента из callback_data и вызывает on_select().
+        """
         if len(data_parts) < 2:
             await CallbackHandler.answer(callback, "Неверный формат данных")
             return
@@ -304,8 +427,18 @@ class GenericListCallbackHandler(BaseCallbackHandler):
 
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
-    async def _return_to_list_from_search(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Возврат к списку из режима поиска"""
+    async def _return_to_list_from_search(
+        self,
+        callback: CallbackQuery,
+        state: FSMContext,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Возврат к списку из режима поиска.
+
+        Восстанавливает состояние, удаляет сообщение поиска
+        и отображает список на сохраненной странице.
+        """
         state_keys = await self.get_state_keys()
         state_data = await state.get_data()
 
@@ -342,7 +475,7 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         )
 
     async def _clear_state(self, state: FSMContext) -> None:
-        """Очистка состояния"""
+        """Очистка состояния списка."""
         state_keys = await self.get_state_keys()
         await state.update_data(
             **{
@@ -367,16 +500,17 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         """
         Загрузка данных для списка.
 
-        Должен возвращать:
-        {
-            "items": list[dict],  # Список элементов с полями id, name
-            "total": int,
-            "page": int,
-            "total_pages": int,
-            "has_prev": bool,
-            "has_next": bool,
-            "search_query": str | None,
-        }
+        Должен возвращать словарь с полями:
+            - items: list[dict] - Список элементов с полями id, name
+            - total: int - Общее количество элементов
+            - page: int - Текущая страница
+            - total_pages: int - Общее количество страниц
+            - has_prev: bool - Есть ли предыдущая страница
+            - has_next: bool - Есть ли следующая страница
+            - search_query: str | None - Текущий поисковый запрос
+
+        Raises:
+            NotImplementedError: Должен быть переопределен в наследнике
         """
         raise NotImplementedError("load_data must be implemented")
 
@@ -388,7 +522,15 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Отображение списка"""
+        """
+        Отображение списка.
+
+        Должен загрузить данные через load_data() и отправить сообщение
+        с текстом и клавиатурой.
+
+        Raises:
+            NotImplementedError: Должен быть переопределен в наследнике
+        """
         raise NotImplementedError("show_list must be implemented")
 
     async def on_select(
@@ -398,11 +540,23 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """Обработка выбора элемента"""
+        """
+        Обработка выбора элемента.
+
+        Вызывается при выборе элемента из списка.
+
+        Raises:
+            NotImplementedError: Должен быть переопределен в наследнике
+        """
         raise NotImplementedError("on_select must be implemented")
 
     async def get_state_keys(self) -> dict[str, str]:
-        """Получение ключей для состояния"""
+        """
+        Получение ключей для состояния.
+
+        Returns:
+            dict: Словарь с ключами для состояния
+        """
         return {
             "page": f"{self.list_type}_page",
             "search_query": f"{self.list_type}_search_query",
@@ -412,23 +566,32 @@ class GenericListCallbackHandler(BaseCallbackHandler):
             "total_pages": f"{self.list_type}_total_pages",
         }
 
-    async def _send_search_prompt(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> dict[str, Any]:
-        """Отправка приглашения для поиска"""
+    async def _send_search_prompt(
+        self,
+        callback: CallbackQuery,
+        state: FSMContext,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """
+        Отправка приглашения для поиска.
+
+        Returns:
+            dict: Результат отправки с полями success, message_id
+        """
         from ...bot.dependencies import get_bot_manager
 
         bot_manager = get_bot_manager()
         return await bot_manager.send_answer(
             text=f"🔍 **Поиск {self.list_type}**\n\nВведите поисковый запрос.\nМинимум 2 символа.",
             event=callback,
-            parse_mode="Markdown",
+            parse_mode=None,
             reply_markup=self.get_search_cancel_keyboard(),
         )
 
     def get_search_cancel_keyboard(self) -> Any:
-        """Клавиатура для отмены поиска"""
+        """Клавиатура для отмены поиска."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        # Использование префикса для callback_data
         prefix_with_underscore = self.prefix if self.prefix.endswith("_") else f"{self.prefix}_"
 
         return InlineKeyboardMarkup(
@@ -442,7 +605,7 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         )
 
     def get_close_keyboard(self) -> Any:
-        """Клавиатура с кнопкой закрытия"""
+        """Клавиатура с кнопкой закрытия."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         return InlineKeyboardMarkup(
@@ -463,7 +626,23 @@ class GenericListCallbackHandler(BaseCallbackHandler):
         buttons_per_row: int = 3,
     ) -> Any:
         """
-        Универсальная клавиатура для списка (использует ListKeyboardBuilder).
+        Универсальная клавиатура для списка.
+
+        Использует ListKeyboardBuilder для построения клавиатуры
+        с пагинацией и кнопками элементов.
+
+        Args:
+            items: Список элементов для отображения
+            current_page: Текущая страница
+            total_pages: Общее количество страниц
+            has_prev: Есть ли предыдущая страница
+            has_next: Есть ли следующая страница
+            search_query: Текущий поисковый запрос
+            extra_buttons: Дополнительные кнопки
+            buttons_per_row: Количество кнопок в строке
+
+        Returns:
+            InlineKeyboardMarkup: Клавиатура для списка
         """
         builder = ListKeyboardBuilder(
             callback_prefix=self.prefix[:-1] if self.prefix.endswith("_") else self.prefix,
@@ -493,8 +672,12 @@ class GenericListCallbackHandler(BaseCallbackHandler):
 
         Args:
             title: Заголовок списка
-            data: Данные списка
-            item_formatter: Функция форматирования элемента (принимает dict, возвращает str)
+            data: Данные списка (из load_data)
+            item_formatter: Функция форматирования элемента
+                            (принимает dict, возвращает str)
+
+        Returns:
+            str: Отформатированный текст
         """
         items = data.get("items", [])
         total = data.get("total", 0)
@@ -532,11 +715,19 @@ class GenericListCallbackHandler(BaseCallbackHandler):
     # ==================== КОЛБЭКИ СОБЫТИЙ ====================
 
     async def _on_closed(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Событие при закрытии списка"""
+        """
+        Событие при закрытии списка.
+
+        Может быть переопределен в наследнике для дополнительной логики.
+        """
         pass
 
     async def _on_search_started(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """Событие при начале поиска"""
+        """
+        Событие при начале поиска.
+
+        Может быть переопределен в наследнике для дополнительной логики.
+        """
         pass
 
 
@@ -549,10 +740,24 @@ class GenericSearchHandler:
     """
     Универсальный обработчик для текстовых поисковых запросов.
 
-    Используется совместно с GenericListCallbackHandler.
+    Используется совместно с GenericListCallbackHandler для обработки
+    текстовых сообщений в режиме поиска.
+
+    Пример:
+        search_handler = GenericSearchHandler(list_handler)
+
+        @router.message(MySearchState.searching)
+        async def handle_search(message: Message, state: FSMContext):
+            await search_handler.handle_search_query(message, state)
     """
 
     def __init__(self, list_handler: GenericListCallbackHandler):
+        """
+        Инициализация обработчика поиска.
+
+        Args:
+            list_handler: Экземпляр обработчика списка
+        """
         self.list_handler = list_handler
 
     async def handle_search_query(
@@ -562,7 +767,18 @@ class GenericSearchHandler:
         chat_id: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """Обработка поискового запроса"""
+        """
+        Обработка поискового запроса.
+
+        Проверяет длину запроса, удаляет служебные сообщения
+        и отображает результаты поиска.
+
+        Args:
+            message: Сообщение с поисковым запросом
+            state: Состояние FSM
+            chat_id: ID чата (опционально)
+            **kwargs: Дополнительные параметры
+        """
         from ...bot.dependencies import get_bot_manager
 
         bot_manager = get_bot_manager()

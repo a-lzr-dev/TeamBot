@@ -3,9 +3,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models import ChatNotificationSettingsModel, ErrorSeverity
+from ...utils.decorators import log_exceptions
 
 
 class NotificationSettingsRepository:
@@ -24,10 +24,21 @@ class NotificationSettingsRepository:
         Returns:
             ChatNotificationSettingsModel | None: Настройки или None
         """
+        db_logger.info(f"🔍 [get_by_chat_id] Getting notification settings for chat {chat_id}")
+
         stmt = select(ChatNotificationSettingsModel).where(ChatNotificationSettingsModel.FK_Chat == chat_id)
+
+        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
         result = await session.execute(stmt)
-        model: ChatNotificationSettingsModel | None = result.scalar_one_or_none()
-        return model
+        settings: ChatNotificationSettingsModel | None = result.scalar_one_or_none()
+
+        if settings:
+            db_logger.info(f"✅ [get_by_chat_id] Found settings for chat {chat_id}")
+        else:
+            db_logger.warning(f"⚠️ [get_by_chat_id] No settings found for chat {chat_id}")
+
+        return settings
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -73,6 +84,8 @@ class NotificationSettingsRepository:
         Returns:
             ChatNotificationSettingsModel: Созданные настройки
         """
+        db_logger.info(f"🆕 [create] Creating notification settings for chat {chat_id}")
+
         settings = ChatNotificationSettingsModel(
             FK_Chat=chat_id,
             FSilenceStart=silence_start,
@@ -92,6 +105,8 @@ class NotificationSettingsRepository:
         )
         session.add(settings)
         await session.flush()
+
+        db_logger.info(f"✅ [create] Created notification settings for chat {chat_id}")
         return settings
 
     @staticmethod
@@ -108,8 +123,11 @@ class NotificationSettingsRepository:
         Returns:
             ChatNotificationSettingsModel | None: Обновленные настройки или None
         """
+        db_logger.info(f"🔄 [update] Updating notification settings for chat {chat_id}")
+
         settings = await NotificationSettingsRepository.get_by_chat_id(session, chat_id)
         if not settings:
+            db_logger.warning(f"⚠️ [update] No settings found for chat {chat_id}")
             return None
 
         for key, value in kwargs.items():
@@ -117,4 +135,6 @@ class NotificationSettingsRepository:
                 setattr(settings, key, value)
 
         await session.flush()
-        return settings
+
+        db_logger.info(f"✅ [update] Updated notification settings for chat {chat_id}")
+        return settings  # type: ignore[no-any-return]

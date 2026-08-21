@@ -1,10 +1,20 @@
+"""
+Репозиторий для работы с меню действий Avanpost.
+
+Поддерживает:
+- Получение списка групп действий
+- Получение пунктов меню с поддержкой иерархии
+- Проверку наличия дочерних элементов
+- Поддержку локализации (языки)
+- Получение информации о действии для выполнения
+"""
+
 from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...exceptions import log_exceptions
 from ...logger import db_logger
 from ...models.avanpost import (
     AvanpostDirScenarioGroupItemLinkScenarioModel,
@@ -13,18 +23,12 @@ from ...models.avanpost import (
     AvanpostDirScenarioModel,
     AvanpostDirScenarioTypeModel,
 )
+from ...utils.decorators import log_exceptions
 
 
 class AvanpostActionRepository:
     """
     Репозиторий для работы с меню действий Avanpost.
-
-    Поддерживает:
-    - Получение списка групп действий
-    - Получение пунктов меню с поддержкой иерархии
-    - Проверку наличия дочерних элементов
-    - Поддержку локализации (языки)
-    - Получение информации о действии для выполнения
     """
 
     # ==================== ГРУППЫ ДЕЙСТВИЙ ====================
@@ -53,10 +57,12 @@ class AvanpostActionRepository:
                 AvanpostDirScenarioGroupModel.FName,
             ).order_by(AvanpostDirScenarioGroupModel.FID)
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             rows = result.all()
 
-            db_logger.debug(f"📊 [get_groups] Raw rows count: {len(rows)}")
+            db_logger.debug(f"📊 Raw rows count: {len(rows)}")
 
             groups = []
             for idx, row in enumerate(rows):
@@ -73,8 +79,6 @@ class AvanpostActionRepository:
         except Exception as e:
             db_logger.error(f"❌ [get_groups] Failed to get groups: {e}", exc_info=True)
             return []
-
-    # ==================== ПУНКТЫ МЕНЮ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -132,10 +136,12 @@ class AvanpostActionRepository:
             else:
                 stmt = stmt.where(AvanpostDirScenarioGroupItemModel.FK_ParentItem == parent_item_id)
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             items = result.scalars().all()
 
-            db_logger.debug(f"📊 [get_menu_items] Raw items count: {len(items)}")
+            db_logger.debug(f"📊 Raw items count: {len(items)}")
 
             # Формирование результата с учетом языка
             menu_items = []
@@ -147,19 +153,19 @@ class AvanpostActionRepository:
                         name = lang.FName
                         break
 
-                # Если перевод не найден, используем имя из модели
+                # Использование имени модели при отсутствии перевода
                 if name is None:
                     # Пытаемся найти английский
                     for lang in item.langs:
-                        if lang.FK_Lang == "en":
+                        if lang.FK_Lang == "EN":
                             name = lang.FName
                             break
 
-                    # Если нет английского, берем первый попавшийся
+                    # Использование первого попавшегося, если нет английского
                     if name is None and item.langs:
                         name = item.langs[0].FName
 
-                    # Если совсем нет переводов, используем заглушку
+                    # Использование заглушки, если нет переводов
                     if name is None:
                         name = f"Item {item.FID}"
 
@@ -230,7 +236,7 @@ class AvanpostActionRepository:
             )
             if parent:
                 parent_name = parent.get("name")
-                db_logger.debug(f"📊 [get_menu_items_with_parent] Parent: id={parent_item_id}, name={parent_name}")
+                db_logger.debug(f"📊 Parent: id={parent_item_id}, name={parent_name}")
 
         result = {
             "items": items,
@@ -239,8 +245,6 @@ class AvanpostActionRepository:
         }
         db_logger.info(f"✅ [get_menu_items_with_parent] FINISH: returned {len(items)} items")
         return result
-
-    # ==================== ОТДЕЛЬНЫЙ ПУНКТ МЕНЮ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -271,6 +275,8 @@ class AvanpostActionRepository:
                     selectinload(AvanpostDirScenarioGroupItemModel.child_items),
                 )
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(stmt)
             item = result.scalar_one_or_none()
@@ -308,8 +314,6 @@ class AvanpostActionRepository:
             db_logger.error(f"❌ [get_menu_item_by_id] Failed to get menu item {item_id}: {e}", exc_info=True)
             return None
 
-    # ==================== ПРОВЕРКА НАЛИЧИЯ ДОЧЕРНИХ ЭЛЕМЕНТОВ ====================
-
     @staticmethod
     @log_exceptions(db_logger)
     async def has_subitems(
@@ -331,7 +335,6 @@ class AvanpostActionRepository:
         db_logger.info(f"🔍 [has_subitems] START: group_id={group_id}, item_id={item_id}")
 
         try:
-            # Используем EXISTS для быстрой проверки
             stmt = (
                 select(AvanpostDirScenarioGroupItemModel)
                 .where(
@@ -340,6 +343,8 @@ class AvanpostActionRepository:
                 )
                 .limit(1)
             )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             result = await session.execute(stmt)
             child = result.scalar_one_or_none()
@@ -353,8 +358,6 @@ class AvanpostActionRepository:
                 f"❌ [has_subitems] Failed to check subitems for item {item_id} in group {group_id}: {e}", exc_info=True
             )
             return False
-
-    # ==================== ДЕРЕВО МЕНЮ (РЕКУРСИВНОЕ) ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -413,8 +416,6 @@ class AvanpostActionRepository:
         db_logger.info(f"✅ [get_menu_tree] FINISH: built tree with {len(result)} root nodes")
         return result
 
-    # ==================== ПРЯМЫЕ SQL-ЗАПРОСЫ (ДЛЯ ОПТИМИЗАЦИИ) ====================
-
     @staticmethod
     @log_exceptions(db_logger)
     async def get_menu_items_raw_sql(
@@ -470,7 +471,7 @@ class AvanpostActionRepository:
                 ORDER BY i.FLevel, i.FPosition
             """
 
-            db_logger.debug(f"📝 [get_menu_items_raw_sql] SQL: {sql}")
+            db_logger.debug(f"📝 SQL: {sql}")
 
             result = await session.execute(
                 text(sql),
@@ -482,7 +483,7 @@ class AvanpostActionRepository:
             )
 
             rows = result.fetchall()
-            db_logger.debug(f"📊 [get_menu_items_raw_sql] Raw rows count: {len(rows)}")
+            db_logger.debug(f"📊 Raw rows count: {len(rows)}")
 
             items = []
             for idx, row in enumerate(rows):
@@ -504,8 +505,6 @@ class AvanpostActionRepository:
         except Exception as e:
             db_logger.error(f"❌ [get_menu_items_raw_sql] Failed to get menu items via raw SQL: {e}", exc_info=True)
             return []
-
-    # ==================== ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -589,10 +588,12 @@ class AvanpostActionRepository:
                 .where(AvanpostDirScenarioGroupItemModel.FID == action_id)
             )
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             row = result.first()
 
-            db_logger.debug(f"📊 [get_action_info] Row: {row}")
+            db_logger.debug(f"📊 Row: {row}")
 
             if not row:
                 db_logger.warning(f"⚠️ [get_action_info] No action info found for action_id={action_id}")
@@ -628,20 +629,6 @@ class AvanpostActionRepository:
         db_logger.info(f"🔍 [get_action_info_with_names] START for action_id={action_id}")
 
         try:
-            sql_query = (
-                f"SELECT "
-                f"TAvanpostDirScenarios.FK_Type, "
-                f"TAvanpostDirScenarios.FID as scenario_fid, "
-                f"TAvanpostDirScenariosTypes.FName as type_name, "
-                f"TAvanpostDirScenarios.FName as scenario_name "
-                f"FROM TAvanpostDirScenariosGroupsItems "
-                f"JOIN TAvanpostDirScenariosGroupsItemsLinksScenarios ON TAvanpostDirScenariosGroupsItemsLinksScenarios.FK_Parent = TAvanpostDirScenariosGroupsItems.FID "
-                f"JOIN TAvanpostDirScenarios ON TAvanpostDirScenarios.FID = TAvanpostDirScenariosGroupsItemsLinksScenarios.FK_Link "
-                f"JOIN TAvanpostDirScenariosTypes ON TAvanpostDirScenariosTypes.FID = TAvanpostDirScenarios.FK_Type "
-                f"WHERE TAvanpostDirScenariosGroupsItems.FID = {action_id}"
-            )
-            db_logger.debug(f"📝 [get_action_info_with_names] SQL: {sql_query}")
-
             stmt = (
                 select(
                     AvanpostDirScenarioModel.FK_Type,
@@ -665,10 +652,12 @@ class AvanpostActionRepository:
                 .where(AvanpostDirScenarioGroupItemModel.FID == action_id)
             )
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             row = result.first()
 
-            db_logger.debug(f"📊 [get_action_info_with_names] Row: {row}")
+            db_logger.debug(f"📊 Row: {row}")
 
             if not row:
                 db_logger.warning(f"⚠️ [get_action_info_with_names] No action info found for action_id={action_id}")
@@ -732,10 +721,12 @@ class AvanpostActionRepository:
                 .where(AvanpostDirScenarioGroupItemModel.FID == action_id)
             )
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             row = result.first()
 
-            db_logger.debug(f"📊 [get_action_scenario_details] Row: {row}")
+            db_logger.debug(f"📊 Row: {row}")
 
             if not row:
                 db_logger.warning(
@@ -811,10 +802,12 @@ class AvanpostActionRepository:
                 .offset(offset)
             )
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             rows = result.all()
 
-            db_logger.debug(f"📊 [get_actions_by_type] Raw rows count: {len(rows)}")
+            db_logger.debug(f"📊 Raw rows count: {len(rows)}")
 
             actions = []
             for idx, row in enumerate(rows):
@@ -855,10 +848,12 @@ class AvanpostActionRepository:
                 AvanpostDirScenarioTypeModel.FFlagCustom,
             ).order_by(AvanpostDirScenarioTypeModel.FID)
 
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
             result = await session.execute(stmt)
             rows = result.all()
 
-            db_logger.debug(f"📊 [get_scenario_types_dict] Raw rows count: {len(rows)}")
+            db_logger.debug(f"📊 Raw rows count: {len(rows)}")
 
             types_dict = {
                 row.FID: {

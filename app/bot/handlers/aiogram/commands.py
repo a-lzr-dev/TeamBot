@@ -1,4 +1,24 @@
-# app/bot/handlers/aiogram/users.py
+"""
+Модуль обработчика списка пользователей.
+
+Этот модуль предоставляет функциональность для управления пользователями
+в системе Avanpost через Telegram бота.
+
+Основные компоненты:
+    - UsersListHandler: Обработчик списка пользователей с пагинацией и поиском
+    - Команда /users для просмотра списка пользователей
+    - Выбор пользователя для запуска меню действий
+    - Возврат к списку пользователей из меню действий
+
+Использует GenericListCallbackHandler для универсальной обработки списков.
+
+Функциональность:
+    - Отображение списка пользователей с пагинацией
+    - Поиск по пользователям
+    - Выбор пользователя для выполнения действий
+    - Статус авторизации пользователей
+    - Только для администраторов
+"""
 
 from typing import Any
 
@@ -11,32 +31,50 @@ from aiogram.types import CallbackQuery, Message
 from ....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
 from ....bot.dependencies import get_bot_manager
 from ....config import settings
-from ....db import UserRepository, db_manager
-from ....exceptions import log_exceptions
+from ....db import db_manager
+from ....db.repositories import AvanpostUserRepository, UserRepository
 from ....logger import bot_logger
 from ....models import ErrorCategory, MessageActionType, MessageType
 from ....services import error_service
+from ....utils.decorators import log_exceptions
 from ...keyboards import ListKeyboardBuilder
+from ...keyboards.users import GROUP_ICONS
 from .actions import show_menu
 from .auth import _auth_cache, is_user_authenticated
 
+# Создание роутера для обработки пользователей
 router = Router(name="aiogram_users")
 
-# Репозитории
+# Репозитории для работы с данными
 _user_repo = UserRepository()
+_avanpost_user_repo = AvanpostUserRepository()
 
 
 class UserStates(StatesGroup):
-    """Состояния для работы с пользователями"""
+    """Состояния для работы с пользователями."""
 
-    viewing_users = State()
-    searching_users = State()
+    viewing_users = State()  # Просмотр списка пользователей
+    searching_users = State()  # Поиск пользователей
 
 
 class UsersListHandler(GenericListCallbackHandler):
-    """Обработчик списка пользователей"""
+    """
+    Обработчик списка пользователей Avanpost.
+
+    Наследуется от GenericListCallbackHandler и реализует:
+        - Загрузку данных пользователей из БД
+        - Отображение списка с пагинацией
+        - Обработку выбора пользователя
+        - Поиск по пользователям
+
+    Атрибуты:
+        PAGE_SIZE: Количество пользователей на странице
+        STATE_VIEWING: Состояние просмотра списка
+        STATE_SEARCHING: Состояние поиска
+    """
 
     def __init__(self) -> None:
+        """Инициализация обработчика списка пользователей."""
         super().__init__(prefix="users", list_type="users")
         self.PAGE_SIZE = 10
         self.STATE_VIEWING = UserStates.viewing_users
@@ -49,24 +87,42 @@ class UsersListHandler(GenericListCallbackHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Загрузка данных пользователей"""
+        """
+        Загрузка данных пользователей из базы данных.
+
+        Args:
+            session: Сессия БД
+            page: Номер страницы
+            search_query: Поисковый запрос (опционально)
+            **kwargs: Дополнительные параметры
+
+        Returns:
+            dict: Данные списка пользователей
+        """
         try:
-            data = await _user_repo.get_avanpost_users_page(
+            # Получение пользователей из репозитория
+            data = await _avanpost_user_repo.get_avanpost_users_page(
                 session=session,
                 page=page,
                 page_size=self.PAGE_SIZE,
                 search_query=search_query,
             )
 
+            # Форматирование элементов списка
             items = []
             for user in data.get("users", []):
                 is_authorized = user.get("is_authorized", False)
-                prefix = "✅ " if is_authorized else "⬜ "
+                group_id = user.get("group_id")
+
+                # Получение иконки по group_id
+                icon = GROUP_ICONS.get(group_id, "❓")
+                auth_indicator = "🟢" if is_authorized else "⚪"
+                name = user.get("name", f"User #{user.get('id')}")
                 items.append(
                     {
                         "id": user.get("id"),
                         "name": user.get("name", f"User #{user.get('id')}"),
-                        "display_name": f"{prefix}{user.get('name', f'User #{user.get("id")}')}",
+                        "display_name": f"{icon} {name} {auth_indicator}",
                         "phone": user.get("phone"),
                         "group_id": user.get("group_id"),
                         "telegram_id": user.get("telegram_id"),
@@ -104,9 +160,19 @@ class UsersListHandler(GenericListCallbackHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Отображение списка пользователей"""
+        """
+        Отображение списка пользователей.
+
+        Args:
+            event: Сообщение или CallbackQuery
+            state: Состояние FSM
+            page: Номер страницы
+            search_query: Поисковый запрос
+            **kwargs: Дополнительные параметры
+        """
         bot_manager = get_bot_manager()
 
+        # Подтверждение получения колбэка
         if isinstance(event, CallbackQuery):
             await event.answer()
 
@@ -116,9 +182,11 @@ class UsersListHandler(GenericListCallbackHandler):
             return
 
         try:
+            # Загрузка данных пользователей
             async with db_manager.get_session() as session:
                 data = await self.load_data(session, page, search_query)
 
+            # Обработка ошибки загрузки
             if data.get("error"):
                 await bot_manager.send_message(
                     chat_id=chat_id,
@@ -135,6 +203,7 @@ class UsersListHandler(GenericListCallbackHandler):
             current_page = data["page"]
             total_pages = data["total_pages"]
 
+            # Отображение пустого списка
             if total == 0:
                 empty_text = "👥 **СПИСОК ПОЛЬЗОВАТЕЛЕЙ**\n\n"
                 if search_query:
@@ -152,7 +221,7 @@ class UsersListHandler(GenericListCallbackHandler):
                 )
                 return
 
-            # Формирование текста
+            # Формирование текста списка
             start_item = current_page * self.PAGE_SIZE + 1
             end_item = min(start_item + self.PAGE_SIZE - 1, total)
 
@@ -163,7 +232,7 @@ class UsersListHandler(GenericListCallbackHandler):
             text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
             text += "Выберите пользователя для запуска меню действий:\n"
 
-            # Создание клавиатуры
+            # Построение клавиатуры
             builder = ListKeyboardBuilder(
                 callback_prefix="users",
                 buttons_per_row=2,
@@ -189,6 +258,7 @@ class UsersListHandler(GenericListCallbackHandler):
                 }
             )
 
+            # Отправка сообщения
             await bot_manager.send_message(
                 chat_id=chat_id,
                 text=text,
@@ -221,7 +291,21 @@ class UsersListHandler(GenericListCallbackHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """Обработка выбора пользователя"""
+        """
+        Обработка выбора пользователя.
+
+        При выборе пользователя:
+        1. Проверяет права администратора
+        2. Загружает данные пользователя
+        3. Сохраняет состояние выбранного пользователя
+        4. Открывает меню действий для пользователя
+
+        Args:
+            callback: CallbackQuery от пользователя
+            state: Состояние FSM
+            item_id: ID выбранного пользователя
+            **kwargs: Дополнительные параметры
+        """
         bot_manager = get_bot_manager()
 
         # Проверка прав администратора
@@ -230,6 +314,7 @@ class UsersListHandler(GenericListCallbackHandler):
             return
 
         try:
+            # Получение данных выбранного пользователя
             async with db_manager.get_session() as session:
                 user = await _user_repo.get_avanpost_user_data(session, item_id)
 
@@ -253,6 +338,7 @@ class UsersListHandler(GenericListCallbackHandler):
 
             telegram_user_id = callback.from_user.id
 
+            # Сохранение в кеш авторизации
             _auth_cache[telegram_user_id] = {
                 "avanpost_user_id": item_id,
                 "group_id": group_id,
@@ -260,6 +346,7 @@ class UsersListHandler(GenericListCallbackHandler):
                 "telegram_user_id": telegram_user_id,
             }
 
+            # Сохранение состояния выбранного пользователя
             await state.update_data(
                 selected_user_id=item_id,
                 selected_user_name=user_name,
@@ -275,9 +362,11 @@ class UsersListHandler(GenericListCallbackHandler):
                 event=callback,
             )
 
+            # Удаление текущего сообщения
             if callback.message:
                 await bot_manager.delete_message_by_link(callback.message)
 
+            # Открытие меню действий для выбранного пользователя
             async with db_manager.get_session() as session:
                 await show_menu(
                     event=callback,
@@ -300,6 +389,12 @@ class UsersListHandler(GenericListCallbackHandler):
             )
 
     async def get_state_keys(self) -> dict[str, str]:
+        """
+        Получение ключей для состояния.
+
+        Returns:
+            dict: Словарь с ключами состояния
+        """
         return {
             "page": "users_page",
             "search_query": "users_search_query",
@@ -311,6 +406,15 @@ class UsersListHandler(GenericListCallbackHandler):
 
     @staticmethod
     def _get_chat_id(event: Message | CallbackQuery) -> int | None:
+        """
+        Получение ID чата из события.
+
+        Args:
+            event: Сообщение или CallbackQuery
+
+        Returns:
+            int | None: ID чата
+        """
         if isinstance(event, Message):
             chat_id = event.chat.id
             return int(chat_id) if chat_id is not None else None
@@ -320,6 +424,12 @@ class UsersListHandler(GenericListCallbackHandler):
         return None
 
     def get_close_keyboard(self) -> Any:
+        """
+        Клавиатура с кнопкой закрытия.
+
+        Returns:
+            InlineKeyboardMarkup: Клавиатура
+        """
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         return InlineKeyboardMarkup(
@@ -336,7 +446,6 @@ users_handler = UsersListHandler()
 users_search_handler = GenericSearchHandler(users_handler)
 
 
-# Функция для отображения списка пользователей из других модулей
 async def show_users_list(
     event: Message | CallbackQuery,
     state: FSMContext,
@@ -344,18 +453,31 @@ async def show_users_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """Публичная функция для отображения списка пользователей"""
+    """
+    Публичная функция для отображения списка пользователей.
+
+    Args:
+        event: Сообщение или CallbackQuery
+        state: Состояние FSM
+        page: Номер страницы
+        search_query: Поисковый запрос
+        **kwargs: Дополнительные параметры
+    """
     await users_handler.show_list(event, state, page, search_query, **kwargs)
 
 
-# Функция для возврата к списку пользователей из меню действий
 async def back_to_users(
     event: CallbackQuery,
     state: FSMContext,
 ) -> None:
     """
     Возврат к списку пользователей из меню действий.
+
     Очищает состояние выбранного пользователя и показывает список.
+
+    Args:
+        event: CallbackQuery от пользователя
+        state: Состояние FSM
     """
     bot_manager = get_bot_manager()
 
@@ -401,9 +523,18 @@ async def back_to_users(
 @router.message(Command("users"))
 @log_exceptions(bot_logger)
 async def cmd_users(message: Message, state: FSMContext) -> None:
-    """Команда для вызова списка пользователей"""
+    """
+    Команда для вызова списка пользователей.
+
+    Доступна только для администраторов.
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
+    # Проверка прав администратора
     if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
         await bot_manager.send_answer(
             text="⛔ У вас нет прав для этой команды.",
@@ -413,6 +544,7 @@ async def cmd_users(message: Message, state: FSMContext) -> None:
         )
         return
 
+    # Проверка авторизации
     if not await is_user_authenticated(message.from_user.id):
         await bot_manager.send_answer(
             text="🔐 **Требуется авторизация**\n\n"
@@ -435,8 +567,10 @@ async def cmd_users(message: Message, state: FSMContext) -> None:
         is_admin=False,
     )
 
+    # Удаление команды из чата
     await bot_manager.delete_message_by_link(message)
 
+    # Отображение списка пользователей
     await users_handler.show_list(event=message, state=state, page=0)
 
 
@@ -447,13 +581,25 @@ async def cmd_users(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(lambda c: c.data.startswith("users_"))
 async def handle_users_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков для пользователей"""
+    """
+    Обработка колбэков для пользователей.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        state: Состояние FSM
+    """
     await users_handler.handle(callback, state)
 
 
 @router.message(UserStates.searching_users)
 async def handle_users_search(message: Message, state: FSMContext) -> None:
-    """Обработка поискового запроса для пользователей"""
+    """
+    Обработка поискового запроса для пользователей.
+
+    Args:
+        message: Сообщение с поисковым запросом
+        state: Состояние FSM
+    """
     await users_search_handler.handle_search_query(message, state)
 
 

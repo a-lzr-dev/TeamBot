@@ -5,9 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..bot.dependencies import get_bot_manager
 from ..db.repositories import ReminderRepository
 from ..dtos.reminder import ReminderNotificationDTO
-from ..exceptions import log_exceptions
 from ..logger import app_logger
 from ..models import MessageType, datetime_now
+from ..utils.decorators import log_exceptions
 
 
 class ReminderNotificationService:

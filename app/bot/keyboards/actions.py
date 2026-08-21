@@ -32,8 +32,8 @@ class ActionKeyboard:
         builder = ListKeyboardBuilder(
             callback_prefix="action",
             buttons_per_row=BUTTONS_PER_ROW_ACTIONS,
-            item_icon="▶️",
-            max_name_length=20,
+            item_icon="",  # ▶️
+            max_name_length=25,
         )
 
         extra_buttons = []
