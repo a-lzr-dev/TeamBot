@@ -563,7 +563,7 @@ class UserRepository:
             user = AvanpostUserModel(
                 FID=avanpost_user_id,
                 FK_Contact=fk_contact,
-                FK_Language=fk_language[:2] if fk_language else "ru",
+                FK_Language=fk_language[:2] if fk_language else "RU",
                 FK_MenuGroup=fk_menugroup,
                 FK_Owner=fk_owner,
                 FK_MotorCade=fk_motorcade,

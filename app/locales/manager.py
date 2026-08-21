@@ -6,9 +6,9 @@ from typing import Any, Optional
 from ..logger import app_logger
 
 # Поддерживаемые языки
-SUPPORTED_LANGUAGES = {"ru": "Русский", "en": "English", "de": "Deutsch", "zh": "中文"}
+SUPPORTED_LANGUAGES = {"RU": "Русский", "EN": "English", "DE": "Deutsch", "ZH": "中文"}
 
-DEFAULT_LANGUAGE = "ru"
+DEFAULT_LANGUAGE = "RU"
 
 
 class LocaleManager:
@@ -89,7 +89,7 @@ class LocaleManager:
 
         if translation is None:
             # Попытка найти в английском или русском
-            for fallback in ["en", "ru"]:
+            for fallback in ["EN", "RU"]:
                 if fallback != lang_code:
                     fallback_trans = self._get_translation(fallback, key)
                     if fallback_trans is not None:

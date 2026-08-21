@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db import db_manager
-from ...db.repositories import AvanpostActionsRepository, AvanpostRepository
+from ...db.repositories import AvanpostActionRepository, AvanpostRepository
 from ...exceptions import log_exceptions
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
@@ -15,7 +15,7 @@ from ..dependencies import get_session
 router = APIRouter(prefix="/avanpost", tags=["Avanpost"])
 
 # Репозиторий для работы с меню действий
-_actions_repo = AvanpostActionsRepository()
+_actions_repo = AvanpostActionRepository()
 
 
 class CheckUserRequest(BaseModel):
@@ -281,7 +281,7 @@ async def get_menu_items(
             session=session,
             group_id=group_id,
             parent_item_id=parent_item_id,
-            lang_code="ru",
+            lang_code="RU",
         )
 
         items = [
@@ -482,7 +482,7 @@ async def _build_menu_tree(
                 session=session,
                 group_id=group_id,
                 parent_item_id=item.get("id"),
-                lang_code="ru",
+                lang_code="RU",
             )
 
             node["children"] = await _build_menu_tree(

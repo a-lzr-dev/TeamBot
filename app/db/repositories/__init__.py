@@ -1,6 +1,7 @@
 from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
-from .avanpost_actions import AvanpostActionsRepository
+from .avanpost_actions import AvanpostActionRepository
+from .avanpost_users import AvanpostUserRepository
 from .chats import ChatRepository
 from .dirs import DirContactGroupRepository, DirLanguageRepository
 from .errors import ErrorRepository
@@ -14,10 +15,11 @@ from .system import SystemRepository
 from .users import UserRepository
 
 __all__ = [
-    # Новый репозиторий для действий
-    "AvanpostActionsRepository",
+    # Репозиторий для работы с меню действий
+    "AvanpostActionRepository",
     # Основные репозитории
     "AvanpostRepository",
+    "AvanpostUserRepository",
     "ChatRepository",
     "UserRepository",
     "MessageRepository",

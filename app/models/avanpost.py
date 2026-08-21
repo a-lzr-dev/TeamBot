@@ -540,7 +540,7 @@ class AvanpostDirScenarioGroupItemModel(BaseModel):
     def __repr__(self) -> str:
         return f"<AvanpostDirScenarioGroupItemModel(id={self.FID}, name={self.get_name()})>"
 
-    def get_name(self, lang_code: str = "ru") -> str:
+    def get_name(self, lang_code: str = "RU") -> str:
         """Получение названия на указанном языке"""
         for lang in self.langs:
             if lang.FK_Lang == lang_code:

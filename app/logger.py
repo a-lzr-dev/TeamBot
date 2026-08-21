@@ -241,11 +241,26 @@ class ExtendedLogger:
         self._logger.debug(message, extra=kwargs)
 
     def log_error(self, error: Exception, message: str = "Error occurred", **kwargs: Any) -> None:
-        """Логирование ошибки с контекстом"""
+        """Логирование ошибки с полным контекстом и стеком"""
+        import traceback
+
+        # Получение полного стека
+        tb_str = traceback.format_exc()
+
         extra = kwargs.get("extra", {})
         if isinstance(extra, dict):
             extra["error_type"] = type(error).__name__
             extra["error_message"] = str(error)
+            extra["traceback"] = tb_str
+
+            # Добавление информации о месте ошибки
+            tb = error.__traceback__
+            if tb:
+                while tb.tb_next:
+                    tb = tb.tb_next
+                extra["error_file"] = tb.tb_frame.f_code.co_filename
+                extra["error_line"] = tb.tb_lineno
+                extra["error_function"] = tb.tb_frame.f_code.co_name
 
         self._logger.error(f"{message}: {error}", exc_info=True, extra=extra)
 

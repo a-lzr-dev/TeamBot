@@ -15,7 +15,7 @@ from ....models import (
     MessageType,
     datetime_now,
 )
-from ...utils.converters import message_info_from_telethon, save_media_info_to_model
+from ...utils import message_info_from_telethon, save_media_info_to_model
 
 if TYPE_CHECKING:
     from telethon.tl.types import TypeMessage

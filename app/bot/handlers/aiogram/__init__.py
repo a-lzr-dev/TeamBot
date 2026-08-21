@@ -7,6 +7,8 @@ from .auth import router as auth_router
 from .automation import router as automation_router
 from .chat import router as chat_router
 from .commands import router as commands_router
+from .common import back_to_users, show_menu, show_users_list
+from .lists import chats_router, orders_router, vehicles_router
 from .users import router as users_router
 
 
@@ -20,6 +22,10 @@ def setup_aiogram_handlers() -> Router:
     router.include_router(actions_router)
     router.include_router(users_router)
     router.include_router(automation_router)
+    # Списки (заказы, чаты, транспорт)
+    router.include_router(orders_router)
+    router.include_router(chats_router)
+    router.include_router(vehicles_router)
     return router
 
 
@@ -31,6 +37,13 @@ __all__ = [
     "users_router",
     "auth_router",
     "automation_router",
+    "orders_router",
+    "chats_router",
+    "vehicles_router",
     "setup_aiogram_handlers",
     "_auth_cache",
+    # Из common
+    "show_menu",
+    "back_to_users",
+    "show_users_list",
 ]

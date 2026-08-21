@@ -5,26 +5,27 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, Message
 
-from app.bot.dependencies import get_bot_manager
-from app.bot.keyboards import ActionKeyboard
-from app.config import settings
-from app.db import db_manager
-from app.db.repositories.avanpost_actions import AvanpostActionsRepository
-from app.db.repositories.users import UserRepository
-from app.exceptions import log_exceptions
-from app.logger import bot_logger
-from app.models import ErrorCategory, MessageActionType, MessageType
-from app.services import error_service
-
+from ....config import settings
+from ....db import db_manager
+from ....db.repositories import AvanpostActionRepository, AvanpostUserRepository, UserRepository
+from ....exceptions import log_exceptions
+from ....logger import bot_logger
+from ....models import MessageActionType, MessageType
+from ...dependencies import get_bot_manager
 from .auth import _auth_cache, get_user_group_id, is_user_authenticated
-from .users import back_to_users
+from .common import back_to_users, show_menu
 
 router = Router(name="aiogram_actions")
 
-# Репозиторий для работы с меню
-_actions_repo = AvanpostActionsRepository()
+# Репозитории
+_actions_repo = AvanpostActionRepository()
+_avanpost_user_repo = AvanpostUserRepository()
+_user_repo = UserRepository()
+
+# Константы
+BUTTONS_PER_ROW = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 3)
 
 
 class ActionStates(StatesGroup):
@@ -33,7 +34,29 @@ class ActionStates(StatesGroup):
     viewing_menu = State()
 
 
-# ============ ОБРАБОТЧИКИ ============
+class SubMenuStates(StatesGroup):
+    """Состояния для работы с подменю (заказы, чаты, транспорт)"""
+
+    viewing_orders = State()
+    searching_orders = State()
+    viewing_chats = State()
+    searching_chats = State()
+    viewing_vehicles = State()
+    searching_vehicles = State()
+
+
+def _get_chat_id(event: Message | CallbackQuery) -> int:
+    """Получение ID чата из события"""
+    if isinstance(event, Message):
+        chat_id = event.chat.id
+        return int(chat_id) if chat_id is not None else 0
+    if isinstance(event, CallbackQuery) and event.message:
+        chat_id = event.message.chat.id
+        return int(chat_id) if chat_id is not None else 0
+    return 0
+
+
+# ============ КОМАНДА /actions ============
 
 
 @router.message(Command("actions"))
@@ -66,7 +89,6 @@ async def _cmd_actions_impl(
     """Реализация команды /actions с переданной сессией"""
     bot_manager = get_bot_manager()
 
-    # Проверка на выбранного пользователя через /users
     state_data = await state.get_data()
     selected_user_id = state_data.get("selected_user_id")
     selected_user_name = state_data.get("selected_user_name")
@@ -76,7 +98,6 @@ async def _cmd_actions_impl(
         user_id = selected_user_id
         bot_logger.debug(f"✅ Using selected user ID from state: {user_id} ({selected_user_name})")
 
-        # Проверка, что пользователь существует в Avanpost
         avanpost_user_data = await UserRepository.get_avanpost_user_data(session, user_id)
         if not avanpost_user_data:
             await bot_manager.send_answer(
@@ -88,7 +109,6 @@ async def _cmd_actions_impl(
             )
             return
 
-        # Обновление is_admin
         is_admin = user_id in settings.ADMIN_IDS
         await state.update_data(
             user_id=user_id,
@@ -97,7 +117,6 @@ async def _cmd_actions_impl(
             selected_user_name=selected_user_name,
         )
 
-        # Получение group_id для выбранного пользователя
         group_id = await get_user_group_id(user_id)
         if not group_id:
             await bot_manager.send_answer(
@@ -113,8 +132,6 @@ async def _cmd_actions_impl(
 
         await state.set_state(ActionStates.viewing_menu)
         await bot_manager.delete_message_by_link(message)
-
-        # Очистка истории при входе в меню
         await state.update_data(menu_history=[])
 
         await show_menu(
@@ -156,8 +173,6 @@ async def _cmd_actions_impl(
 
     await state.set_state(ActionStates.viewing_menu)
     await bot_manager.delete_message_by_link(message)
-
-    # Очистка истории при входе в меню
     await state.update_data(menu_history=[])
 
     await show_menu(
@@ -180,16 +195,7 @@ async def _cmd_actions_impl(
 )
 @log_exceptions(bot_logger)
 async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков действий.
-
-    Поддерживает:
-    - action_<id> - выбор действия
-    - action_back_<parent_id> - возврат на уровень назад
-    - action_home - возврат в главное меню
-    - back_to_groups - переход к списку групп (админ)
-    - back_to_users - переход к списку пользователей
-    """
+    """Обработка колбэков действий через универсальный обработчик"""
     bot_manager = get_bot_manager()
 
     if not callback.from_user:
@@ -203,475 +209,86 @@ async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> 
         await bot_manager.send_toast(text="❌ Пустой callback.", event=callback)
         return
 
-    # Обработка возврата к списку пользователей
+    # Обработка специального колбэка "назад к пользователям"
     if callback_data == "back_to_users":
         await back_to_users(callback, state)
         return
 
-    bot_logger.debug(f"✅ Callback from REAL user: {telegram_user_id}")
-    bot_logger.debug(f"✅ Callback data: {callback.data}")
-
+    # Получение группы действий для пользователя
     async with db_manager.get_session() as session:
-        await _handle_action_callback_impl(callback, state, session, telegram_user_id)
+        state_data = await state.get_data()
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
 
-
-async def _handle_action_callback_impl(
-    callback: CallbackQuery,
-    state: FSMContext,
-    session: Any,
-    telegram_user_id: int,
-) -> None:
-    """Реализация обработки колбэка с переданной сессией"""
-    bot_manager = get_bot_manager()
-    callback_data = callback.data
-
-    # Получение состояния
-    state_data = await state.get_data()
-    selected_user_id = state_data.get("selected_user_id")
-    selected_user_name = state_data.get("selected_user_name")
-    selected_user_group_id = state_data.get("selected_user_group_id")
-
-    # ============================================================
-    # БЛОК 1: ОБРАБОТКА ВЫБРАННОГО ПОЛЬЗОВАТЕЛЯ (через /users)
-    # ============================================================
-    if selected_user_id and selected_user_id != telegram_user_id:
-        bot_logger.debug(f"✅ Using selected user ID from state in callback: {selected_user_id} ({selected_user_name})")
-
-        # 1. Получаем group_id из состояния (сохранен в select_user)
-        group_id = selected_user_group_id
-
-        # 2. Если в состоянии нет, пробуем из кеша
-        if not group_id:
-            cache_data = _auth_cache.get(telegram_user_id)
-            if cache_data:
-                group_id = cache_data.get("group_id")
-                bot_logger.debug(f"✅ Found group_id in cache: {group_id}")
-
-        # 3. Если всё еще нет — пробуем получить из БД
-        if not group_id:
-            avanpost_user_data = await UserRepository.get_avanpost_user_data(session, selected_user_id)
-            if avanpost_user_data:
-                group_id = avanpost_user_data.get("FK_MenuGroup")
-                bot_logger.debug(f"✅ Found group_id in DB: {group_id}")
-            else:
-                await bot_manager.send_toast(
-                    text=f"❌ Пользователь {selected_user_name or selected_user_id} не найден в системе Avanpost.",
-                    event=callback,
-                )
-                return
+        # Определение group_id
+        group_id = await _get_group_id_for_user(telegram_user_id, selected_user_id, session)
 
         if not group_id:
             await bot_manager.send_toast(
-                text=f"❌ У пользователя {selected_user_name or selected_user_id} не назначена группа действий.",
+                text="❌ Не удалось определить группу действий.",
                 event=callback,
             )
             return
 
-        # 4. Проверка, что пользователь существует в Avanpost
-        avanpost_user_data = await UserRepository.get_avanpost_user_data(session, selected_user_id)
-        if not avanpost_user_data:
-            await bot_manager.send_toast(
-                text=f"❌ Пользователь {selected_user_id} не найден в системе Avanpost.",
-                event=callback,
-            )
-            return
+        # Сохранение в состоянии
+        await state.update_data(group_id=group_id)
 
-        # 5. Обновление состояния и кеша
-        is_admin = telegram_user_id in settings.ADMIN_IDS
-        await state.update_data(
-            user_id=selected_user_id,
-            is_admin=is_admin,
-            selected_user_id=selected_user_id,
-            selected_user_name=selected_user_name,
-            selected_user_group_id=group_id,
-            use_group_id=group_id,
-        )
-
-        # Обновляем кеш с данными выбранного пользователя
-        _auth_cache[telegram_user_id] = {
-            "avanpost_user_id": selected_user_id,
-            "group_id": group_id,
-            "phone": avanpost_user_data.get("FPhone") if avanpost_user_data else None,
-            "telegram_user_id": telegram_user_id,
-        }
-        bot_logger.debug(f"✅ Updated _auth_cache for telegram user {telegram_user_id} with group_id={group_id}")
-
-        # ============================================================
-        # ОБРАБОТКА ВЫБОРА ДЕЙСТВИЯ
-        # ============================================================
-        if callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
-            try:
-                action_id = int(callback_data.split("_")[1])
-
-                has_children = await _actions_repo.has_subitems(
-                    session=session,
-                    group_id=group_id,
-                    item_id=action_id,
-                )
-
-                if has_children:
-                    await bot_manager.send_toast(event=callback)
-
-                    # Сохранение истории переходов
-                    history = state_data.get("menu_history", [])
-                    history.append(action_id)
-                    await state.update_data(menu_history=history)
-                    bot_logger.debug(f"📜 Added {action_id} to history: {history}")
-
-                    await show_menu(
-                        event=callback,
-                        group_id=group_id,
-                        parent_item_id=action_id,
-                        state=state,
-                        session=session,
-                        is_callback=True,
-                        user_display_name=selected_user_name or f"User #{selected_user_id}",
-                    )
-                else:
-                    await execute_action(callback=callback, action_id=action_id, state=state)
-                return
-
-            except (ValueError, IndexError):
-                bot_logger.warning(f"⚠️ Invalid action ID in callback: {callback.data}")
-
-        # Обработка остальных колбэков (action_back_, action_home)
+        # Использование универсального обработчика
         from ...callbacks import action_callback_handler
 
-        await action_callback_handler.handle(callback, state)
-        return
-
-    # ============================================================
-    # БЛОК 2: СТАНДАРТНАЯ ЛОГИКА ДЛЯ ТЕКУЩЕГО ПОЛЬЗОВАТЕЛЯ
-    # ============================================================
-    await state.update_data(
-        user_id=telegram_user_id,
-        is_admin=telegram_user_id in settings.ADMIN_IDS,
-    )
-
-    # Обработка выбора действия (не "Назад" и не "В главное меню")
-    if callback_data.startswith("action_") and not callback_data.startswith("action_back_"):
-        try:
-            action_id = int(callback_data.split("_")[1])
-
-            group_id = await get_user_group_id(telegram_user_id)
-
-            if group_id:
-                has_children = await _actions_repo.has_subitems(
-                    session=session,
-                    group_id=group_id,
-                    item_id=action_id,
-                )
-
-                if has_children:
-                    await bot_manager.send_toast(event=callback)
-
-                    # Сохранение истории переходов
-                    history = state_data.get("menu_history", [])
-                    history.append(action_id)
-                    await state.update_data(menu_history=history)
-                    bot_logger.debug(f"📜 Added {action_id} to history: {history}")
-
-                    await show_menu(
-                        event=callback,
-                        group_id=group_id,
-                        parent_item_id=action_id,
-                        state=state,
-                        session=session,
-                        is_callback=True,
-                    )
-                else:
-                    await execute_action(callback=callback, action_id=action_id, state=state)
-            else:
-                await bot_manager.send_toast(
-                    text="❌ Не удалось определить группу действий для пользователя.",
-                    event=callback,
-                )
-            return
-
-        except (ValueError, IndexError):
-            bot_logger.warning(f"⚠️ Invalid action ID in callback: {callback.data}")
-
-    # Обработка остальных колбэков (action_back_, action_home, back_to_groups)
-    from ...callbacks import action_callback_handler
-
-    await action_callback_handler.handle(callback, state)
-
-
-# ============ ФУНКЦИЯ SHOW_MENU ============
-
-
-@log_exceptions(bot_logger)
-async def show_menu(
-    *,
-    event: Message | CallbackQuery,
-    group_id: int,
-    state: FSMContext,
-    session: Any,
-    parent_item_id: int | None = None,
-    is_callback: bool = False,
-    _is_new: bool = False,
-    user_display_name: str | None = None,
-) -> None:
-    """
-    Отображение меню действий с горизонтальным расположением кнопок.
-
-    Использует репозиторий AvanpostActionsRepository.
-    """
-    bot_manager = get_bot_manager()
-
-    user_id = None
-    is_admin = False
-
-    try:
-        state_data = await state.get_data()
-        user_id = state_data.get("user_id")
-
-        # Проверка на выбранного пользователя
-        selected_user_id = state_data.get("selected_user_id")
-
-        if selected_user_id and not user_id:
-            user_id = selected_user_id
-            bot_logger.debug(f"✅ Using selected user ID from state in show_menu: {user_id}")
-
-        if user_id:
-            bot_logger.debug(f"✅ Using user_id from state: {user_id}")
-            is_admin = state_data.get("is_admin", user_id in settings.ADMIN_IDS)
-        else:
-            if isinstance(event, CallbackQuery):
-                if event.from_user:
-                    user_id = event.from_user.id
-                    bot_logger.debug(f"✅ Callback from user: {user_id}")
-                    is_callback = True
-
-            elif isinstance(event, Message):
-                if event.from_user and not event.from_user.is_bot:
-                    user_id = event.from_user.id
-                    bot_logger.debug(f"✅ Message from user: {user_id}")
-                elif event.from_user:
-                    bot_logger.debug("⚠️ Message from bot, trying to find real user...")
-
-                    if event.reply_to_message and event.reply_to_message.from_user:
-                        user_id = event.reply_to_message.from_user.id
-                        bot_logger.debug(f"✅ Found user from reply: {user_id}")
-                    elif event.forward_from:
-                        user_id = event.forward_from.id
-                        bot_logger.debug(f"✅ Found user from forward: {user_id}")
-                    elif event.sender_chat:
-                        user_id = event.sender_chat.id
-                        bot_logger.debug(f"✅ Found user from sender_chat: {user_id}")
-                else:
-                    bot_logger.debug("⚠️ No from_user in message")
-
-            if user_id:
-                is_admin = user_id in settings.ADMIN_IDS
-                await state.update_data(user_id=user_id, is_admin=is_admin, last_activity="show_menu")
-                bot_logger.debug(f"✅ Saved user {user_id} to state")
-
-        if not user_id:
-            error_msg = "❌ Не удалось определить пользователя"
-            bot_logger.error(error_msg)
-            await bot_manager.send_toast(text=error_msg, event=event)
-            return
-
-        is_admin = user_id in settings.ADMIN_IDS
-        bot_logger.debug(f"🔍 User ID: {user_id}")
-        bot_logger.debug(f"🔍 Is admin: {is_admin}")
-
-        # Используем репозиторий с переданной сессией
-        lang_code = "ru"  # TODO: Получать из настроек пользователя
-
-        menu_data = await _actions_repo.get_menu_items_with_parent(
+        # Подготовка данных для обработчика
+        await action_callback_handler.handle(
+            callback=callback,
+            state=state,
             session=session,
             group_id=group_id,
-            parent_item_id=parent_item_id,
-            lang_code=lang_code,
+            user_display_name=selected_user_name,
         )
 
-        menu_items = menu_data.get("items", [])
-        parent_name = menu_data.get("parent_name")
-        parent_id = menu_data.get("parent_id")
 
-        bot_logger.debug(f"📊 Menu items count: {len(menu_items)}, parent: {parent_name} (ID: {parent_id})")
+async def _get_group_id_for_user(
+    telegram_user_id: int,
+    selected_user_id: int | None,
+    session: Any,
+) -> int | None:
+    """Получение group_id для пользователя"""
+    # Если выбран конкретный пользователь
+    if selected_user_id:
+        # Пробуем получить из кеша
+        cache_data = _auth_cache.get(telegram_user_id)
+        if cache_data:
+            group_id_raw = cache_data.get("group_id")
+            if group_id_raw is not None:
+                # Явное приведение к int
+                return int(group_id_raw) if isinstance(group_id_raw, int) else None
 
-        if not menu_items:
-            empty_text = "📋 Нет доступных действий."
+        # Получаем из БД
+        avanpost_user_data = await UserRepository.get_avanpost_user_data(session, selected_user_id)
+        if avanpost_user_data:
+            group_id_raw = avanpost_user_data.get("FK_MenuGroup")
+            if group_id_raw is not None:
+                # Явное приведение к int
+                return int(group_id_raw) if isinstance(group_id_raw, int) else None
 
-            keyboard = None
-            if parent_item_id is not None:
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="🔙 Назад", callback_data=f"action_back_{parent_item_id}")]
-                    ]
-                )
-            elif state_data.get("selected_user_id"):
-                keyboard = InlineKeyboardMarkup(
-                    inline_keyboard=[[InlineKeyboardButton(text="👥 К пользователям", callback_data="back_to_users")]]
-                )
-
-            if is_callback and isinstance(event, CallbackQuery):
-                if event.message:
-                    await bot_manager.delete_message_by_link(event.message)
-                    await bot_manager.send_message(
-                        chat_id=event.message.chat.id,
-                        text=empty_text,
-                        message_type=MessageType.COMMAND_ACTION_INFO,
-                        delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                        parse_mode="Markdown",
-                        reply_markup=keyboard,
-                    )
-            else:
-                if isinstance(event, Message):
-                    await bot_manager.send_message(
-                        chat_id=event.chat.id,
-                        text=empty_text,
-                        message_type=MessageType.COMMAND_ACTION_INFO,
-                        delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                        parse_mode="Markdown",
-                        reply_markup=keyboard,
-                    )
-                elif isinstance(event, CallbackQuery) and event.message:
-                    await bot_manager.send_message(
-                        chat_id=event.message.chat.id,
-                        text=empty_text,
-                        message_type=MessageType.COMMAND_ACTION_INFO,
-                        delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                        parse_mode="Markdown",
-                        reply_markup=keyboard,
-                    )
-            return
-
-        # Формирование текста с красивым оформлением
-        header_text = "✨ 📋 **МЕНЮ ДЕЙСТВИЙ**"
-
-        # Добавляем информацию о выбранном пользователе
-        display_name = user_display_name or state_data.get("selected_user_name")
-        if display_name:
-            header_text += f" 👤 {display_name}"
-
-        if parent_item_id is not None:
-            if parent_name:
-                header_text += f" • 📂 {parent_name} ✨\n"
-            else:
-                header_text += " • 📂 Подменю ✨\n"
-        else:
-            header_text += " ✨\n"
-
-        header_text += "\n"
-
-        # Создание клавиатуры
-        keyboard = ActionKeyboard.get_action_menu_keyboard(
-            items=menu_items,
-            parent_id=parent_id,
-            is_admin=is_admin,
-            is_root_menu=(parent_item_id is None),
-            show_back_to_users=bool(state_data.get("selected_user_id")),
-        )
-
-        if is_callback and isinstance(event, CallbackQuery):
-            try:
-                if event.message:
-                    await bot_manager.delete_message_by_link(event.message)
-                    bot_logger.debug(f"🗑️ Deleted old message {event.message.message_id}")
-            except Exception as e:
-                bot_logger.warning(f"⚠️ Failed to delete old message: {e}")
-
-            # Отправка нового сообщения
-            if event.message:
-                result = await bot_manager.send_message(
-                    chat_id=event.message.chat.id,
-                    text=header_text,
-                    message_type=MessageType.COMMAND_ACTION,
-                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                    parse_mode="Markdown",
-                    reply_markup=keyboard,
-                )
-
-                if result.get("success"):
-                    await state.update_data(last_action_message_id=result.get("message_id"))
-                    bot_logger.debug(f"✅ Sent new message {result.get('message_id')}")
-
-        else:
-            if isinstance(event, Message):
-                await bot_manager.send_message(
-                    chat_id=event.chat.id,
-                    text=header_text,
-                    message_type=MessageType.COMMAND_ACTION,
-                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                    parse_mode="Markdown",
-                    reply_markup=keyboard,
-                )
-            elif isinstance(event, CallbackQuery) and event.message:
-                await bot_manager.send_message(
-                    chat_id=event.message.chat.id,
-                    text=header_text,
-                    message_type=MessageType.COMMAND_ACTION,
-                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                    parse_mode="Markdown",
-                    reply_markup=keyboard,
-                )
-
-    except Exception as e:
-        if "message is not modified" not in str(e):
-            bot_logger.error(f"❌ Failed to show menu: {e}", exc_info=True)
-
-            await error_service.log_error(
-                error=e,
-                component="actions",
-                category=ErrorCategory.SYSTEM,
-                context={
-                    "parent_id": parent_item_id,
-                    "group_id": group_id,
-                    "user_id": user_id if user_id else None,
-                    "is_admin": is_admin,
-                    "message_or_callback_type": type(event).__name__,
-                },
-            )
-
-            error_text = "❌ Произошла ошибка при загрузке меню. Попробуйте позже."
-
-            if is_callback and isinstance(event, CallbackQuery):
-                with contextlib.suppress(Exception):
-                    if event.message:
-                        await bot_manager.delete_message_by_link(event.message)
-                        await bot_manager.send_message(
-                            chat_id=event.message.chat.id,
-                            text=error_text,
-                            message_type=MessageType.COMMAND_ACTION_INFO,
-                            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                            parse_mode="Markdown",
-                        )
-            else:
-                with contextlib.suppress(Exception):
-                    if isinstance(event, Message):
-                        await bot_manager.send_message(
-                            chat_id=event.chat.id,
-                            text=error_text,
-                            message_type=MessageType.COMMAND_ACTION_INFO,
-                            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                            parse_mode="Markdown",
-                        )
-                    elif isinstance(event, CallbackQuery) and event.message:
-                        await bot_manager.send_message(
-                            chat_id=event.message.chat.id,
-                            text=error_text,
-                            message_type=MessageType.COMMAND_ACTION_INFO,
-                            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                            parse_mode="Markdown",
-                        )
+    # Для текущего пользователя
+    return await get_user_group_id(telegram_user_id)
 
 
-# ============ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ============
+# ============ ВЫПОЛНЕНИЕ ДЕЙСТВИЯ ============
 
 
 async def execute_action(callback: CallbackQuery, action_id: int, state: FSMContext) -> None:
-    """Выполнение действия при выборе конечного пункта меню"""
+    """Выполнение действия при выборе конечного пункта меню."""
     bot_manager = get_bot_manager()
+    bot_logger.info(f"🎯 [execute_action] START: action_id={action_id}")
+
     try:
         state_data = await state.get_data()
-        group_id = state_data.get("group_id")
+        await state.update_data(parent_item_id=action_id)
 
-        # Проверка на выбранного пользователя
+        group_id = state_data.get("group_id")
         selected_user_id = state_data.get("selected_user_id")
+
         if selected_user_id:
             group_id = await get_user_group_id(selected_user_id)
 
@@ -682,33 +299,281 @@ async def execute_action(callback: CallbackQuery, action_id: int, state: FSMCont
             await bot_manager.send_toast(text="❌ Не удалось определить группу действий", event=callback)
             return
 
-        # Получение информации о действии через репозиторий
-        async with db_manager.get_session() as session:
-            action_info = await _actions_repo.get_menu_item_by_id(
+        async with db_manager.get_session("main") as session:
+            action_info = await AvanpostActionRepository.get_action_info_with_names(
+                action_id=action_id,
                 session=session,
-                item_id=action_id,
-                lang_code="ru",
             )
 
-        if action_info:
-            action_name = action_info.get("name", "Без названия")
-            toast_text = f"🚧️ {action_name}. Функционал в разработке..."
-        else:
-            toast_text = f"🚧 Действие #{action_id}. Функционал в разработке..."
+            if not action_info:
+                await bot_manager.send_toast(
+                    text=f"❌ Информация о действии #{action_id} не найдена.",
+                    event=callback,
+                )
+                return
 
-        await bot_manager.send_toast(text=toast_text[:200], event=callback)
-        bot_logger.debug(f"✅ Toast shown for action {action_id}: {toast_text}")
+            fk_type = action_info["fk_type"]
+            scenario_fid = action_info["scenario_fid"]
+            type_name = action_info["type_name"]
+            scenario_name = action_info["scenario_name"]
+
+            await _handle_action_by_type(
+                fk_type=fk_type,
+                scenario_fid=scenario_fid,
+                action_id=action_id,
+                type_name=type_name,
+                scenario_name=scenario_name,
+                callback=callback,
+                bot_manager=bot_manager,
+                state=state,
+            )
 
     except Exception as e:
-        bot_logger.error(f"❌ Failed to execute action: {e}", exc_info=True)
+        bot_logger.error(f"❌ [execute_action] Failed: {e}", exc_info=True)
         with contextlib.suppress(Exception):
-            await bot_manager.send_toast(text="❌ Ошибка выполнения", event=callback)
+            await bot_manager.send_toast(
+                text="❌ Ошибка выполнения действия. Попробуйте позже.",
+                event=callback,
+            )
 
+
+# ============ ОБРАБОТЧИКИ ПО ТИПАМ ДЕЙСТВИЙ ============
+
+
+async def _handle_action_by_type(
+    fk_type: int,
+    scenario_fid: int,
+    action_id: int,
+    type_name: str,
+    scenario_name: str,
+    callback: CallbackQuery,
+    bot_manager: Any,
+    state: FSMContext,
+) -> None:
+    """Обработка действия на основе его типа (FK_Type)"""
+    # Группировка по FK_Type:
+    # 1 - Отправка данных на сервер
+    # 2 - Открытие файла
+    # 4 - Открытие маршрута перевозки
+    # 5 - Открытие точки маршрута перевозки
+    # 6 - Открытие списка контактов
+    # 7 - Открытие контактной информации
+    # 8 - Открытие списка заказов
+    # 9 - Открытие списка чатов
+    # 10 - Открытие списка транспорта
+
+    if fk_type == 1:
+        await _handle_send_data(
+            scenario_fid=scenario_fid,
+            scenario_name=scenario_name,
+            action_id=action_id,
+            callback=callback,
+            bot_manager=bot_manager,
+        )
+    elif fk_type == 2:
+        await bot_manager.send_toast(
+            text=f"📂 Открытие файла. Действие #{action_id}",
+            event=callback,
+        )
+    elif fk_type == 4:
+        await bot_manager.send_toast(
+            text=f"🗺️ Открытие маршрута перевозки. Действие #{action_id}",
+            event=callback,
+        )
+    elif fk_type == 5:
+        await bot_manager.send_toast(
+            text=f"📍 Открытие точки маршрута. Действие #{action_id}",
+            event=callback,
+        )
+    elif fk_type == 6:
+        await bot_manager.send_toast(
+            text=f"👥 Открытие списка контактов. Действие #{action_id}",
+            event=callback,
+        )
+    elif fk_type == 7:
+        await bot_manager.send_toast(
+            text=f"ℹ️ Открытие контактной информации. Действие #{action_id}",
+            event=callback,
+        )
+    elif fk_type == 8:
+        await _handle_open_orders(callback, bot_manager, action_id, state)
+    elif fk_type == 9:
+        await _handle_open_chats(callback, bot_manager, action_id, state)
+    elif fk_type == 10:
+        await _handle_open_vehicles(callback, bot_manager, action_id, state)
+    else:
+        await bot_manager.send_toast(
+            text=f"🚧 Неизвестный тип действия: {type_name} (ID: {fk_type})",
+            event=callback,
+        )
+
+
+# ============ ОБРАБОТЧИКИ: ОТКРЫТИЕ СПИСКОВ ============
+
+
+async def _handle_open_orders(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """Обработчик: Открытие списка заказов (FK_Type=8)"""
+    await bot_manager.send_toast(text="📋 Загрузка списка заказов...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("user_id") or state_data.get("selected_user_id")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        await state.set_state(SubMenuStates.viewing_orders)
+        await state.update_data(
+            orders_page=0,
+            orders_search_query=None,
+            parent_item_id=action_id,
+            avanpost_user_id=avanpost_user_id,
+        )
+
+        from .lists.orders import show_orders_list
+
+        await show_orders_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to load orders: {e}", exc_info=True)
+        await bot_manager.send_toast(text=f"❌ Ошибка загрузки заказов: {str(e)[:100]}", event=callback)
+
+
+async def _handle_open_chats(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """Обработчик: Открытие списка чатов (FK_Type=9)"""
+    await bot_manager.send_toast(text="💬 Загрузка списка чатов...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("user_id") or state_data.get("selected_user_id")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        await state.set_state(SubMenuStates.viewing_chats)
+        await state.update_data(
+            chats_page=0,
+            chats_search_query=None,
+            parent_item_id=action_id,
+            avanpost_user_id=avanpost_user_id,
+        )
+
+        from .lists.chats import show_chats_list
+
+        await show_chats_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to load chats: {e}", exc_info=True)
+        await bot_manager.send_toast(text=f"❌ Ошибка загрузки чатов: {str(e)[:100]}", event=callback)
+
+
+async def _handle_open_vehicles(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """Обработчик: Открытие списка транспорта (FK_Type=10)"""
+    await bot_manager.send_toast(text="🚗 Загрузка списка транспорта...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("user_id") or state_data.get("selected_user_id")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        await state.set_state(SubMenuStates.viewing_vehicles)
+        await state.update_data(
+            vehicles_page=0,
+            vehicles_search_query=None,
+            parent_item_id=action_id,
+            avanpost_user_id=avanpost_user_id,
+        )
+
+        from .lists.vehicles import show_vehicles_list
+
+        await show_vehicles_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to load vehicles: {e}", exc_info=True)
+        await bot_manager.send_toast(text=f"❌ Ошибка загрузки транспорта: {str(e)[:100]}", event=callback)
+
+
+# ============ ОБРАБОТЧИК: ОТПРАВКА ДАННЫХ ============
+
+
+async def _handle_send_data(
+    scenario_fid: int,
+    scenario_name: str,
+    action_id: int,
+    callback: CallbackQuery,
+    bot_manager: Any,
+) -> None:
+    """Обработка действий типа "Отправка данных на сервер" (FK_Type=1)"""
+    scenario_handlers = {
+        1: "📤 Отправка данных (по умолчанию)",
+        6: "📍 Отправка местоположения",
+        7: "⛽ Отправка данных о заправке",
+        8: "💰 Отправка данных о расходах",
+        10: "✏️ Ввод данных вручную",
+        11: "⏱️ Отправка данных сейчас",
+        12: "📦 Загрузка груза (общее)",
+        13: "🌡️ Загрузка груза (температура)",
+        14: "📄 Загрузка груза (документы)",
+        15: "⚠️ Разгрузка груза (проблема с грузом)",
+        16: "📄 Разгрузка груза (документы)",
+        17: "🚗 Прием авто и ТМЦ",
+    }
+
+    handler = scenario_handlers.get(scenario_fid)
+    if handler:
+        await bot_manager.send_toast(
+            text=f"{handler}. Действие #{action_id}",
+            event=callback,
+        )
+    else:
+        await bot_manager.send_toast(
+            text=f"🚧 Отправка данных: {scenario_name} (Сценарий {scenario_fid})",
+            event=callback,
+        )
+
+
+# ============ ЭКСПОРТ ============
 
 __all__ = [
     "router",
     "ActionStates",
-    "show_menu",
+    "SubMenuStates",
     "cmd_actions",
     "execute_action",
+    "show_menu",
 ]
