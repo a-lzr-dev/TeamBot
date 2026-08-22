@@ -1,12 +1,10 @@
-# app/bot/handlers/aiogram/lists/orders.py
-
 from typing import Any
 
 from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
+from .....bot.callbacks.generic import GenericSearchHandler
 from .....bot.dependencies import get_bot_manager
 from .....db import db_manager
 from .....db.repositories import AvanpostUserRepository
@@ -14,6 +12,7 @@ from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
 from ..states import CarrierOrderStates, SubMenuStates
+from .base import BaseListHandler
 
 # Создание роутера
 router = Router(name="aiogram_orders_list")
@@ -22,12 +21,11 @@ router = Router(name="aiogram_orders_list")
 _avanpost_user_repo = AvanpostUserRepository()
 
 
-class OrdersListHandler(GenericListCallbackHandler):
+class OrdersListHandler(BaseListHandler):
     """Обработчик списка заказов"""
 
     def __init__(self) -> None:
-        super().__init__(prefix="orders", list_type="orders")
-        self.PAGE_SIZE = 10
+        super().__init__(prefix="orders", list_type="orders", page_size=10)
         self.STATE_VIEWING = SubMenuStates.viewing_orders
         self.STATE_SEARCHING = SubMenuStates.searching_orders
 
@@ -97,6 +95,7 @@ class OrdersListHandler(GenericListCallbackHandler):
         if isinstance(event, CallbackQuery):
             await event.answer()
 
+        # Получение ID чата из события (используем метод базового класса)
         chat_id = self._get_chat_id(event)
         if not chat_id:
             return
@@ -153,15 +152,14 @@ class OrdersListHandler(GenericListCallbackHandler):
                 )
                 return
 
-            # Формирование текста
-            start_item = current_page * self.PAGE_SIZE + 1
-            end_item = min(start_item + self.PAGE_SIZE - 1, total)
-
-            text = "📋 **Мои заказы**\n\n"
-            if search_query:
-                text += f"🔍 **Поиск:** `{search_query}`\n"
-            text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
-            text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
+            # Использование форматтера из базового класса
+            text = self.format_header(
+                title="📋 **Мои заказы**",
+                total=total,
+                current_page=current_page,
+                total_pages=total_pages,
+                search_query=search_query,
+            )
 
             # Создание клавиатуры через ListKeyboardBuilder
             builder = ListKeyboardBuilder(
@@ -189,6 +187,7 @@ class OrdersListHandler(GenericListCallbackHandler):
                 total_pages=total_pages,
                 search_query=search_query,
                 extra_buttons=extra_buttons if extra_buttons else None,
+                hide_pagination_if_single=True,
             )
 
             # Сохранение состояния
@@ -295,22 +294,11 @@ class OrdersListHandler(GenericListCallbackHandler):
         }
 
     @staticmethod
-    def _get_chat_id(event: Message | CallbackQuery) -> int | None:
-        """Получение ID чата из события"""
-        if isinstance(event, Message):
-            chat_id = event.chat.id
-            return int(chat_id) if chat_id is not None else None
-        if isinstance(event, CallbackQuery) and event.message:
-            chat_id = event.message.chat.id
-            return int(chat_id) if chat_id is not None else None
-        return None
-
-    @staticmethod
-    def get_back_keyboard(state: FSMContext) -> Any:
+    async def get_back_keyboard(state: FSMContext) -> Any:
         """Клавиатура с кнопкой назад"""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        state_data = state.get_data()
+        state_data = await state.get_data()
         group_id = state_data.get("group_id")
         parent_item_id = state_data.get("parent_item_id")
 
@@ -355,7 +343,6 @@ async def handle_orders_back(callback: CallbackQuery, state: FSMContext) -> None
     # Получение данных из состояния
     state_data = await state.get_data()
     avanpost_user_id = state_data.get("avanpost_user_id")
-    #    group_id = state_data.get("group_id")
 
     if not avanpost_user_id:
         await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)

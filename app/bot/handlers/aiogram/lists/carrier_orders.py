@@ -15,7 +15,7 @@ from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
+from .....bot.callbacks.generic import GenericSearchHandler
 from .....bot.dependencies import get_bot_manager
 from .....db import db_manager
 from .....db.repositories import AvanpostUserRepository
@@ -23,6 +23,7 @@ from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
 from ..states import CarrierOrderStates
+from .base import BaseListHandler  # <-- Импорт базового класса
 
 # Создание роутера для обработки callback-запросов
 router = Router(name="aiogram_carrier_orders_list")
@@ -31,11 +32,11 @@ router = Router(name="aiogram_carrier_orders_list")
 _avanpost_user_repo = AvanpostUserRepository()
 
 
-class CarrierOrdersListHandler(GenericListCallbackHandler):
+class CarrierOrdersListHandler(BaseListHandler):
     """
     Обработчик списка заказов перевозчика (FK_Type=11).
 
-    Наследуется от GenericListCallbackHandler для универсальной обработки:
+    Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
     - Поиск по названию
     - Обработка выбора элемента
@@ -58,8 +59,7 @@ class CarrierOrdersListHandler(GenericListCallbackHandler):
         - Размер страницы: 10 элементов
         - Состояния для просмотра и поиска
         """
-        super().__init__(prefix="carrier_orders", list_type="заказов перевозчиков")
-        self.PAGE_SIZE = 10
+        super().__init__(prefix="carrier_orders", list_type="carrier_orders", page_size=10)
         self.STATE_VIEWING = CarrierOrderStates.viewing_orders
         self.STATE_SEARCHING = CarrierOrderStates.searching_orders
 
@@ -245,15 +245,14 @@ class CarrierOrdersListHandler(GenericListCallbackHandler):
                 )
                 return
 
-            # Формирование текста с пагинацией
-            start_item = current_page * self.PAGE_SIZE + 1
-            end_item = min(start_item + self.PAGE_SIZE - 1, total)
-
-            text = "📋 **Заказы перевозчиков**\n\n"
-            if search_query:
-                text += f"🔍 **Поиск:** `{search_query}`\n"
-            text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
-            text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
+            # Ипользование форматтера из базового класса
+            text = self.format_header(
+                title="📋 **Заказы перевозчиков**",
+                total=total,
+                current_page=current_page,
+                total_pages=total_pages,
+                search_query=search_query,
+            )
 
             # Создание клавиатуры с дополнительной информацией
             builder = ListKeyboardBuilder(
@@ -284,6 +283,7 @@ class CarrierOrdersListHandler(GenericListCallbackHandler):
                 search_query=search_query,
                 extra_buttons=extra_buttons if extra_buttons else None,
                 item_name_formatter=lambda item: self._format_order_item(item),
+                hide_pagination_if_single=True,
             )
 
             # Сохранение состояния
@@ -365,25 +365,6 @@ class CarrierOrdersListHandler(GenericListCallbackHandler):
             "total": "carrier_orders_total",
             "total_pages": "carrier_orders_total_pages",
         }
-
-    @staticmethod
-    def _get_chat_id(event: Message | CallbackQuery) -> int | None:
-        """
-        Извлечение ID чата из события.
-
-        Args:
-            event: Событие (Message или CallbackQuery)
-
-        Returns:
-            int | None: ID чата или None
-        """
-        if isinstance(event, Message):
-            chat_id = event.chat.id
-            return int(chat_id) if chat_id is not None else None
-        if isinstance(event, CallbackQuery) and event.message:
-            chat_id = event.message.chat.id
-            return int(chat_id) if chat_id is not None else None
-        return None
 
     @staticmethod
     def get_back_keyboard(

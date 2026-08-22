@@ -55,8 +55,20 @@ class ListKeyboardBuilder:
         search_query: str | None = None,
         extra_buttons: list[tuple[str, str]] | None = None,
         item_name_formatter: Callable[[dict[str, Any]], str] | None = None,
+        hide_pagination_if_single: bool = True,
     ) -> InlineKeyboardMarkup:
-        """Построение клавиатуры"""
+        """
+        Построение клавиатуры.
+
+        Args:
+            items: Список элементов для отображения
+            current_page: Текущая страница (0-based)
+            total_pages: Всего страниц
+            search_query: Текущий поисковый запрос
+            extra_buttons: Дополнительные кнопки (текст, callback_data)
+            item_name_formatter: Функция форматирования имени элемента
+            hide_pagination_if_single: Скрывать пагинацию если всего 1 страница
+        """
         from app.logger import bot_logger
 
         bot_logger.debug(f"🔍 [ListKeyboardBuilder] Building keyboard with {len(items)} items")
@@ -89,10 +101,11 @@ class ListKeyboardBuilder:
         if row:
             keyboard.append(row)
 
-        # Строка навигации - показываем только если есть пагинация или поиск
+        # Отображение строки навигации, тольео есои есть пагинация или поиск
         if total_pages > 1 or search_query:
             nav_row = []
 
+            # Кнопка "Назад"
             if current_page > 0:
                 if search_query:
                     nav_row.append(
@@ -108,11 +121,18 @@ class ListKeyboardBuilder:
                         )
                     )
 
-            page_text = f"🔍 {current_page + 1}/{total_pages}"
-            nav_row.append(
-                InlineKeyboardButton(text=f"{page_text} Поиск...", callback_data=f"{self.callback_prefix}search")
-            )
+            # Кнопка поиска + номер страницы (если страниц > 1)
+            if total_pages > 1 and not hide_pagination_if_single:
+                # Отображение номера страницы + поиск
+                page_text = f"{current_page + 1}/{total_pages}"
+                nav_row.append(
+                    InlineKeyboardButton(text=f"{page_text} 🔍 Поиск...", callback_data=f"{self.callback_prefix}search")
+                )
+            else:
+                # Отображение кнопки поиска (без номера страницы)
+                nav_row.append(InlineKeyboardButton(text="🔍 Поиск...", callback_data=f"{self.callback_prefix}search"))
 
+            # Кнопка "Вперед"
             if current_page < total_pages - 1:
                 if search_query:
                     nav_row.append(
@@ -150,12 +170,20 @@ class ListKeyboardBuilder:
         search_query: str | None = None,
         back_callback: str | None = None,
         back_text: str = "🔙 Назад к действиям",
+        hide_pagination_if_single: bool = True,  # <-- НОВЫЙ ПАРАМЕТР
     ) -> InlineKeyboardMarkup:
         """Построение клавиатуры с кнопкой 'Назад'"""
         extra_buttons = []
         if back_callback:
             extra_buttons.append((back_text, back_callback))
-        return self.build(items, current_page, total_pages, search_query, extra_buttons)
+        return self.build(
+            items,
+            current_page,
+            total_pages,
+            search_query,
+            extra_buttons,
+            hide_pagination_if_single=hide_pagination_if_single,  # <-- ПРОБРАСЫВАЕМ ПАРАМЕТР
+        )
 
 
 # ============================================================
@@ -173,7 +201,7 @@ def get_confirm_keyboard(
     """Клавиатура для подтверждения действия"""
     from .base import BaseKeyboard
 
-    # Убеждаемся, что префикс заканчивается на "_"
+    # Проверка, что префикс заканчивается на "_"
     prefix_with_underscore = prefix if prefix.endswith("_") else f"{prefix}_" if prefix else ""
 
     return BaseKeyboard.get_inline_keyboard(
@@ -271,7 +299,7 @@ def get_priority_keyboard(
     """Клавиатура для выбора приоритета"""
     from .base import BaseKeyboard
 
-    # Убеждаемся, что префикс заканчивается на "_"
+    # Проверка, что префикс заканчивается на "_"
     prefix_with_underscore = callback_prefix if callback_prefix.endswith("_") else f"{callback_prefix}_"
 
     priorities = [

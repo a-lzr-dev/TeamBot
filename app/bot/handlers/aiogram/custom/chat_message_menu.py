@@ -20,13 +20,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from ....config import settings
-from ....db import db_manager
-from ....db.repositories import MessageRepository
-from ....logger import bot_logger
-from ....models import MessageActionType, MessageType
-from ....utils.decorators import log_exceptions
-from ...dependencies import get_bot_manager
+from app.bot.dependencies import get_bot_manager
+from app.config import settings
+from app.db import db_manager
+from app.db.repositories import MessageRepository
+from app.logger import bot_logger
+from app.models import MessageActionType, MessageType
+from app.utils.decorators import log_exceptions
 
 # Создание роутера для контекстного меню
 router = Router(name="chat_message_menu")
@@ -366,7 +366,7 @@ async def handle_back_to_chat(callback: CallbackQuery, state: FSMContext) -> Non
         return
 
     # Восстановление состояния
-    from .lists.chat_details import ChatDetailsStates, show_chat_details
+    from app.bot.handlers.aiogram.custom.chat_details import ChatDetailsStates, show_chat_details
 
     await state.update_data(
         selected_chat_id=chat_id,

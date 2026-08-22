@@ -29,14 +29,10 @@ from .clients import (
 # --- Handlers (Aiogram) ---
 from .handlers.aiogram import (
     admin_router,
-    chat_router,
     commands_router,
     setup_aiogram_handlers,
     users_router,
 )
-
-# --- Общие функции ---
-from .handlers.aiogram.common import back_to_users, show_menu, show_users_list  # <-- добавлено
 
 # --- Handlers (Telethon) ---
 from .handlers.telethon import (
@@ -163,7 +159,6 @@ __all__ = [
     "user_info_from_telethon",
     # Обработчики
     "setup_aiogram_handlers",
-    "chat_router",
     "commands_router",
     "admin_router",
     "setup_telethon_handlers",
@@ -217,8 +212,4 @@ __all__ = [
     "ListHandlerProtocol",
     "ListItemData",
     "ListStateProtocol",
-    # Общие функции
-    "show_menu",
-    "back_to_users",
-    "show_users_list",
 ]

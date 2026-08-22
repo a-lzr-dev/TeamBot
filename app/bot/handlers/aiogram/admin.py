@@ -45,6 +45,7 @@ from ....models import MessageActionType, MessageType
 from ....services.avanpost_sync_service import AvanpostSyncService
 from ....services.seed_service import AvanpostSeedService
 from ....utils.decorators import log_exceptions
+from ...callbacks.admin import admin_callback_handler
 
 # Создание роутера для административных команд
 router = Router(name="aiogram_admin")
@@ -1292,8 +1293,6 @@ async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) 
         callback: CallbackQuery от пользователя
         state: Состояние FSM
     """
-    from ...callbacks.admin import admin_callback_handler
-
     await admin_callback_handler.handle(callback, state)
 
 

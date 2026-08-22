@@ -1,6 +1,5 @@
 from .api.dependencies import get_api_manager
 from .bot.dependencies import get_bot_manager
-from .config import settings
 from .core.application import ApplicationManager, app_manager, get_app_manager
 from .db.dependencies import get_db_manager
 from .logger import admin_logger, api_logger, app_logger, bot_logger, db_logger, logger_setup
@@ -29,8 +28,6 @@ __all__ = [
     "db_logger",
     "admin_logger",
     "logger_setup",
-    # Настройки
-    "settings",
     # Геттеры менеджеров
     "get_db_manager",
     "get_api_manager",

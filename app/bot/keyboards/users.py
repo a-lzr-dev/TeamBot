@@ -90,7 +90,7 @@ def format_user_item(item: dict[str, Any]) -> str:
     # Получение иконки по group_id
     icon = GROUP_ICONS.get(group_id, "❓")
 
-    # Если пользователь авторизован, добавляем зеленый кружок, иначе белый
+    # Добавление информирования об авторизации пользователя
     auth_indicator = "🟢" if is_authorized else "⚪"
 
     result = f"{icon} {name} {auth_indicator}"

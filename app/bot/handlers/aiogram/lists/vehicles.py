@@ -14,7 +14,7 @@ from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
+from .....bot.callbacks.generic import GenericSearchHandler
 from .....bot.dependencies import get_bot_manager
 from .....db import db_manager
 from .....db.repositories import AvanpostUserRepository
@@ -22,6 +22,7 @@ from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
 from ..states import SubMenuStates
+from .base import BaseListHandler
 
 # Создание роутера для обработки callback-запросов
 router = Router(name="aiogram_vehicles_list")
@@ -30,11 +31,11 @@ router = Router(name="aiogram_vehicles_list")
 _avanpost_user_repo = AvanpostUserRepository()
 
 
-class VehiclesListHandler(GenericListCallbackHandler):
+class VehiclesListHandler(BaseListHandler):
     """
     Обработчик списка транспортных средств.
 
-    Наследуется от GenericListCallbackHandler для универсальной обработки:
+    Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
     - Поиск по названию
     - Обработка выбора элемента
@@ -51,8 +52,7 @@ class VehiclesListHandler(GenericListCallbackHandler):
         - Размер страницы: 10 элементов
         - Состояния для просмотра и поиска
         """
-        super().__init__(prefix="vehicles", list_type="vehicles")
-        self.PAGE_SIZE = 10
+        super().__init__(prefix="vehicles", list_type="vehicles", page_size=10)
         self.STATE_VIEWING = SubMenuStates.viewing_vehicles
         self.STATE_SEARCHING = SubMenuStates.searching_vehicles
 
@@ -152,7 +152,7 @@ class VehiclesListHandler(GenericListCallbackHandler):
         if isinstance(event, CallbackQuery):
             await event.answer()
 
-        # Получение ID чата из события
+        # Получение ID чата из события (используем метод базового класса)
         chat_id = self._get_chat_id(event)
         if not chat_id:
             return
@@ -213,15 +213,14 @@ class VehiclesListHandler(GenericListCallbackHandler):
                 )
                 return
 
-            # Формирование текста с пагинацией
-            start_item = current_page * self.PAGE_SIZE + 1
-            end_item = min(start_item + self.PAGE_SIZE - 1, total)
-
-            text = "🚗 **Мой транспорт**\n\n"
-            if search_query:
-                text += f"🔍 **Поиск:** `{search_query}`\n"
-            text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
-            text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
+            # Использование форматтера из базового класса
+            text = self.format_header(
+                title="🚗 **Мой транспорт**",
+                total=total,
+                current_page=current_page,
+                total_pages=total_pages,
+                search_query=search_query,
+            )
 
             # Создание клавиатуры
             builder = ListKeyboardBuilder(
@@ -249,6 +248,7 @@ class VehiclesListHandler(GenericListCallbackHandler):
                 search_query=search_query,
                 extra_buttons=extra_buttons if extra_buttons else None,
                 item_name_formatter=lambda item: self._format_vehicle_item(item),
+                hide_pagination_if_single=True,
             )
 
             # Сохранение состояния
@@ -328,26 +328,7 @@ class VehiclesListHandler(GenericListCallbackHandler):
         }
 
     @staticmethod
-    def _get_chat_id(event: Message | CallbackQuery) -> int | None:
-        """
-        Извлечение ID чата из события.
-
-        Args:
-            event: Событие (Message или CallbackQuery)
-
-        Returns:
-            int | None: ID чата или None
-        """
-        if isinstance(event, Message):
-            chat_id = event.chat.id
-            return int(chat_id) if chat_id is not None else None
-        if isinstance(event, CallbackQuery) and event.message:
-            chat_id = event.message.chat.id
-            return int(chat_id) if chat_id is not None else None
-        return None
-
-    @staticmethod
-    def get_back_keyboard(state: FSMContext) -> Any:
+    async def get_back_keyboard(state: FSMContext) -> Any:
         """
         Создание клавиатуры с кнопкой "Назад".
 
@@ -359,7 +340,7 @@ class VehiclesListHandler(GenericListCallbackHandler):
         """
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        state_data = state.get_data()
+        state_data = await state.get_data()
         group_id = state_data.get("group_id")
         parent_item_id = state_data.get("parent_item_id")
 

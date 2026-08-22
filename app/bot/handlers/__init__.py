@@ -1,6 +1,5 @@
 from .aiogram import (
     admin_router,
-    chat_router,
     commands_router,
     setup_aiogram_handlers,
 )
@@ -16,7 +15,6 @@ from .telethon import (
 __all__ = [
     # Aiogram
     "admin_router",
-    "chat_router",
     "commands_router",
     "setup_aiogram_handlers",
     # Telethon

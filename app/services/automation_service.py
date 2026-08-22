@@ -1062,7 +1062,7 @@ class AutomationService:
                     "parse_mode": "Markdown",
                 }
 
-                # Добавляем топик, если он настроен и чат является основным
+                # Добавление топика, если он настроен и чат является основным
                 if topic_id and chat_id == settings.SUPPORT_CHAT_ID:
                     send_kwargs["message_thread_id"] = topic_id
                     app_logger.info(f"📨 Sending automation notification to topic {topic_id} in chat {chat_id}")

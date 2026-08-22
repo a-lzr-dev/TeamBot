@@ -122,12 +122,10 @@ async def _handle_deep_link_message(
         message_data = await _get_message_by_id(msg_id)
 
         if message_data:
-            from .chat_message_menu import show_message_context_menu
-            from .lists.chat_details import chat_details_handler
+            from app.bot.handlers.aiogram.custom.chat_details import chat_details_handler
+            from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
 
-            # ============================================================
-            # ИСПРАВЛЕНИЕ 1: Сохраняем информацию о чате и странице
-            # ============================================================
+            # Сохранение информации о чате и странице
             state_data = await state.get_data()
             chat_details_page = state_data.get("chat_details_page", 0)
             selected_chat_id = state_data.get("selected_chat_id")
@@ -154,9 +152,7 @@ async def _handle_deep_link_message(
             # Объединение информации о сообщении и контекстном меню
             title = f"🔗 **Переход к сообщению #{msg_id}**\n\n{formatted}"
 
-            # ============================================================
-            # ИСПРАВЛЕНИЕ 2: Добавляем кнопку "Назад к чату" в меню
-            # ============================================================
+            # Добавление кнопки "Назад к чату" в меню
             await show_message_context_menu(
                 event=event,
                 state=state,
@@ -167,9 +163,7 @@ async def _handle_deep_link_message(
                 show_back_to_chat=bool(selected_chat_id and avanpost_user_id),
             )
 
-            # ============================================================
-            # ИСПРАВЛЕНИЕ 3: Удаляем команду /start
-            # ============================================================
+            # Удаление команды /start
             if isinstance(event, Message):
                 try:
                     await bot_manager.delete_message_by_link(event)
@@ -535,8 +529,8 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                 message_data = await _get_message_by_id(msg_id)
 
                 if message_data:
-                    from .chat_message_menu import show_message_context_menu
-                    from .lists.chat_details import chat_details_handler
+                    from app.bot.handlers.aiogram.custom.chat_details import chat_details_handler
+                    from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
 
                     # ============================================================
                     # ИСПРАВЛЕНИЕ: Используем format_single_message
@@ -695,7 +689,6 @@ async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
         message: Сообщение от пользователя
         state: Состояние FSM
     """
-    # Отложенный импорт для избежания циклических зависимостей
     from .actions import cmd_actions
 
     bot_manager = get_bot_manager()
@@ -830,15 +823,15 @@ def normalize_phone(phone: str) -> str:
     if digits.startswith("8"):
         digits = "7" + digits[1:]
 
-    # Если номер начинается с '7' - добавляем '+'
+    # Если номер начинается с '7' - добавление '+'
     if digits.startswith("7"):
         return "+" + digits
 
-    # Если номер уже начинается с '+7' - возвращаем как есть
+    # Если номер уже начинается с '+7' - возвращение как есть
     if phone.startswith("+7"):
         return phone
 
-    # Если номер уже начинается с '+' - возвращаем как есть
+    # Если номер уже начинается с '+' - возвращение как есть
     if phone.startswith("+"):
         return phone
 

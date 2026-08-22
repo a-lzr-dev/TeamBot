@@ -15,7 +15,7 @@ from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from .....bot.callbacks.generic import GenericListCallbackHandler, GenericSearchHandler
+from .....bot.callbacks.generic import GenericSearchHandler
 from .....bot.dependencies import get_bot_manager
 from .....db import db_manager
 from .....db.repositories import AvanpostUserRepository
@@ -23,6 +23,7 @@ from .....logger import bot_logger
 from .....models import MessageActionType, MessageType
 from ....keyboards import ListKeyboardBuilder
 from ..states import SubMenuStates
+from .base import BaseListHandler
 
 # Создание роутера для обработки callback-запросов
 router = Router(name="aiogram_chats_list")
@@ -31,11 +32,11 @@ router = Router(name="aiogram_chats_list")
 _avanpost_user_repo = AvanpostUserRepository()
 
 
-class ChatsListHandler(GenericListCallbackHandler):
+class ChatsListHandler(BaseListHandler):
     """
     Обработчик списка чатов пользователя (FK_Type=9).
 
-    Наследуется от GenericListCallbackHandler для универсальной обработки:
+    Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
     - Поиск по названию
     - Обработка выбора чата (переход к сообщениям чата)
@@ -57,8 +58,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         - Размер страницы: 10 элементов
         - Состояния для просмотра и поиска
         """
-        super().__init__(prefix="chats", list_type="chats")
-        self.PAGE_SIZE = 10
+        super().__init__(prefix="chats", list_type="chats", page_size=10)
         self.STATE_VIEWING = SubMenuStates.viewing_chats
         self.STATE_SEARCHING = SubMenuStates.searching_chats
 
@@ -219,15 +219,16 @@ class ChatsListHandler(GenericListCallbackHandler):
                 )
                 return
 
-            # Формирование текста с пагинацией
-            start_item = current_page * self.PAGE_SIZE + 1
-            end_item = min(start_item + self.PAGE_SIZE - 1, total)
-
-            text = "💬 **Мои чаты**\n\n"
-            if search_query:
-                text += f"🔍 **Поиск:** `{search_query}`\n"
-            text += f"📊 Показаны: {start_item}-{end_item} из {total}\n"
-            text += f"📄 Страница {current_page + 1} из {total_pages}\n\n"
+            # ============================================================
+            # Использование форматтера из базового класса
+            # ============================================================
+            text = self.format_header(
+                title="💬 **Мои чаты**",
+                total=total,
+                current_page=current_page,
+                total_pages=total_pages,
+                search_query=search_query,
+            )
 
             # Создание клавиатуры
             builder = ListKeyboardBuilder(
@@ -255,6 +256,7 @@ class ChatsListHandler(GenericListCallbackHandler):
                 search_query=search_query,
                 extra_buttons=extra_buttons if extra_buttons else None,
                 item_name_formatter=lambda item: self._format_chat_item(item),
+                hide_pagination_if_single=True,
             )
 
             # Сохранение состояния
@@ -315,7 +317,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         )
 
         # Переход к обработчику деталей чата
-        from .chat_details import ChatDetailsStates, show_chat_details
+        from app.bot.handlers.aiogram.custom.chat_details import ChatDetailsStates, show_chat_details
 
         # Получение данных из состояния
         state_data = await state.get_data()
@@ -370,25 +372,6 @@ class ChatsListHandler(GenericListCallbackHandler):
             "total": "chats_total",
             "total_pages": "chats_total_pages",
         }
-
-    @staticmethod
-    def _get_chat_id(event: Message | CallbackQuery) -> int | None:
-        """
-        Извлечение ID чата из события.
-
-        Args:
-            event: Событие (Message или CallbackQuery)
-
-        Returns:
-            int | None: ID чата или None
-        """
-        if isinstance(event, Message):
-            chat_id = event.chat.id
-            return int(chat_id) if chat_id is not None else None
-        if isinstance(event, CallbackQuery) and event.message:
-            chat_id = event.message.chat.id
-            return int(chat_id) if chat_id is not None else None
-        return None
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:

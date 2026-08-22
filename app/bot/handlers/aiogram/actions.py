@@ -1,5 +1,5 @@
 """
-Модуль обработчиков AIogram для действий и меню.
+Модуль обработчиков Aiogram для действий и меню.
 
 Этот модуль предоставляет обработчики команд, колбэков и действий
 для работы с меню действий Avanpost.
@@ -7,7 +7,7 @@
 Основные компоненты:
     - Команда /actions для открытия меню действий
     - Обработка колбэков меню (навигация, выбор действий)
-    - Выполнение действий по типам (открытие заказов, чатов, транспорта)
+    - Выполнение действий по типам (открытие заказов, чатов, транспорта, контактов)
     - Обработка выбора чата для просмотра сообщений
 
 Типы действий:
@@ -32,6 +32,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from app.bot.handlers.aiogram.custom.chat_details import show_chat_details
+
 from ....config import settings
 from ....db import db_manager
 from ....db.repositories import AvanpostActionRepository, AvanpostUserRepository, UserRepository
@@ -40,8 +42,8 @@ from ....models import MessageActionType, MessageType
 from ....utils.decorators import log_exceptions
 from ...dependencies import get_bot_manager
 from .auth import _auth_cache, get_user_group_id, is_user_authenticated
-from .common import back_to_users, show_menu
-from .lists.chat_details import show_chat_details
+from .common import show_menu
+from .lists.users import back_to_users
 from .states import ActionStates, ChatDetailsStates, SubMenuStates
 
 # Создание роутера для действий
@@ -482,15 +484,9 @@ async def _handle_action_by_type(
             event=callback,
         )
     elif fk_type == 6:
-        await bot_manager.send_toast(
-            text=f"👥 Открытие списка контактов. Действие #{action_id}",
-            event=callback,
-        )
+        await _handle_open_contacts(callback, bot_manager, action_id, state)
     elif fk_type == 7:
-        await bot_manager.send_toast(
-            text=f"ℹ️ Открытие контактной информации. Действие #{action_id}",
-            event=callback,
-        )
+        await _handle_open_contact_details(callback, bot_manager, action_id, state)
     elif fk_type == 8:
         await _handle_open_orders(callback, bot_manager, action_id, state, order_type="customer")
     elif fk_type == 9:
@@ -504,6 +500,96 @@ async def _handle_action_by_type(
             text=f"🚧 Неизвестный тип действия: {type_name} (ID: {fk_type})",
             event=callback,
         )
+
+
+# ============ ОБРАБОТЧИК: ОТКРЫТИЕ КОНТАКТОВ (FK_Type=6) ============
+
+
+async def _handle_open_contacts(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """
+    Обработчик: Открытие списка контактов (FK_Type=6).
+
+    Загружает список контактов пользователя через репозиторий
+    и отображает их в виде списка с пагинацией и поиском.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        bot_manager: Экземпляр BotManager
+        action_id: ID действия
+        state: Состояние FSM
+    """
+    await bot_manager.send_toast(text="👤 Загрузка списка контактов...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("user_id") or state_data.get("selected_user_id")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        # Добавление текущего пункта в историю
+        history = state_data.get("menu_history", [])
+        history.append(action_id)
+        await state.update_data(menu_history=history)
+
+        await state.set_state(SubMenuStates.viewing_contacts)
+        await state.update_data(
+            contacts_page=0,
+            contacts_search_query=None,
+            parent_item_id=action_id,
+            avanpost_user_id=avanpost_user_id,
+        )
+
+        from .lists.contacts import show_contacts_list
+
+        await show_contacts_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to load contacts: {e}", exc_info=True)
+        await bot_manager.send_toast(text=f"❌ Ошибка загрузки контактов: {str(e)[:100]}", event=callback)
+
+
+# ============ ОБРАБОТЧИК: КОНТАКТНАЯ ИНФОРМАЦИЯ (FK_Type=7) ============
+
+
+async def _handle_open_contact_details(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """
+    Обработчик: Открытие контактной информации (FK_Type=7).
+
+    Внимание: Этот обработчик вызывается при выборе пункта меню,
+    который является действием типа 7. Однако фактически контактная информация
+    открывается при выборе конкретного контакта из списка (FK_Type=6).
+    Поэтому здесь мы просто показываем информационное сообщение.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        bot_manager: Экземпляр BotManager
+        action_id: ID действия
+        state: Состояние FSM
+    """
+    await bot_manager.send_toast(
+        text="ℹ️ Контактная информация открывается из списка контактов.",
+        event=callback,
+    )
+
+    # Можно добавить логику для прямого вызова, если потребуется
+    # Например, если action_id привязан к конкретному контакту
 
 
 # ============ ОБРАБОТЧИК: ОТКРЫТИЕ ЗАКАЗОВ ============

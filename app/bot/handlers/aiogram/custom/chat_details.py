@@ -19,13 +19,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from .....bot.callbacks.generic import GenericListCallbackHandler
-from .....bot.dependencies import get_bot_manager
-from .....config import settings
-from .....db import db_manager
-from .....db.repositories import AvanpostUserRepository
-from .....logger import bot_logger
-from .....models import MessageActionType, MessageType
+from app.bot.callbacks.generic import GenericListCallbackHandler
+from app.bot.dependencies import get_bot_manager
+from app.config import settings
+from app.db import db_manager
+from app.db.repositories import AvanpostUserRepository
+from app.logger import bot_logger
+from app.models import MessageActionType, MessageType
 
 # Создание роутера для обработки callback-запросов
 router = Router(name="aiogram_chat_details")
@@ -581,7 +581,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
                 event=callback,
             )
             # Открытие меню для ответа
-            from ..chat_message_menu import show_message_context_menu
+            from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
 
             await show_message_context_menu(
                 event=callback,
@@ -923,7 +923,7 @@ async def handle_reply_callback(callback: CallbackQuery, state: FSMContext) -> N
     """Обработка ответа на сообщение через callback."""
     try:
         message_id = int(callback.data.split("_")[-1])
-        from ..chat_message_menu import show_message_context_menu
+        from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
 
         await show_message_context_menu(
             event=callback,
@@ -967,7 +967,7 @@ async def handle_chat_details_message(message: Message, state: FSMContext) -> No
 
     if reply_to_message_id:
         # Это ответ на сообщение
-        from ..chat_message_menu import handle_reply_text
+        from app.bot.handlers.aiogram.custom.chat_message_menu import handle_reply_text
 
         await handle_reply_text(message, state)
     else:

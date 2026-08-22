@@ -1,5 +1,5 @@
 """
-Модуль настройки AIogram обработчиков.
+Модуль настройки Aiogram обработчиков.
 
 Этот модуль объединяет все обработчики сообщений и колбэков
 в единый роутер для регистрации в основном приложении.
@@ -21,6 +21,8 @@
     - vehicles_router: Транспортные средства
     - carrier_orders_router: Заказы перевозчиков
     - chat_details_router: Детали чатов
+    - contacts_router: Список контактов (FK_Type=6)
+    - contact_details_router: Контактная информация (FK_Type=7)
 
 Вспомогательные функции:
     - show_menu: Отображение меню
@@ -33,30 +35,35 @@ from aiogram import Router
 # Основные обработчики
 from .actions import router as actions_router
 from .admin import router as admin_router
-from .auth import _auth_cache
 from .auth import router as auth_router
 from .automation import router as automation_router
-from .chat import router as chat_router
-
-# Контекстное меню для сообщений
-from .chat_message_menu import router as chat_message_menu_router
 from .commands import router as commands_router
-from .common import back_to_users, show_menu, show_users_list
 
-# Списки (заказы, чаты, транспорт, заказы перевозчиков, сообщения)
+# Уникальные
+from .custom import (
+    chat_details_router,
+    chat_message_menu_router,
+)
+
+# Детали
+from .details import (
+    contact_details_router,
+)
+
+# Списки
 from .lists import (
     carrier_orders_router,
-    chat_details_router,
     chats_router,
+    contacts_router,
     orders_router,
+    users_router,
     vehicles_router,
 )
-from .users import router as users_router
 
 
 def setup_aiogram_handlers() -> Router:
     """
-    Настройка всех AIogram обработчиков.
+    Настройка всех Aiogram обработчиков.
 
     Создает корневой роутер и регистрирует в нем все дочерние роутеры
     для обработки сообщений, колбэков и команд.
@@ -75,29 +82,31 @@ def setup_aiogram_handlers() -> Router:
 
     # Регистрация всех роутеров
     router.include_router(auth_router)  # Авторизация
-    router.include_router(chat_router)  # Чаты
     router.include_router(commands_router)  # Команды (/help, /id, /msg, /find и др.)
     router.include_router(admin_router)  # Администрирование
     router.include_router(actions_router)  # Действия
-    router.include_router(users_router)  # Пользователи
     router.include_router(automation_router)  # Автоматизация
 
-    # Списки (заказы, чаты, транспорт, заказы перевозчиков, сообщения)
-    router.include_router(orders_router)  # Заказы
-    router.include_router(chats_router)  # Чаты (список)
-    router.include_router(vehicles_router)  # Транспорт
-    router.include_router(carrier_orders_router)  # Заказы перевозчиков
-    router.include_router(chat_details_router)  # Детали чатов
+    # Списки
+    router.include_router(chats_router)  # Список чатов (FK_Type=9)
+    router.include_router(contacts_router)  # Список контактов (FK_Type=6)
+    router.include_router(orders_router)  # Список заказов заказчиков (FK_Type=8)
+    router.include_router(users_router)  # Пользователи
+    router.include_router(vehicles_router)  # Список транспорта (FK_Type=10)
 
-    # Контекстное меню для сообщений (/msg, /find, ответы на сообщения)
-    router.include_router(chat_message_menu_router)
+    # Детали списков
+    router.include_router(chat_details_router)  # Детали чата - список сообщений
+    router.include_router(carrier_orders_router)  # Детали заказа заказчика - список заказов перевозчиков (FK_Type=11)
+    router.include_router(contact_details_router)  # Детали контакта - список контактной ифнормации (FK_Type=7)
+
+    # Контекстное меню
+    router.include_router(chat_message_menu_router)  # Для сообщения (/msg, /find, ответы на сообщения)
 
     return router
 
 
 __all__ = [
     # Роутеры
-    "chat_router",
     "commands_router",
     "admin_router",
     "actions_router",
@@ -110,12 +119,8 @@ __all__ = [
     "vehicles_router",
     "carrier_orders_router",
     "chat_details_router",
+    "contacts_router",
+    "contact_details_router",
     # Функции настройки
     "setup_aiogram_handlers",
-    # Внутренние компоненты
-    "_auth_cache",
-    # Вспомогательные функции из common
-    "show_menu",
-    "back_to_users",
-    "show_users_list",
 ]

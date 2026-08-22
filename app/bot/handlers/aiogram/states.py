@@ -16,6 +16,8 @@ class SubMenuStates(StatesGroup):
     searching_chats = State()
     viewing_vehicles = State()
     searching_vehicles = State()
+    viewing_contacts = State()
+    searching_contacts = State()
 
 
 class CarrierOrderStates(StatesGroup):
