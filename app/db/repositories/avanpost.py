@@ -36,6 +36,12 @@ from ...utils.decorators import log_exceptions
 #    - Возвращает: список user_id
 #    - Используется в: Загрузка пользователей из Avanpost (seed)
 #
+# 5. ext.PA_avp_RSAppContactsMsgsFiles_Load
+#    - Получение списка файлов (вложений) для сообщения
+#    - Параметр: @MessageId (ID сообщения)
+#    - Возвращает: список файлов с полями FID, FName, FExtention, FSize, FDateReg
+#    - Используется в: Просмотр вложений сообщения
+#
 # ======================================================================
 
 
@@ -48,6 +54,7 @@ class AvanpostRepository:
     - Получения списка пользователей
     - Вызова хранимых процедур синхронизации
     - Проверки существования ошибок
+    - Получения списка файлов (вложений) для сообщения
     """
 
     # ==================== ПОЛЬЗОВАТЕЛИ ====================
@@ -572,6 +579,67 @@ class AvanpostRepository:
 
             db_logger.debug(f"📄 Traceback: {traceback.format_exc()}")
             return {"Data": []}
+
+    # ==================== ВЛОЖЕНИЯ (ФАЙЛЫ СООБЩЕНИЙ) ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_message_files(
+        session: AsyncSession,
+        message_id: int,
+    ) -> list[dict[str, Any]]:
+        """
+        Получение списка файлов (вложений) для сообщения.
+
+        Вызывает ext.PA_avp_RSAppContactsMsgsFiles_Load для получения
+        списка файлов, прикрепленных к сообщению.
+
+        Args:
+            session: Сессия БД (avanpost)
+            message_id: ID сообщения (TAvanpostContactsMsgs.FID)
+
+        Returns:
+            list[dict[str, Any]]: Список файлов с полями:
+                - FID: int
+                - FName: str
+                - FExtention: str
+                - FSize: int
+                - FDateReg: datetime
+        """
+        db_logger.info(f"📎 Getting files for message {message_id}")
+
+        try:
+            sql = """
+                EXEC ext.PA_avp_RSAppContactsMsgsFiles_Load
+                    @MessageId = :message_id
+            """
+
+            db_logger.debug(f"📝 SQL: {sql}")
+
+            result = await session.execute(text(sql), {"message_id": message_id})
+            rows = result.fetchall()
+
+            if not rows:
+                db_logger.info(f"ℹ️ No files found for message {message_id}")
+                return []
+
+            files = []
+            for row in rows:
+                file_data = {
+                    "FID": row[0] if len(row) > 0 else None,
+                    "FName": row[1] if len(row) > 1 else None,
+                    "FExtention": row[2] if len(row) > 2 else None,
+                    "FSize": row[3] if len(row) > 3 else 0,
+                    "FDateReg": row[4] if len(row) > 4 else None,
+                }
+                files.append(file_data)
+
+            db_logger.info(f"✅ Found {len(files)} files for message {message_id}")
+            return files
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get files for message {message_id}: {e}", exc_info=True)
+            return []
 
 
 __all__ = ["AvanpostRepository"]

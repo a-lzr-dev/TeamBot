@@ -29,3 +29,18 @@ class ChatDetailsStates(StatesGroup):
     """Состояния для деталей чата"""
 
     viewing_messages = State()
+
+
+class ReplyStates(StatesGroup):
+    """Состояния для ответа на сообщения"""
+
+    waiting_for_reply_text = State()
+
+
+__all__ = [
+    "ActionStates",
+    "SubMenuStates",
+    "CarrierOrderStates",
+    "ChatDetailsStates",
+    "ReplyStates",
+]

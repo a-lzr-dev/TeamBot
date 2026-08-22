@@ -16,7 +16,7 @@ from ...models import (
     UserModel,
     datetime_now,
 )
-from ...utils.decorators import log_exceptions
+from ...utils.decorators import log_exceptions, suppress_debug_logs
 
 
 def normalize_chat_id(chat_id: int) -> int:
@@ -94,7 +94,7 @@ class ChatRepository:
         session: AsyncSession, *, chat_id: int, chat_type: str, title: str | None = None, is_active: bool = True
     ) -> ChatModel:
         """Сохранение информации о чате"""
-        db_logger.info(f"💾 [save_chat] Saving chat: chat_id={chat_id}, type={chat_type}, title={title}")
+        db_logger.debug(f"💾 [save_chat] Saving chat: chat_id={chat_id}, type={chat_type}, title={title}")
 
         chat_type_enum = await ChatRepository._parse_chat_type(chat_type)
 
@@ -112,7 +112,7 @@ class ChatRepository:
         session: AsyncSession, *, user_id: int, chat_id: int, status: str, is_active: bool = True
     ) -> ChatMemberModel:
         """Сохранение информации об участнике чата"""
-        db_logger.info(f"💾 [save_chat_member] Saving member: user_id={user_id}, chat_id={chat_id}, status={status}")
+        db_logger.debug(f"💾 [save_chat_member] Saving member: user_id={user_id}, chat_id={chat_id}, status={status}")
 
         status_enum: ChatMemberStatus = await ChatRepository._parse_member_status(status)
 
@@ -137,7 +137,7 @@ class ChatRepository:
     @log_exceptions(db_logger)
     async def remove_chat_member(session: AsyncSession, user_id: int, chat_id: int) -> bool:
         """Удаление участника из чата"""
-        db_logger.info(f"🗑️ [remove_chat_member] Removing member: user_id={user_id}, chat_id={chat_id}")
+        db_logger.debug(f"🗑️ [remove_chat_member] Removing member: user_id={user_id}, chat_id={chat_id}")
 
         stmt = (
             update(ChatMemberModel)
@@ -169,7 +169,7 @@ class ChatRepository:
         session: AsyncSession, *, chat_id: int | None = None, is_active: bool | None = None
     ) -> list[ChatModel]:
         """Получение списка чатов"""
-        db_logger.info(f"📋 [get_chats] Getting chats: chat_id={chat_id}, is_active={is_active}")
+        db_logger.debug(f"📋 [get_chats] Getting chats: chat_id={chat_id}, is_active={is_active}")
 
         query = select(ChatModel)
 
@@ -188,10 +188,11 @@ class ChatRepository:
         return chats
 
     @staticmethod
+    @suppress_debug_logs
     @log_exceptions(db_logger)
     async def get_chat_by_id(session: AsyncSession, chat_id: int) -> ChatModel | None:
         """Получение чата по ID"""
-        db_logger.info(f"🔍 [get_chat_by_id] Getting chat by ID: {chat_id}")
+        db_logger.debug(f"🔍 [get_chat_by_id] Getting chat by ID: {chat_id}")
 
         stmt = select(ChatModel).where(ChatModel.FID == chat_id)
         db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
@@ -210,7 +211,7 @@ class ChatRepository:
     @log_exceptions(db_logger)
     async def get_chat_member_by_keys(session: AsyncSession, *, user_id: int, chat_id: int) -> ChatMemberModel | None:
         """Получение записи участника чата по внешним ключам"""
-        db_logger.info(f"🔍 [get_chat_member_by_keys] Getting member: user_id={user_id}, chat_id={chat_id}")
+        db_logger.debug(f"🔍 [get_chat_member_by_keys] Getting member: user_id={user_id}, chat_id={chat_id}")
 
         stmt = select(ChatMemberModel).where(
             and_(ChatMemberModel.FK_User == user_id, ChatMemberModel.FK_Chat == chat_id)
@@ -234,7 +235,7 @@ class ChatRepository:
         session: AsyncSession, *, chat_id: int | None = None, is_active: bool | None = None
     ) -> list[UserChatMemberModel]:
         """Получение списка участников чата"""
-        db_logger.info(f"📋 [get_user_chat_members] Getting members: chat_id={chat_id}, is_active={is_active}")
+        db_logger.debug(f"📋 [get_user_chat_members] Getting members: chat_id={chat_id}, is_active={is_active}")
 
         query = select(
             ChatMemberModel.FK_User.label("FID"),
@@ -275,7 +276,7 @@ class ChatRepository:
         Returns:
             set[int]: Множество ID активных участников
         """
-        db_logger.info(f"🔍 [get_active_member_ids] Getting active member IDs for chat {chat_id}")
+        db_logger.debug(f"🔍 [get_active_member_ids] Getting active member IDs for chat {chat_id}")
 
         stmt = select(ChatMemberModel.FK_User).where(
             ChatMemberModel.FK_Chat == chat_id,
@@ -308,7 +309,7 @@ class ChatRepository:
         Returns:
             int: Количество деактивированных участников
         """
-        db_logger.info(f"🗑️ [deactivate_missing_members] Deactivating missing members in chat {chat_id}")
+        db_logger.debug(f"🗑️ [deactivate_missing_members] Deactivating missing members in chat {chat_id}")
 
         if not active_user_ids:
             # Если список пуст - деактивируем всех
@@ -371,7 +372,7 @@ class ChatRepository:
         Returns:
             int: Количество обновленных участников
         """
-        db_logger.info(
+        db_logger.debug(
             f"🔄 [update_members_status] Updating {len(user_ids)} members status to {status} in chat {chat_id}"
         )
 
@@ -417,7 +418,7 @@ class ChatRepository:
         Returns:
             int: Количество деактивированных чатов
         """
-        db_logger.info("🗑️ [deactivate_missing_chats] Deactivating missing chats")
+        db_logger.debug("🗑️ [deactivate_missing_chats] Deactivating missing chats")
 
         if not active_chat_ids:
             # Если список пуст - деактивируем все чаты
@@ -459,7 +460,7 @@ class ChatRepository:
             session: Сессия БД
             chat_id: ID чата
         """
-        db_logger.info(f"🔄 [update_sync_time] Updating sync time for chat {chat_id}")
+        db_logger.debug(f"🔄 [update_sync_time] Updating sync time for chat {chat_id}")
 
         stmt = update(ChatModel).where(ChatModel.FID == chat_id).values(FDateSynced=datetime_now())
 
@@ -485,7 +486,7 @@ class ChatRepository:
             user_id: ID пользователя
             chat_id: ID чата
         """
-        db_logger.info(f"🔄 [update_member_sync_time] Updating member sync time: user_id={user_id}, chat_id={chat_id}")
+        db_logger.debug(f"🔄 [update_member_sync_time] Updating member sync time: user_id={user_id}, chat_id={chat_id}")
 
         stmt = (
             update(ChatMemberModel)
@@ -513,7 +514,7 @@ class ChatRepository:
         deleted_by_type: str = "system",
     ) -> bool:
         """Деактивация сообщения в чате"""
-        db_logger.info(f"🗑️ [deactivate_missing_chat_message] Deactivating message {message_id}")
+        db_logger.debug(f"🗑️ [deactivate_missing_chat_message] Deactivating message {message_id}")
 
         try:
             query = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
@@ -556,7 +557,7 @@ class ChatRepository:
         to_date: datetime | None = None,
     ) -> list[ChatMessageModel]:
         """Получение сообщений с возможностью фильтрации"""
-        db_logger.info(f"📋 [get_messages] Getting messages: chat_id={chat_id}, include_deleted={include_deleted}")
+        db_logger.debug(f"📋 [get_messages] Getting messages: chat_id={chat_id}, include_deleted={include_deleted}")
 
         query = select(ChatMessageModel)
 
@@ -589,7 +590,7 @@ class ChatRepository:
         session: AsyncSession, chat_id: int | None = None, days: int = 7
     ) -> dict[str, Any]:
         """Получение статистики по удаленным сообщениям"""
-        db_logger.info(
+        db_logger.debug(
             f"📊 [get_deleted_messages_stats] Getting deleted messages stats: chat_id={chat_id}, days={days}"
         )
 
@@ -639,7 +640,7 @@ class ChatRepository:
         session: AsyncSession, chat_id: int | None = None, limit: int = 50, offset: int = 0
     ) -> list[dict[str, Any]]:
         """Получение удаленных сообщений с информацией об инициаторе удаления"""
-        db_logger.info(f"📋 [get_deleted_messages_with_initiator] Getting deleted messages: chat_id={chat_id}")
+        db_logger.debug(f"📋 [get_deleted_messages_with_initiator] Getting deleted messages: chat_id={chat_id}")
 
         query = select(ChatMessageModel, ChatMessageModel.FK_DeletedByMessage.label("initiator_message_id")).where(
             ChatMessageModel.FFlagDeleted.is_(True)
@@ -681,7 +682,7 @@ class ChatRepository:
         session: AsyncSession, chat_id: int | None = None, days: int = 7
     ) -> dict[str, Any]:
         """Статистика удалений по типу инициатора"""
-        db_logger.info(f"📊 [get_deletion_stats_by_initiator] Getting deletion stats: chat_id={chat_id}, days={days}")
+        db_logger.debug(f"📊 [get_deletion_stats_by_initiator] Getting deletion stats: chat_id={chat_id}, days={days}")
 
         query = select(ChatMessageModel.FDeletedByType, func.count(ChatMessageModel.FID).label("count")).where(
             ChatMessageModel.FFlagDeleted.is_(True)
@@ -724,7 +725,7 @@ class ChatRepository:
     @log_exceptions(db_logger)
     async def restore_deleted_message(session: AsyncSession, message_id: int, chat_id: int | None = None) -> bool:
         """Восстановление удаленного сообщения"""
-        db_logger.info(f"🔄 [restore_deleted_message] Restoring message {message_id}")
+        db_logger.debug(f"🔄 [restore_deleted_message] Restoring message {message_id}")
 
         try:
             query = select(ChatMessageModel).where(

@@ -40,7 +40,7 @@ class AvanpostUserRepository:
     3. Чаты пользователя (get_user_chats, get_user_chats_page)
     4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page)
     5. Заказы перевозчика (get_carrier_orders_page)
-    6. Сообщения чата (get_chat_messages_page)
+    6. Сообщения чата (get_chat_messages_page) с фильтрацией по направлению
     7. Вспомогательные методы (get_contact_name)
     """
 
@@ -79,7 +79,9 @@ class AvanpostUserRepository:
                 "search_query": str | None  # Текущий поисковый запрос
             }
         """
-        db_logger.info(f"📋 [get_avanpost_users_page] START: page={page}, page_size={page_size}, search={search_query}")
+        db_logger.debug(
+            f"📋 [get_avanpost_users_page] START: page={page}, page_size={page_size}, search={search_query}"
+        )
 
         try:
             from ...models import AvanpostUserLinkModel, AvanpostUserModel, UserModel
@@ -228,7 +230,7 @@ class AvanpostUserRepository:
         Returns:
             list[dict]: Список заказов заказчиков с полями id, name
         """
-        db_logger.info(f"📋 [get_user_orders] START for user_id={avanpost_user_id}, lang={lang_code}")
+        db_logger.debug(f"📋 [get_user_orders] START for user_id={avanpost_user_id}, lang={lang_code}")
 
         try:
             stmt = (
@@ -302,7 +304,7 @@ class AvanpostUserRepository:
                 "search_query": str | None
             }
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [get_user_orders_page] START: user_id={avanpost_user_id}, page={page}, search={search_query}"
         )
 
@@ -423,7 +425,7 @@ class AvanpostUserRepository:
         Returns:
             list[dict]: Список чатов с полями id, name
         """
-        db_logger.info(f"📋 [get_user_chats] START for user_id={avanpost_user_id}, lang={lang_code}")
+        db_logger.debug(f"📋 [get_user_chats] START for user_id={avanpost_user_id}, lang={lang_code}")
 
         try:
             stmt = (
@@ -497,7 +499,7 @@ class AvanpostUserRepository:
                 "search_query": str | None
             }
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [get_user_chats_page] START: user_id={avanpost_user_id}, page={page}, search={search_query}"
         )
 
@@ -618,7 +620,7 @@ class AvanpostUserRepository:
         Returns:
             list[dict]: Список транспорта с полями id, name
         """
-        db_logger.info(f"📋 [get_user_vehicles] START for user_id={avanpost_user_id}, lang={lang_code}")
+        db_logger.debug(f"📋 [get_user_vehicles] START for user_id={avanpost_user_id}, lang={lang_code}")
 
         try:
             stmt = (
@@ -698,7 +700,7 @@ class AvanpostUserRepository:
                 "search_query": str | None
             }
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [get_user_vehicles_page] START: user_id={avanpost_user_id}, page={page}, search={search_query}"
         )
 
@@ -836,7 +838,7 @@ class AvanpostUserRepository:
         Returns:
             dict: Словарь с данными заказов и пагинацией
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [get_carrier_orders_page] START: user_id={avanpost_user_id}, page={page}, search={search_query}"
         )
 
@@ -969,7 +971,7 @@ class AvanpostUserRepository:
                 "error": str(e),
             }
 
-    # ==================== 6. СООБЩЕНИЯ ЧАТА ====================
+    # ==================== 6. СООБЩЕНИЯ ЧАТА С ФИЛЬТРАЦИЕЙ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -979,9 +981,10 @@ class AvanpostUserRepository:
         chat_id: int,
         page: int = 0,
         page_size: int = 20,
+        exclude_direction: int | None = None,
     ) -> dict[str, Any]:
         """
-        Получение списка сообщений в чате с пагинацией.
+        Получение списка сообщений в чате с пагинацией и фильтрацией по направлению.
 
         Цепочка связей:
         TAvanpostUsersLinksChatsContactsMsgs.FK_Parent -> TAvanpostContactsMsgs.FID
@@ -993,14 +996,17 @@ class AvanpostUserRepository:
             chat_id: ID чата (TAvanpostUsersChats.FID)
             page: Номер страницы
             page_size: Размер страницы
+            exclude_direction: Направление для исключения (например, 3)
 
         Returns:
             dict: Словарь с данными сообщений и пагинацией
         """
-        db_logger.info(f"📋 [get_chat_messages_page] START: user_id={avanpost_user_id}, chat_id={chat_id}, page={page}")
+        db_logger.debug(
+            f"📋 [get_chat_messages_page] START: user_id={avanpost_user_id}, chat_id={chat_id}, page={page}"
+        )
 
         try:
-            # Базовый запрос
+            # Базовый запрос с добавлением поля direction
             stmt = (
                 select(
                     AvanpostContactMsgModel.FID.label("message_id"),
@@ -1027,16 +1033,31 @@ class AvanpostUserRepository:
                 )
             )
 
+            # Фильтрация по направлению (исключаем FK_Direction = exclude_direction)
+            if exclude_direction is not None:
+                stmt = stmt.where(AvanpostContactMsgModel.FK_Direction != exclude_direction)
+                db_logger.debug(f"🔍 [get_chat_messages_page] Excluding direction: {exclude_direction}")
+
             stmt = stmt.order_by(AvanpostContactMsgModel.FDate.desc())
 
             db_logger.debug(f"📝 [get_chat_messages_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
-            # Подсчет общего количества
+            # Подсчет общего количества с учетом фильтра
             count_stmt = (
                 select(func.count())
                 .select_from(AvanpostUserLinkChatContactMsgModel)
                 .where(AvanpostUserLinkChatContactMsgModel.FK_Parent == chat_id)
             )
+
+            # Добавление фильтра и в COUNT запрос
+            if exclude_direction is not None:
+                count_stmt = count_stmt.where(
+                    AvanpostUserLinkChatContactMsgModel.FK_Link.in_(
+                        select(AvanpostContactMsgModel.FID).where(
+                            AvanpostContactMsgModel.FK_Direction != exclude_direction
+                        )
+                    )
+                )
 
             db_logger.debug(
                 f"📝 [get_chat_messages_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
@@ -1071,7 +1092,7 @@ class AvanpostUserRepository:
                     {
                         "id": row.message_id,
                         "date": row.date.isoformat() if row.date else None,
-                        "direction": row.direction,
+                        "direction": row.direction,  # <-- ДОБАВЛЯЕМ DIRECTION В РЕЗУЛЬТАТ
                         "type": row.type,
                         "author_contact_id": row.author_contact_id,
                         "author_name": author_name,
@@ -1106,6 +1127,77 @@ class AvanpostUserRepository:
                 "has_next": False,
                 "error": str(e),
             }
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_message_by_id(
+        session: AsyncSession,
+        message_id: int,
+    ) -> dict[str, Any] | None:
+        """
+        Получение сообщения по ID из TAvanpostContactsMsgs.
+
+        Args:
+            session: Сессия БД
+            message_id: ID сообщения (TAvanpostContactsMsgs.FID)
+
+        Returns:
+            dict | None: Данные сообщения или None
+        """
+        db_logger.debug(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
+
+        try:
+            stmt = (
+                select(
+                    AvanpostContactMsgModel.FID.label("id"),
+                    AvanpostContactMsgModel.FDate.label("date"),
+                    AvanpostContactMsgModel.FK_Direction.label("direction"),
+                    AvanpostContactMsgModel.FK_Type.label("type"),
+                    AvanpostContactMsgModel.FK_ContactAuthor.label("author_contact_id"),
+                    AvanpostContactMsgModel.FK_ContactTarget.label("target_contact_id"),
+                    AvanpostMsgModel.FID.label("msg_id"),
+                    AvanpostMsgModel.FText.label("text"),
+                    AvanpostMsgModel.FSize.label("size"),
+                )
+                .select_from(AvanpostContactMsgModel)
+                .outerjoin(
+                    AvanpostMsgModel,
+                    AvanpostMsgModel.FID == AvanpostContactMsgModel.FK_Link,
+                )
+                .where(AvanpostContactMsgModel.FID == message_id)
+            )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            row = result.first()
+
+            if not row:
+                db_logger.warning(f"⚠️ Message {message_id} not found")
+                return None
+
+            # Получение имен контактов
+            author_name = await AvanpostUserRepository.get_contact_name(session, row.author_contact_id, lang_code="RU")
+            target_name = await AvanpostUserRepository.get_contact_name(session, row.target_contact_id, lang_code="RU")
+
+            return {
+                "id": row.id,
+                "date": row.date.isoformat() if row.date else None,
+                "direction": row.direction,
+                "type": row.type,
+                "author_contact_id": row.author_contact_id,
+                "author_name": author_name,
+                "target_contact_id": row.target_contact_id,
+                "target_name": target_name,
+                "text": row.text,
+                "size": row.size,
+                "has_attachments": row.size is not None and row.size > 0,
+                "msg_id": row.msg_id,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get message {message_id}: {e}", exc_info=True)
+            return None
 
     # ==================== 7. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 

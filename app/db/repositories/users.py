@@ -70,7 +70,7 @@ class UserRepository:
         if not username:
             username = f"user_{user_id}"
 
-        db_logger.info(f"💾 [save_user] Saving user {user_id}")
+        db_logger.debug(f"💾 [save_user] Saving user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
 
@@ -142,7 +142,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
-        db_logger.info(f"🔍 [get_user_by_id] Getting user by ID: {user_id}")
+        db_logger.debug(f"🔍 [get_user_by_id] Getting user by ID: {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
 
@@ -170,7 +170,7 @@ class UserRepository:
             db_logger.debug("ℹ️ [get_user_by_phone] No phone provided")
             return None
 
-        db_logger.info(f"🔍 [get_user_by_phone] Getting user by phone: {phone}")
+        db_logger.debug(f"🔍 [get_user_by_phone] Getting user by phone: {phone}")
 
         stmt = select(UserModel).where(UserModel.FPhone == phone)
 
@@ -206,7 +206,7 @@ class UserRepository:
         Returns:
             list[UserModel]: Список пользователей
         """
-        db_logger.info(f"📋 [get_all_users] Getting all users (limit={limit}, offset={offset})")
+        db_logger.debug(f"📋 [get_all_users] Getting all users (limit={limit}, offset={offset})")
 
         stmt = select(UserModel).order_by(UserModel.FID).offset(offset)
         if limit:
@@ -240,7 +240,7 @@ class UserRepository:
         Returns:
             list[UserModel]: Список авторизованных пользователей
         """
-        db_logger.info(f"📋 [get_authorized_users] Getting authorized users (limit={limit}, offset={offset})")
+        db_logger.debug(f"📋 [get_authorized_users] Getting authorized users (limit={limit}, offset={offset})")
 
         from sqlalchemy import exists
 
@@ -276,7 +276,7 @@ class UserRepository:
         Returns:
             int: Количество авторизованных пользователей
         """
-        db_logger.info("📊 [get_authorized_users_count] Getting authorized users count")
+        db_logger.debug("📊 [get_authorized_users_count] Getting authorized users count")
 
         try:
             from ...models import AvanpostUserLinkModel
@@ -322,7 +322,7 @@ class UserRepository:
             db_logger.debug("ℹ️ [search_users] Empty query")
             return []
 
-        db_logger.info(f"🔍 [search_users] Searching users by: {query}")
+        db_logger.debug(f"🔍 [search_users] Searching users by: {query}")
 
         search_pattern = f"%{query.strip()}%"
 
@@ -364,7 +364,7 @@ class UserRepository:
         Returns:
             list[AvanpostUserModel]: Список пользователей Avanpost
         """
-        db_logger.info(f"📋 [get_all_avanpost_users] Getting all Avanpost users (limit={limit}, offset={offset})")
+        db_logger.debug(f"📋 [get_all_avanpost_users] Getting all Avanpost users (limit={limit}, offset={offset})")
 
         stmt = (
             select(AvanpostUserModel)
@@ -403,7 +403,7 @@ class UserRepository:
         if not avanpost_user_id or avanpost_user_id <= 0:
             return None
 
-        db_logger.info(f"🔍 [get_avanpost_user_data] Getting Avanpost user data for ID: {avanpost_user_id}")
+        db_logger.debug(f"🔍 [get_avanpost_user_data] Getting Avanpost user data for ID: {avanpost_user_id}")
 
         try:
             stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
@@ -456,7 +456,7 @@ class UserRepository:
         if not telegram_user_id or telegram_user_id <= 0:
             return None
 
-        db_logger.info(
+        db_logger.debug(
             f"🔍 [get_avanpost_user_by_telegram_id] Getting Avanpost user for Telegram ID: {telegram_user_id}"
         )
 
@@ -529,7 +529,7 @@ class UserRepository:
             db_logger.error(f"❌ [create_avanpost_user] Invalid avanpost_user_id: {avanpost_user_id}")
             return None
 
-        db_logger.info(f"🆕 [create_avanpost_user] Creating AvanpostUser {avanpost_user_id}")
+        db_logger.debug(f"🆕 [create_avanpost_user] Creating AvanpostUser {avanpost_user_id}")
 
         try:
             user = AvanpostUserModel(
@@ -591,7 +591,7 @@ class UserRepository:
             db_logger.error(f"❌ [create_or_update_avanpost_user] Invalid avanpost_user_id: {avanpost_user_id}")
             return False, None
 
-        db_logger.info(
+        db_logger.debug(
             f"🔄 [create_or_update_avanpost_user] Creating/updating AvanpostUser {avanpost_user_id} for user {telegram_user_id}"
         )
 
@@ -706,7 +706,7 @@ class UserRepository:
             db_logger.error(f"❌ [create_or_update_avanpost_user_upsert] Invalid telegram_user_id: {telegram_user_id}")
             return False, None
 
-        db_logger.info(
+        db_logger.debug(
             f"🔄 [create_or_update_avanpost_user_upsert] UPSERT AvanpostUser: avanpost_id={avanpost_user_id}, telegram_id={telegram_user_id}"
         )
 
@@ -815,7 +815,7 @@ class UserRepository:
         if not telegram_user_id or telegram_user_id <= 0:
             return False
 
-        db_logger.info(
+        db_logger.debug(
             f"🔄 [update_avanpost_user_telegram_link] Updating link: Avanpost {avanpost_user_id} -> Telegram {telegram_user_id}"
         )
 
@@ -860,7 +860,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
-        db_logger.info(f"🔍 [get_user_with_avanpost] Getting user {user_id} with Avanpost link")
+        db_logger.debug(f"🔍 [get_user_with_avanpost] Getting user {user_id} with Avanpost link")
 
         try:
             from sqlalchemy.orm import selectinload
@@ -914,7 +914,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
-        db_logger.info(f"🔍 [get_user_group_id] Getting group ID for user {user_id}")
+        db_logger.debug(f"🔍 [get_user_group_id] Getting group ID for user {user_id}")
 
         try:
             from sqlalchemy import select
@@ -987,7 +987,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        db_logger.info(f"🔍 [is_user_authorized] Checking authorization for user {user_id}")
+        db_logger.debug(f"🔍 [is_user_authorized] Checking authorization for user {user_id}")
 
         try:
             from ...models import AvanpostUserLinkModel
@@ -1025,7 +1025,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        db_logger.info(f"🔍 [is_user_authenticated] Checking authentication for user {user_id}")
+        db_logger.debug(f"🔍 [is_user_authenticated] Checking authentication for user {user_id}")
 
         try:
             from sqlalchemy.orm import selectinload
@@ -1075,7 +1075,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return None
 
-        db_logger.info(f"🔍 [get_authenticated_user] Getting authenticated user {user_id}")
+        db_logger.debug(f"🔍 [get_authenticated_user] Getting authenticated user {user_id}")
 
         try:
             from sqlalchemy.orm import selectinload
@@ -1154,7 +1154,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        db_logger.info(f"🔄 [update_last_activity] Updating last activity for user {user_id}")
+        db_logger.debug(f"🔄 [update_last_activity] Updating last activity for user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
         if user:
@@ -1187,7 +1187,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        db_logger.info(f"🚪 [logout_user] Logging out user {user_id}")
+        db_logger.debug(f"🚪 [logout_user] Logging out user {user_id}")
 
         # Использование метода с предзагрузкой
         user = await UserRepository.get_user_with_avanpost(session, user_id)
@@ -1272,7 +1272,7 @@ class UserRepository:
         Returns:
             dict: Статистика пользователя
         """
-        db_logger.info(f"📊 [get_user_stats] Getting stats for user {user_id}")
+        db_logger.debug(f"📊 [get_user_stats] Getting stats for user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
         if not user:

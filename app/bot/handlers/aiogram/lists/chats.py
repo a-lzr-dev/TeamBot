@@ -391,7 +391,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         return None
 
     @staticmethod
-    def get_back_keyboard(state: FSMContext) -> Any:
+    async def get_back_keyboard(state: FSMContext) -> Any:
         """
         Создание клавиатуры с кнопкой "Назад".
 
@@ -403,7 +403,7 @@ class ChatsListHandler(GenericListCallbackHandler):
         """
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-        state_data = state.get_data()
+        state_data = await state.get_data()
         group_id = state_data.get("group_id")
         parent_item_id = state_data.get("parent_item_id")
 

@@ -1131,6 +1131,8 @@ class BotManager:
             {"command": "/start", "description": "🚀 Начало работы / Авторизация"},
             {"command": "/help", "description": "❓ Помощь"},
             {"command": "/debug_commands", "description": "🔍 Отладка команд"},
+            {"command": "/msg", "description": "⚙️ Меню действий с сообщением"},
+            {"command": "/find", "description": "🔍 Найти сообщение по ID"},
         ]
 
     @staticmethod

@@ -15,6 +15,7 @@
     - actions_router: Обработка действий
     - users_router: Управление пользователями
     - automation_router: Автоматизация и конвертация
+    - chat_message_menu_router: Контекстное меню сообщений
     - orders_router: Заказы
     - chats_router: Списки чатов
     - vehicles_router: Транспортные средства
@@ -29,14 +30,20 @@
 
 from aiogram import Router
 
+# Основные обработчики
 from .actions import router as actions_router
 from .admin import router as admin_router
 from .auth import _auth_cache
 from .auth import router as auth_router
 from .automation import router as automation_router
 from .chat import router as chat_router
+
+# Контекстное меню для сообщений
+from .chat_message_menu import router as chat_message_menu_router
 from .commands import router as commands_router
 from .common import back_to_users, show_menu, show_users_list
+
+# Списки (заказы, чаты, транспорт, заказы перевозчиков, сообщения)
 from .lists import (
     carrier_orders_router,
     chat_details_router,
@@ -69,7 +76,7 @@ def setup_aiogram_handlers() -> Router:
     # Регистрация всех роутеров
     router.include_router(auth_router)  # Авторизация
     router.include_router(chat_router)  # Чаты
-    router.include_router(commands_router)  # Команды
+    router.include_router(commands_router)  # Команды (/help, /id, /msg, /find и др.)
     router.include_router(admin_router)  # Администрирование
     router.include_router(actions_router)  # Действия
     router.include_router(users_router)  # Пользователи
@@ -81,6 +88,9 @@ def setup_aiogram_handlers() -> Router:
     router.include_router(vehicles_router)  # Транспорт
     router.include_router(carrier_orders_router)  # Заказы перевозчиков
     router.include_router(chat_details_router)  # Детали чатов
+
+    # Контекстное меню для сообщений (/msg, /find, ответы на сообщения)
+    router.include_router(chat_message_menu_router)
 
     return router
 
@@ -94,6 +104,7 @@ __all__ = [
     "users_router",
     "auth_router",
     "automation_router",
+    "chat_message_menu_router",
     "orders_router",
     "chats_router",
     "vehicles_router",

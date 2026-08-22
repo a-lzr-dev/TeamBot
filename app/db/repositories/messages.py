@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...logger import db_logger
 from ...models import ChatMessageModel, MessageSource, MessageType, datetime_now
-from ...utils.decorators import log_exceptions
+from ...utils.decorators import log_exceptions, suppress_debug_logs
 
 
 class MessageRepository:
@@ -70,7 +70,7 @@ class MessageRepository:
         Returns:
             ChatMessageModel: Созданное сообщение
         """
-        db_logger.info(f"🆕 [create_message] Creating message {message_id} in chat {chat_id}, type={message_type}")
+        db_logger.debug(f"🆕 [create_message] Creating message {message_id} in chat {chat_id}, type={message_type}")
 
         now = datetime_now()
 
@@ -144,7 +144,7 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Обновленное сообщение или None
         """
-        db_logger.info(f"🔄 [update_message] Updating message {message_id}")
+        db_logger.debug(f"🔄 [update_message] Updating message {message_id}")
 
         message = await MessageRepository.get_message_by_id(session, message_id)
 
@@ -211,7 +211,7 @@ class MessageRepository:
         Returns:
             tuple[ChatMessageModel, bool]: (сообщение, created)
         """
-        db_logger.info(f"🔄 [create_or_update_message] Creating or updating message {message_id}")
+        db_logger.debug(f"🔄 [create_or_update_message] Creating or updating message {message_id}")
 
         # Проверяем существование
         existing = await MessageRepository.get_message_by_id(session, message_id)
@@ -278,7 +278,7 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Найденное сообщение или None
         """
-        db_logger.info(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
+        db_logger.debug(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
 
         stmt = select(ChatMessageModel).where(ChatMessageModel.FID == message_id)
 
@@ -312,7 +312,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
-        db_logger.info(f"📋 [get_messages_by_ids] Getting {len(message_ids)} messages by IDs")
+        db_logger.debug(f"📋 [get_messages_by_ids] Getting {len(message_ids)} messages by IDs")
 
         if not message_ids:
             db_logger.debug("ℹ️ [get_messages_by_ids] No message IDs provided")
@@ -349,7 +349,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
-        db_logger.info(f"📋 [get_messages_by_chat] Getting messages for chat {chat_id}")
+        db_logger.debug(f"📋 [get_messages_by_chat] Getting messages for chat {chat_id}")
 
         stmt = select(ChatMessageModel).where(ChatMessageModel.FK_Chat == chat_id)
 
@@ -368,6 +368,7 @@ class MessageRepository:
         return messages
 
     @staticmethod
+    @suppress_debug_logs
     @log_exceptions(db_logger)
     async def get_messages_by_filter(
         session: AsyncSession,
@@ -391,7 +392,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [get_messages_by_filter] Getting messages with filters: chat_id={chat_id}, before_minutes={before_minutes}"
         )
 
@@ -439,7 +440,7 @@ class MessageRepository:
         Returns:
             int: Количество сообщений
         """
-        db_logger.info(f"📊 [get_message_count_by_chat] Getting message count for chat {chat_id}")
+        db_logger.debug(f"📊 [get_message_count_by_chat] Getting message count for chat {chat_id}")
 
         stmt = (
             select(func.count())
@@ -468,7 +469,7 @@ class MessageRepository:
         Returns:
             dict: Статистика по времени жизни
         """
-        db_logger.info(f"📊 [get_message_lifetime_stats] Getting lifetime stats for chat {chat_id or 'all'}")
+        db_logger.debug(f"📊 [get_message_lifetime_stats] Getting lifetime stats for chat {chat_id or 'all'}")
 
         stmt = select(
             func.count(ChatMessageModel.FID).label("total"),
@@ -520,7 +521,7 @@ class MessageRepository:
         Returns:
             bool: Успешно ли установлено
         """
-        db_logger.info(f"⏰ [set_message_lifetime] Setting lifetime for message {message_id}: {lifetime_seconds}s")
+        db_logger.debug(f"⏰ [set_message_lifetime] Setting lifetime for message {message_id}: {lifetime_seconds}s")
 
         stmt = select(ChatMessageModel).where(
             and_(ChatMessageModel.FID == message_id, ChatMessageModel.FFlagDeleted.is_(False))
@@ -560,7 +561,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список истекших сообщений
         """
-        db_logger.info(f"🔍 [get_expired_messages] Getting expired messages for chat {chat_id or 'all'}")
+        db_logger.debug(f"🔍 [get_expired_messages] Getting expired messages for chat {chat_id or 'all'}")
 
         now = datetime_now()
 
@@ -611,7 +612,7 @@ class MessageRepository:
             db_logger.debug("ℹ️ [mark_messages_as_deleted] No message IDs provided")
             return 0
 
-        db_logger.info(
+        db_logger.debug(
             f"🗑️ [mark_messages_as_deleted] Marking {len(message_ids)} messages as deleted by {deleted_by_type}"
         )
 
@@ -658,7 +659,7 @@ class MessageRepository:
             db_logger.debug("ℹ️ [mark_messages_deleted_by_ids] No message IDs provided")
             return 0
 
-        db_logger.info(
+        db_logger.debug(
             f"🗑️ [mark_messages_deleted_by_ids] Marking {len(message_ids)} messages as deleted by {deleted_by_type}"
         )
 
@@ -721,7 +722,7 @@ class MessageRepository:
         Returns:
             bool: Успешно ли восстановлено
         """
-        db_logger.info(f"🔄 [restore_deleted_message] Restoring message {message_id}")
+        db_logger.debug(f"🔄 [restore_deleted_message] Restoring message {message_id}")
 
         try:
             query = select(ChatMessageModel).where(
@@ -780,7 +781,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
-        db_logger.info(f"📋 [get_messages_by_date_range] Getting messages from {start_date} to {end_date}")
+        db_logger.debug(f"📋 [get_messages_by_date_range] Getting messages from {start_date} to {end_date}")
 
         conditions = []
 
@@ -833,7 +834,7 @@ class MessageRepository:
         Returns:
             list[ChatMessageModel]: Список сообщений
         """
-        db_logger.info(f"📋 [get_messages_by_type] Getting messages by type: {message_type}")
+        db_logger.debug(f"📋 [get_messages_by_type] Getting messages by type: {message_type}")
 
         conditions = [ChatMessageModel.FK_MessageType == message_type, ChatMessageModel.FFlagDeleted.is_(False)]
 
@@ -865,7 +866,7 @@ class MessageRepository:
         Returns:
             ChatMessageModel | None: Последнее сообщение или None
         """
-        db_logger.info(f"🔍 [get_last_message_in_chat] Getting last message for chat {chat_id}")
+        db_logger.debug(f"🔍 [get_last_message_in_chat] Getting last message for chat {chat_id}")
 
         stmt = (
             select(ChatMessageModel)
@@ -902,7 +903,7 @@ class MessageRepository:
         Returns:
             int: Количество сообщений
         """
-        db_logger.info(f"📊 [get_message_count_by_type] Getting count for type {message_type}")
+        db_logger.debug(f"📊 [get_message_count_by_type] Getting count for type {message_type}")
 
         conditions = [ChatMessageModel.FK_MessageType == message_type, ChatMessageModel.FFlagDeleted.is_(False)]
 
@@ -932,7 +933,7 @@ class MessageRepository:
         Returns:
             dict: Статистика по типам сообщений
         """
-        db_logger.info("📊 [get_all_message_types_stats] Getting stats for all message types")
+        db_logger.debug("📊 [get_all_message_types_stats] Getting stats for all message types")
 
         stats = {}
         for msg_type in MessageType:
@@ -961,7 +962,7 @@ class MessageRepository:
             db_logger.debug("ℹ️ [delete_messages_permanently] No message IDs provided")
             return 0
 
-        db_logger.info(f"🗑️ [delete_messages_permanently] Permanently deleting {len(message_ids)} messages")
+        db_logger.debug(f"🗑️ [delete_messages_permanently] Permanently deleting {len(message_ids)} messages")
 
         stmt = delete(ChatMessageModel).where(ChatMessageModel.FID.in_(message_ids))
 
@@ -988,7 +989,7 @@ class MessageRepository:
         Returns:
             dict: Статистика очистки
         """
-        db_logger.info(f"🧹 [cleanup_expired_messages] Starting cleanup with batch size {batch_size}")
+        db_logger.debug(f"🧹 [cleanup_expired_messages] Starting cleanup with batch size {batch_size}")
 
         total_deleted = 0
         total_found = 0

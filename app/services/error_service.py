@@ -608,10 +608,10 @@ class ErrorService:
 
             bot_manager = get_bot_manager()
 
-            # Форматируем сообщение через DTO
+            # Форматирование сообщения через DTO
             message = notification_dto.format_message()
 
-            # Добавляем пометку о повторе
+            # Добавление пометки о повторе
             if is_repeat and notification_dto.count_occurrences > 1:
                 message = f"🔄 **Повтор ошибки #{notification_dto.id}**\n" + message
 

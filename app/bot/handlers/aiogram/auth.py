@@ -9,6 +9,7 @@
 5. Обновление команд для авторизованных пользователей
 6. Фоновую синхронизацию данных пользователя
 7. Middleware для проверки авторизации
+8. Deep Linking для перехода к сообщениям
 """
 
 import asyncio
@@ -24,7 +25,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove, TelegramO
 
 from ....config import settings
 from ....db import db_manager
-from ....db.repositories import AvanpostRepository, UserRepository
+from ....db.repositories import AvanpostRepository, AvanpostUserRepository, UserRepository
 from ....logger import bot_logger
 from ....models.base import ErrorCategory, MessageActionType, MessageType
 from ....services.error_service import error_service
@@ -38,6 +39,7 @@ router = Router(name="aiogram_auth")
 # Репозитории (создаем один раз на уровне модуля для переиспользования)
 _user_repo = UserRepository()  # Репозиторий для работы с пользователями
 _avanpost_repo = AvanpostRepository()  # Репозиторий для работы с Avanpost
+_avanpost_user_repo = AvanpostUserRepository()  # Репозиторий для работы с пользователями Avanpost
 
 
 class AuthStates(StatesGroup):
@@ -79,15 +81,142 @@ async def is_user_authenticated(user_id: int) -> bool:
         return False
 
 
+async def _get_message_by_id(message_id: int) -> dict[str, Any] | None:
+    """
+    Получение сообщения по ID через AvanpostUserRepository.
+
+    Args:
+        message_id: ID сообщения
+
+    Returns:
+        dict | None: Данные сообщения или None
+    """
+    try:
+        async with db_manager.get_session() as session:
+            return await _avanpost_user_repo.get_message_by_id(session, message_id)  # type: ignore[no-any-return]
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to get message {message_id}: {e}")
+        return None
+
+
+async def _handle_deep_link_message(
+    event: Message | CallbackQuery,
+    state: FSMContext,
+    msg_id: int,
+    bot_manager: Any,
+) -> bool:
+    """
+    Обработка перехода к сообщению по Deep Linking.
+
+    Args:
+        event: Сообщение или CallbackQuery от пользователя
+        state: Состояние FSM
+        msg_id: ID сообщения
+        bot_manager: Менеджер бота
+
+    Returns:
+        bool: True если сообщение найдено и обработано, иначе False
+    """
+    try:
+        # Получение сообщения из БД через AvanpostUserRepository
+        message_data = await _get_message_by_id(msg_id)
+
+        if message_data:
+            from .chat_message_menu import show_message_context_menu
+            from .lists.chat_details import chat_details_handler
+
+            # ============================================================
+            # ИСПРАВЛЕНИЕ 1: Сохраняем информацию о чате и странице
+            # ============================================================
+            state_data = await state.get_data()
+            chat_details_page = state_data.get("chat_details_page", 0)
+            selected_chat_id = state_data.get("selected_chat_id")
+            avanpost_user_id = state_data.get("avanpost_user_id")
+            parent_item_id = state_data.get("parent_item_id")
+            group_id = state_data.get("group_id")
+
+            # Если есть контекст чата - сохраняем для возврата
+            if selected_chat_id and avanpost_user_id:
+                await state.update_data(
+                    return_to_chat_id=selected_chat_id,
+                    return_to_page=chat_details_page,
+                    return_avanpost_user_id=avanpost_user_id,
+                    return_parent_item_id=parent_item_id,
+                    return_group_id=group_id,
+                )
+
+            # Форматирование сообщения
+            formatted = chat_details_handler.format_single_message(message_data)
+
+            # Определение chat_id
+            chat_id = event.chat.id if isinstance(event, Message) else event.message.chat.id if event.message else 0
+
+            # Объединение информации о сообщении и контекстном меню
+            title = f"🔗 **Переход к сообщению #{msg_id}**\n\n{formatted}"
+
+            # ============================================================
+            # ИСПРАВЛЕНИЕ 2: Добавляем кнопку "Назад к чату" в меню
+            # ============================================================
+            await show_message_context_menu(
+                event=event,
+                state=state,
+                message_id=msg_id,
+                chat_id=chat_id,
+                custom_text=title,
+                edit_original=True,
+                show_back_to_chat=bool(selected_chat_id and avanpost_user_id),
+            )
+
+            # ============================================================
+            # ИСПРАВЛЕНИЕ 3: Удаляем команду /start
+            # ============================================================
+            if isinstance(event, Message):
+                try:
+                    await bot_manager.delete_message_by_link(event)
+                except Exception as e:
+                    bot_logger.debug(f"ℹ️ Could not delete start command: {e}")
+
+            # Очистка payload
+            await state.update_data(deep_link_payload=None)
+            await state.set_state(AuthStates.authenticated)
+            return True
+        else:
+            await bot_manager.send_answer(
+                text=f"❌ Сообщение #{msg_id} не найдено.",
+                event=event,
+                message_type=MessageType.COMMAND_ACTION_INFO,
+                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+            )
+            return False
+
+    except ValueError:
+        await bot_manager.send_answer(
+            text="❌ Неверный формат ссылки.",
+            event=event,
+            message_type=MessageType.COMMAND_ACTION_INFO,
+            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+        )
+        return False
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to process deep link: {e}", exc_info=True)
+        await bot_manager.send_answer(
+            text="❌ Ошибка при переходе к сообщению.",
+            event=event,
+            message_type=MessageType.COMMAND_ACTION_INFO,
+            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+        )
+        return False
+
+
 @router.message(Command("start"))
 @log_exceptions(bot_logger)
 async def cmd_start(message: Message, state: FSMContext) -> None:
     """
     Обработчик команды /start - запрос верификации.
 
-    Проверяет авторизацию пользователя и в зависимости от результата:
-    - Если авторизован: показывает приветствие и обновляет команды
-    - Если не авторизован: запрашивает контакт для верификации
+    Поддерживает Deep Linking:
+    - /start msg_123 - перейти к сообщению после авторизации
+    - /start - обычная авторизация
 
     Args:
         message: Сообщение от пользователя
@@ -101,6 +230,17 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     telegram_user_id = message.from_user.id
     bot_manager = get_bot_manager()
 
+    # ============================================================
+    # ОБРАБОТКА DEEP LINKING (параметр после /start)
+    # ============================================================
+    payload = None
+    if message.text and " " in message.text:
+        payload = message.text.split(" ", 1)[1]
+
+    # Сохранение payload в состояние, чтобы обработать после авторизации
+    if payload and payload.startswith("msg_"):
+        await state.update_data(deep_link_payload=payload)
+
     # Проверка, авторизован ли пользователь в БД
     is_authenticated_db = await is_user_authenticated(telegram_user_id)
 
@@ -110,7 +250,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     # Очистка кеша, если пользователь разлогинился
     if is_in_cache and not is_authenticated_db:
         bot_manager.clear_user_cache(telegram_user_id)
-        # Очищаем и глобальный кэш авторизации
         _auth_cache.pop(telegram_user_id, None)
         bot_logger.debug(f"🧹 Cleared stale cache for user {telegram_user_id} during /start")
 
@@ -122,7 +261,27 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
-        # Отправка приветственного сообщения
+        # ============================================================
+        # ЕСЛИ ЕСТЬ PAYLOAD - ОБРАБАТЫВАЕМ ПЕРЕХОД К СООБЩЕНИЮ
+        # ============================================================
+        if payload and payload.startswith("msg_"):
+            try:
+                msg_id = int(payload.replace("msg_", ""))
+                handled = await _handle_deep_link_message(message, state, msg_id, bot_manager)
+                if handled:
+                    # Обновление времени последней активности
+                    async with db_manager.get_session() as session:
+                        await _user_repo.update_last_activity(session, telegram_user_id)
+                    return
+            except ValueError:
+                await bot_manager.send_answer(
+                    text="❌ Неверный формат ссылки.",
+                    event=message,
+                    message_type=MessageType.COMMAND_ACTION_INFO,
+                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
+                )
+
+        # Если payload нет или обработка не удалась — обычное приветствие
         await bot_manager.send_answer(
             text="👋 Добро пожаловать!\n\n"
             "✅ Вы уже авторизованы в системе.\n"
@@ -144,13 +303,23 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     await state.set_state(AuthStates.waiting_for_contact)
 
+    # Если есть payload, показываем его в сообщении
+    payload_text = ""
+    if payload and payload.startswith("msg_"):
+        try:
+            msg_id = int(payload.replace("msg_", ""))
+            payload_text = f"\n\n🔗 После авторизации вы будете перенаправлены к сообщению #{msg_id}."
+        except ValueError:
+            pass
+
     # Отправка сообщения с запросом контакта
     result = await bot_manager.send_message(
         chat_id=message.chat.id,
         text="🔐 **Верификация по номеру телефона**\n\n"
         "Для идентификации необходимо подтвердить ваш номер телефона.\n\n"
         "⚠️ **Важно:** Бот использует ваш номер телефона только для "
-        "авторизации и не передает его третьим лицам.\n\n"
+        "авторизации и не передает его третьим лицам."
+        f"{payload_text}\n\n"
         "Нажмите кнопку ниже, чтобы поделиться контактом:",
         message_type=MessageType.COMMAND_AUTH,
         delete_message_id=message.message_id,
@@ -351,10 +520,66 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
-        # 6. Формирование приветственного сообщения
+        # ============================================================
+        # 6. ОБРАБОТКА DEEP LINKING ПОСЛЕ АВТОРИЗАЦИИ
+        # ============================================================
+        state_data = await state.get_data()
+        deep_link_payload = state_data.get("deep_link_payload")
+
+        # Формирование приветственного сообщения
+        if deep_link_payload and deep_link_payload.startswith("msg_"):
+            try:
+                msg_id = int(deep_link_payload.replace("msg_", ""))
+
+                # Получаем сообщение из БД через AvanpostUserRepository
+                message_data = await _get_message_by_id(msg_id)
+
+                if message_data:
+                    from .chat_message_menu import show_message_context_menu
+                    from .lists.chat_details import chat_details_handler
+
+                    # ============================================================
+                    # ИСПРАВЛЕНИЕ: Используем format_single_message
+                    # ============================================================
+                    formatted = chat_details_handler.format_single_message(message_data)
+
+                    # Формируем приветствие с сообщением
+                    welcome_text = f"✅ **Авторизация успешна!**\n\n🔗 **Переход к сообщению #{msg_id}**\n\n{formatted}"
+
+                    # Отправляем приветствие с контекстным меню
+                    await show_message_context_menu(
+                        event=message,
+                        state=state,
+                        message_id=msg_id,
+                        chat_id=message.chat.id,
+                        custom_text=welcome_text,
+                        edit_original=False,
+                    )
+
+                    # Очищаем payload
+                    await state.update_data(deep_link_payload=None)
+                    await state.set_state(AuthStates.authenticated)
+                    return
+                else:
+                    # Сообщение не найдено, показываем обычное приветствие
+                    await bot_manager.send_answer(
+                        text="❌ Сообщение не найдено, но вы успешно авторизованы!\n\n"
+                        + _build_welcome_message(avanpost_user_id, menu_group_id, is_admin),
+                        event=message,
+                        message_type=MessageType.COMMAND_AUTH,
+                        delete_by_type=MessageActionType.COMMAND_AUTH_CLEANUP,
+                        parse_mode="Markdown",
+                    )
+                    await state.set_state(AuthStates.authenticated)
+                    return
+
+            except (ValueError, Exception) as e:
+                bot_logger.error(f"❌ Failed to process deep link after auth: {e}")
+                # В случае ошибки показываем обычное приветствие
+
+        # 7. Отправка обычного приветственного сообщения (если нет payload)
         welcome_text = _build_welcome_message(avanpost_user_id, menu_group_id, is_admin)
 
-        # 7. Отправка финального сообщения
         await bot_manager.send_answer(
             text=welcome_text,
             event=message,
@@ -362,6 +587,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             delete_by_type=MessageActionType.COMMAND_AUTH_CLEANUP,
             parse_mode="Markdown",
         )
+        await state.set_state(AuthStates.authenticated)
 
     except Exception as e:
         # Обработка ошибок авторизации

@@ -28,7 +28,7 @@ class SystemRepository:
         Returns:
             list[AvanpostDirSysDataTypeModel]: Список всех типов данных
         """
-        db_logger.info("📋 [get_all_data_types] Getting all data types")
+        db_logger.debug("📋 [get_all_data_types] Getting all data types")
 
         stmt = select(AvanpostDirSysDataTypeModel).order_by(AvanpostDirSysDataTypeModel.FID)
 
@@ -54,7 +54,7 @@ class SystemRepository:
         Returns:
             dict[int, dict]: Словарь {data_type_id: {name, table, user_related, deferred_sync}}
         """
-        db_logger.info("📋 [get_data_types_dict] Getting data types as dict")
+        db_logger.debug("📋 [get_data_types_dict] Getting data types as dict")
 
         stmt = select(
             AvanpostDirSysDataTypeModel.FID,
@@ -98,7 +98,7 @@ class SystemRepository:
         Returns:
             AvanpostDirSysDataTypeModel | None: Модель типа данных или None
         """
-        db_logger.info(f"🔍 [get_data_type_by_id] Getting data type by ID: {data_type_id}")
+        db_logger.debug(f"🔍 [get_data_type_by_id] Getting data type by ID: {data_type_id}")
 
         stmt = select(AvanpostDirSysDataTypeModel).where(AvanpostDirSysDataTypeModel.FID == data_type_id)
 
@@ -128,7 +128,7 @@ class SystemRepository:
         Returns:
             list[int]: Список ID типов данных
         """
-        db_logger.info("📋 [get_data_type_ids] Getting all data type IDs")
+        db_logger.debug("📋 [get_data_type_ids] Getting all data type IDs")
 
         stmt = select(AvanpostDirSysDataTypeModel.FID).order_by(AvanpostDirSysDataTypeModel.FID)
 
@@ -164,7 +164,7 @@ class SystemRepository:
         Returns:
             AvanpostDirSysDataTypeModel: Созданная модель
         """
-        db_logger.info(f"🆕 [create_data_type] Creating data type {data_type_id}: {name}")
+        db_logger.debug(f"🆕 [create_data_type] Creating data type {data_type_id}: {name}")
 
         data_type = AvanpostDirSysDataTypeModel(
             FID=data_type_id,
@@ -200,7 +200,7 @@ class SystemRepository:
             db_logger.debug("ℹ️ [create_data_types_bulk] No data types to create")
             return 0
 
-        db_logger.info(f"📋 [create_data_types_bulk] Creating {len(data_types)} data types")
+        db_logger.debug(f"📋 [create_data_types_bulk] Creating {len(data_types)} data types")
 
         created = 0
         for data in data_types:
@@ -248,7 +248,7 @@ class SystemRepository:
         Returns:
             datetime | None: Время синхронизации или None
         """
-        db_logger.info(f"🔍 [get_sync_time] Getting sync time for type {data_type_id}")
+        db_logger.debug(f"🔍 [get_sync_time] Getting sync time for type {data_type_id}")
 
         stmt = select(AvanpostSysUpdateModel.FDate).where(AvanpostSysUpdateModel.FK_Type == data_type_id)
 
@@ -287,7 +287,7 @@ class SystemRepository:
             dict[int, datetime]: Словарь {data_type_id: last_sync_time}
         """
         if show_logs:
-            db_logger.info(f"📋 [get_sync_times] Getting sync times for {len(data_types)} types (optimized)")
+            db_logger.debug(f"📋 [get_sync_times] Getting sync times for {len(data_types)} types (optimized)")
 
         result: dict[int, datetime] = {}
         default_time = datetime(1900, 1, 1)
@@ -346,7 +346,7 @@ class SystemRepository:
         Returns:
             AvanpostSysUpdateModel: Созданная запись
         """
-        db_logger.info(f"🆕 [create_sync_record] Creating sync record for type {data_type_id}")
+        db_logger.debug(f"🆕 [create_sync_record] Creating sync record for type {data_type_id}")
 
         if sync_time is None:
             sync_time = datetime(1900, 1, 1)
@@ -391,7 +391,7 @@ class SystemRepository:
             db_logger.debug("ℹ️ [create_sync_records_bulk] No data type IDs provided")
             return 0
 
-        db_logger.info(f"📋 [create_sync_records_bulk] Creating sync records for {len(data_type_ids)} types")
+        db_logger.debug(f"📋 [create_sync_records_bulk] Creating sync records for {len(data_type_ids)} types")
 
         if sync_time is None:
             sync_time = datetime(1900, 1, 1)
@@ -434,7 +434,7 @@ class SystemRepository:
             show_logs: Отображение подробного логирования (Debug уровень)
         """
         if show_logs:
-            db_logger.info(f"🔄 [update_sync_time] Updating sync time for type {data_type_id}: {sync_time}")
+            db_logger.debug(f"🔄 [update_sync_time] Updating sync time for type {data_type_id}: {sync_time}")
 
         stmt = (
             update(AvanpostSysUpdateModel).where(AvanpostSysUpdateModel.FK_Type == data_type_id).values(FDate=sync_time)
@@ -468,7 +468,7 @@ class SystemRepository:
             return
 
         if show_logs:
-            db_logger.info(f"🔄 [update_sync_times_bulk] Updating {len(sync_times)} sync times")
+            db_logger.debug(f"🔄 [update_sync_times_bulk] Updating {len(sync_times)} sync times")
 
         for data_type_id, sync_time in sync_times.items():
             await SystemRepository.update_sync_time(session, data_type_id, sync_time, show_logs)
@@ -489,8 +489,8 @@ class SystemRepository:
         """
         Получение времени синхронизации пользователя для списка типов данных.
         """
-        if show_logs:
-            db_logger.debug(f"📋 [get_user_sync_times] Getting user sync times for user {user_id}")
+        #        if show_logs:
+        #            db_logger.debug(f"📋 [get_user_sync_times] Getting user sync times for user {user_id}")
 
         result: dict[int, datetime] = {}
         default_time = datetime(1900, 1, 1)
@@ -503,8 +503,8 @@ class SystemRepository:
             AvanpostSysUserUpdateModel.FK_Type.in_(data_types),
         )
 
-        if show_logs:
-            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+        #        if show_logs:
+        #            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
         result_query = await session.execute(stmt)
         records = result_query.scalars().all()
@@ -528,10 +528,10 @@ class SystemRepository:
         if created_count > 0:
             await session.flush()
 
-        if show_logs:
-            db_logger.info(
-                f"✅ [get_user_sync_times] Found {len(existing)} existing records, created {created_count} new"
-            )
+        #        if show_logs:
+        #            db_logger.info(
+        #                f"✅ [get_user_sync_times] Found {len(existing)} existing records, created {created_count} new"
+        #            )
 
         return result
 
@@ -558,7 +558,7 @@ class SystemRepository:
         Returns:
             dict: Статистика по типам данных
         """
-        db_logger.info(
+        db_logger.debug(
             f"📋 [create_user_sync_records_bulk_with_stats] Creating user sync records for {len(user_ids)} users"
         )
 
@@ -667,7 +667,7 @@ class SystemRepository:
             show_logs: Отображение подробного логирования (Debug уровень)
         """
         if show_logs:
-            db_logger.info(
+            db_logger.debug(
                 f"🔄 [update_user_sync_time] Updating user sync time for user {user_id}, type {data_type_id}: {sync_time}"
             )
 
@@ -714,7 +714,7 @@ class SystemRepository:
             return
 
         if show_logs:
-            db_logger.info(
+            db_logger.debug(
                 f"🔄 [update_user_sync_times_bulk] Updating {len(sync_times)} user sync times for user {user_id}"
             )
 
@@ -742,7 +742,7 @@ class SystemRepository:
         Returns:
             bool: Успешно ли удалено
         """
-        db_logger.info(f"🗑️ [delete_sync_record] Deleting sync record for type {data_type_id}")
+        db_logger.debug(f"🗑️ [delete_sync_record] Deleting sync record for type {data_type_id}")
 
         stmt = select(AvanpostSysUpdateModel).where(AvanpostSysUpdateModel.FK_Type == data_type_id)
 
@@ -779,7 +779,9 @@ class SystemRepository:
         Returns:
             bool: Успешно ли удалено
         """
-        db_logger.info(f"🗑️ [delete_user_sync_record] Deleting user sync record for user {user_id}, type {data_type_id}")
+        db_logger.debug(
+            f"🗑️ [delete_user_sync_record] Deleting user sync record for user {user_id}, type {data_type_id}"
+        )
 
         stmt = select(AvanpostSysUserUpdateModel).where(
             AvanpostSysUserUpdateModel.FK_User == user_id,
