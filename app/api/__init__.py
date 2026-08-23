@@ -9,6 +9,7 @@ from .routers import (
     broadcast_router,
     errors_router,
     reminders_router,
+    sync_router,
 )
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "bot_msgs_router",
     "bot_sync_router",
     "broadcast_router",
+    "sync_router",
     # Зависимости
     "get_api_manager",
 ]

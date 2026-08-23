@@ -1199,21 +1199,8 @@ class BotManager:
         return [
             {"command": "/users", "description": "👥 Пользователи (админ)"},
             {"command": "/bc", "description": "📢 Меню рассылки (админ)"},
-            {"command": "/bc_send", "description": "📢 Рассылка (админ)"},
-            {"command": "/bc_del", "description": "🗑️ Отмена рассылки (админ)"},
-            {"command": "/debug_commands", "description": "🔍 Отладка команд"},
             {"command": "/sync", "description": "🔄 Меню синхронизации (админ)"},
-            {"command": "/sync_chats", "description": "💬 Синхр. чатов (админ)"},
-            {"command": "/sync_base", "description": "📚 Синхр. справочников (админ)"},
-            {"command": "/sync_contacts", "description": "📇 Синхр. контактов (админ)"},
-            {"command": "/sync_user", "description": "👤 Синхр. пользователя (админ)"},
-            {"command": "/sync_all_users", "description": "👥 Синхр. всех пользователей (админ)"},
-            {"command": "/sync_all_vehicles", "description": "🚗 Синхр. пользователей ТС (админ)"},
-            {"command": "/sync_light", "description": "⚡ Стандартная синхр. (админ)"},
-            {"command": "/sync_force", "description": "💪 Полная синхр. Force (админ)"},
             {"command": "/admins", "description": "👑 Список админов (админ)"},
-            {"command": "/add_admin", "description": "➕ Добавить админа (админ)"},
-            {"command": "/remove_admin", "description": "➖Удалить админа (админ)"},
         ]
 
     def _get_commands_for_user(self, user_id: int, is_admin: bool = False) -> list[dict[str, str]]:

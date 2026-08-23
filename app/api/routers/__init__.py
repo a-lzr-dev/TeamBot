@@ -7,6 +7,7 @@ from .broadcast import router as broadcast_router
 from .errors import router as errors_router
 from .reminders import router as reminders_router
 from .stats import router as stats_router
+from .sync import router as sync_router
 
 __all__ = [
     "admin_router",
@@ -18,4 +19,5 @@ __all__ = [
     "bot_sync_router",
     "broadcast_router",
     "stats_router",
+    "sync_router",
 ]

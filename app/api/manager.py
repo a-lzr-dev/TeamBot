@@ -44,6 +44,7 @@ from .routers import (
     errors_router,
     reminders_router,
     stats_router,
+    sync_router,
 )
 
 
@@ -249,7 +250,7 @@ class APIManager:
         self._app.include_router(errors_router, prefix="/api/v1")
         self._app.include_router(reminders_router, prefix="/api/v1")
         self._app.include_router(automation_router, prefix="/api/v1")
-        self._app.include_router(automation_router, prefix="/api/v1")
+        self._app.include_router(sync_router, prefix="/api/v1")
         self._app.include_router(stats_router, prefix="/api/v1")
 
     def _setup_exception_handlers(self) -> None:

@@ -23,6 +23,7 @@ from .lists import (
     vehicles_router,
 )
 from .stats import router as stats_router
+from .sync import router as sync_router
 
 
 def setup_aiogram_handlers() -> Router:
@@ -45,6 +46,7 @@ def setup_aiogram_handlers() -> Router:
     router.include_router(broadcast_router)  # Рассылка
     router.include_router(commands_router)  # Остальные команды (/help, /id, /msg, и др.)
     router.include_router(stats_router)  # Статистика
+    router.include_router(sync_router)  # Синхронизация
 
     # Списки
     router.include_router(chats_router)  # Список чатов (FK_Type=9)
@@ -83,6 +85,7 @@ __all__ = [
     "chat_details_router",
     "contacts_router",
     "contact_details_router",
+    "sync_router",
     # Функции настройки
     "setup_aiogram_handlers",
 ]
