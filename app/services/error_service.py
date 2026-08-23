@@ -1031,7 +1031,7 @@ class ErrorService:
         return deleted
 
 
-error_service = ErrorService()
+error_service: ErrorService = ErrorService()
 
 __all__ = [
     "ErrorService",

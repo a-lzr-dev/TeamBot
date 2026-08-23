@@ -113,6 +113,7 @@ class AvanpostRepository:
     @log_exceptions(db_logger)
     async def get_user_ids_default_adding(
         session: AsyncSession,
+        show_logs: bool = True,
     ) -> list[int]:
         """
         Получение списка ID пользователей для добавления по умолчанию.
@@ -122,6 +123,7 @@ class AvanpostRepository:
 
         Args:
             session: Сессия БД (avanpost)
+            show_logs: Отображение подробного логирования
 
         Returns:
             list[int]: Список ID пользователей (user_id)
@@ -141,7 +143,8 @@ class AvanpostRepository:
 
             user_ids = [int(row) for row in rows if row is not None]
 
-            db_logger.info(f"✅ Retrieved {len(user_ids)} user IDs from the procedure.")
+            if show_logs:
+                db_logger.info(f"✅ Retrieved {len(user_ids)} user IDs from the procedure.")
             return user_ids
 
         except Exception as e:
@@ -634,7 +637,7 @@ class AvanpostRepository:
                 }
                 files.append(file_data)
 
-            db_logger.info(f"✅ Found {len(files)} files for message {message_id}")
+            db_logger.debug(f"✅ Found {len(files)} files for message {message_id}")
             return files
 
         except Exception as e:

@@ -469,8 +469,8 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
             # Создание или обновление связи с AvanpostUser
             success, avanpost_user = await _user_repo.create_or_update_avanpost_user_upsert(
                 session=session,
-                telegram_user_id=telegram_user_id,
                 avanpost_user_id=avanpost_user_id,
+                telegram_user_id=telegram_user_id,
                 fk_contact=fk_contact,
                 fk_menugroup=menu_group_id,
                 fphone=phone_number,

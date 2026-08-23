@@ -18,18 +18,20 @@ class DirLanguageRepository:
     async def get_by_id(
         session: AsyncSession,
         language_id: str,
+        show_logs: bool = True,
     ) -> AvanpostDirLanguageModel | None:
         """
         Получение языка по ID.
 
         Args:
-            session: Сессия БД
-            language_id: ID языка (например, 'RU', 'EN')
+            session: Сессия БД,
+            language_id: ID языка (например, 'RU', 'EN'),
+            show_logs: Отображение подробного логирования
 
         Returns:
             AvanpostDirLanguageModel | None: Модель языка или None
         """
-        db_logger.info(f"🔍 [get_by_id] Getting language by ID: {language_id}")
+        db_logger.debug(f"🔍 [get_by_id] Getting language by ID: {language_id}")
 
         stmt = select(AvanpostDirLanguageModel).where(AvanpostDirLanguageModel.FID == language_id)
 
@@ -38,10 +40,11 @@ class DirLanguageRepository:
         result = await session.execute(stmt)
         language = result.scalar_one_or_none()
 
-        if language:
-            db_logger.info(f"✅ [get_by_id] Found language {language_id}")
-        else:
-            db_logger.warning(f"⚠️ [get_by_id] Language {language_id} not found")
+        if show_logs:
+            if language:
+                db_logger.info(f"✅ [get_by_id] Found language {language_id}")
+            else:
+                db_logger.warning(f"⚠️ [get_by_id] Language {language_id} not found")
 
         return language  # type: ignore[no-any-return]
 
@@ -61,7 +64,7 @@ class DirLanguageRepository:
         Returns:
             list[AvanpostDirLanguageModel]: Список языков
         """
-        db_logger.info(f"📋 [get_all] Getting all languages: only_default={only_default}")
+        db_logger.debug(f"📋 [get_all] Getting all languages: only_default={only_default}")
 
         stmt = select(AvanpostDirLanguageModel)
 
@@ -92,7 +95,7 @@ class DirLanguageRepository:
         Returns:
             AvanpostDirLanguageModel | None: Язык по умолчанию или None
         """
-        db_logger.info("🔍 [get_default_language] Getting default language")
+        db_logger.debug("🔍 [get_default_language] Getting default language")
 
         stmt = select(AvanpostDirLanguageModel).where(AvanpostDirLanguageModel.FFlagDefault.is_(True))
 
@@ -124,7 +127,7 @@ class DirLanguageRepository:
         Returns:
             bool: True если язык существует
         """
-        db_logger.info(f"🔍 [exists] Checking existence of language {language_id}")
+        db_logger.debug(f"🔍 [exists] Checking existence of language {language_id}")
 
         stmt = select(AvanpostDirLanguageModel).where(AvanpostDirLanguageModel.FID == language_id)
 
@@ -154,7 +157,7 @@ class DirLanguageRepository:
         Returns:
             AvanpostDirLanguageModel: Созданная модель языка
         """
-        db_logger.info(f"🆕 [create] Creating language: {language_id} (default={is_default})")
+        db_logger.debug(f"🆕 [create] Creating language: {language_id} (default={is_default})")
 
         language = AvanpostDirLanguageModel(
             FID=language_id,
@@ -164,7 +167,7 @@ class DirLanguageRepository:
         await session.flush()
         await session.refresh(language)
 
-        db_logger.info(f"✅ [create] Created language '{language_id}'")
+        db_logger.info(f"✅ Created language '{language_id}'")
         return language
 
     @staticmethod
@@ -185,7 +188,7 @@ class DirLanguageRepository:
         Returns:
             AvanpostDirLanguageModel: Модель языка
         """
-        db_logger.info(f"🔄 [create_or_update] Creating or updating language: {language_id}")
+        db_logger.debug(f"🔄 [create_or_update] Creating or updating language: {language_id}")
 
         # UPSERT: INSERT ... ON CONFLICT DO UPDATE
         stmt = insert(AvanpostDirLanguageModel).values(
@@ -230,21 +233,19 @@ class DirLanguageRepository:
         Returns:
             AvanpostDirLanguageModel: Модель языка
         """
-        db_logger.info(f"🔍 [ensure_language] Ensuring language {language_id} exists")
+        db_logger.debug(f"🔍 [ensure_language] Ensuring language {language_id} exists")
 
-        # Проверяем существование
-        existing = await DirLanguageRepository.get_by_id(session, language_id)
+        # Проверка существования
+        existing = await DirLanguageRepository.get_by_id(session, language_id, show_logs=False)
 
         if existing:
-            # Обновляем флаг, если нужно
             if existing.FFlagDefault != is_default:
                 existing.FFlagDefault = is_default
                 await session.flush()
                 db_logger.info(f"✅ [ensure_language] Updated language '{language_id}' (default={is_default})")
             return existing  # type: ignore[no-any-return]
 
-        # Создаем новый язык
-        db_logger.warning(f"⚠️ [ensure_language] Language '{language_id}' not found, creating...")
+        # Создание нового языка
         return await DirLanguageRepository.create(session, language_id, is_default)  # type: ignore[no-any-return]
 
     @staticmethod
@@ -263,7 +264,7 @@ class DirLanguageRepository:
         Returns:
             bool: True если язык был удален
         """
-        db_logger.info(f"🗑️ [delete] Deleting language: {language_id}")
+        db_logger.debug(f"🗑️ [delete] Deleting language: {language_id}")
 
         language = await DirLanguageRepository.get_by_id(session, language_id)
 
@@ -294,7 +295,7 @@ class DirLanguageRepository:
         Returns:
             list[str]: Список кодов языков
         """
-        db_logger.info("📋 [get_language_codes] Getting all language codes")
+        db_logger.debug("📋 [get_language_codes] Getting all language codes")
 
         stmt = select(AvanpostDirLanguageModel.FID).order_by(AvanpostDirLanguageModel.FID)
 
@@ -326,7 +327,7 @@ class DirContactGroupRepository:
         Returns:
             AvanpostDirContactGroupModel | None: Модель группы или None
         """
-        db_logger.info(f"🔍 [get_by_id] Getting contact group by ID: {group_id}")
+        db_logger.debug(f"🔍 [get_by_id] Getting contact group by ID: {group_id}")
 
         stmt = select(AvanpostDirContactGroupModel).where(AvanpostDirContactGroupModel.FID == group_id)
 
@@ -358,7 +359,7 @@ class DirContactGroupRepository:
         Returns:
             list[AvanpostDirContactGroupModel]: Список групп
         """
-        db_logger.info(f"📋 [get_all] Getting all contact groups: only_active={only_active}")
+        db_logger.debug(f"📋 [get_all] Getting all contact groups: only_active={only_active}")
 
         stmt = select(AvanpostDirContactGroupModel).order_by(AvanpostDirContactGroupModel.FID)
 
@@ -390,7 +391,7 @@ class DirContactGroupRepository:
         Returns:
             AvanpostDirContactGroupModel | None: Модель группы или None
         """
-        db_logger.info(f"🔍 [get_by_name] Getting contact group by name: {name}")
+        db_logger.debug(f"🔍 [get_by_name] Getting contact group by name: {name}")
 
         stmt = select(AvanpostDirContactGroupModel).where(AvanpostDirContactGroupModel.FName == name)
 
@@ -426,7 +427,7 @@ class DirContactGroupRepository:
         Returns:
             AvanpostDirContactGroupModel: Созданная модель группы
         """
-        db_logger.info(f"🆕 [create] Creating contact group: id={group_id}, name={name}")
+        db_logger.debug(f"🆕 [create] Creating contact group: id={group_id}, name={name}")
 
         group = AvanpostDirContactGroupModel(
             FID=group_id,
@@ -460,7 +461,7 @@ class DirContactGroupRepository:
         Returns:
             AvanpostDirContactGroupModel: Модель группы
         """
-        db_logger.info(f"🔄 [create_or_update] Creating or updating contact group: id={group_id}, name={name}")
+        db_logger.debug(f"🔄 [create_or_update] Creating or updating contact group: id={group_id}, name={name}")
 
         # UPSERT: INSERT ... ON CONFLICT DO UPDATE
         stmt = insert(AvanpostDirContactGroupModel).values(
@@ -509,7 +510,7 @@ class DirContactGroupRepository:
         Returns:
             AvanpostDirContactGroupModel: Модель группы
         """
-        db_logger.info(f"🔍 [ensure_group] Ensuring contact group exists: id={group_id}, name={name}")
+        db_logger.debug(f"🔍 [ensure_group] Ensuring contact group exists: id={group_id}, name={name}")
 
         # Проверяем существование
         existing = await DirContactGroupRepository.get_by_id(session, group_id)
@@ -542,7 +543,7 @@ class DirContactGroupRepository:
         Returns:
             bool: True если группа была удалена
         """
-        db_logger.info(f"🗑️ [delete] Deleting contact group: {group_id}")
+        db_logger.debug(f"🗑️ [delete] Deleting contact group: {group_id}")
 
         group = await DirContactGroupRepository.get_by_id(session, group_id)
 
@@ -573,7 +574,7 @@ class DirContactGroupRepository:
         Returns:
             list[int]: Список ID групп
         """
-        db_logger.info("📋 [get_group_ids] Getting all contact group IDs")
+        db_logger.debug("📋 [get_group_ids] Getting all contact group IDs")
 
         stmt = select(AvanpostDirContactGroupModel.FID).order_by(AvanpostDirContactGroupModel.FID)
 
@@ -601,7 +602,7 @@ class DirContactGroupRepository:
         Returns:
             bool: True если группа существует
         """
-        db_logger.info(f"🔍 [exists] Checking existence of contact group {group_id}")
+        db_logger.debug(f"🔍 [exists] Checking existence of contact group {group_id}")
 
         stmt = select(AvanpostDirContactGroupModel).where(AvanpostDirContactGroupModel.FID == group_id)
 

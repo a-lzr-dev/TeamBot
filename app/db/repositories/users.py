@@ -104,7 +104,7 @@ class UserRepository:
             if updated:
                 user.FDateUpdated = datetime_now()
                 await session.flush()
-                db_logger.info(f"✅ [save_user] Updated user {user_id}")
+                db_logger.info(f"✅ Updated user {user_id}")
             else:
                 db_logger.debug(f"ℹ️ [save_user] User {user_id} already exists")
         else:
@@ -122,19 +122,20 @@ class UserRepository:
             )
             session.add(user)
             await session.flush()
-            db_logger.info(f"✅ [save_user] Created new user {user_id}")
+            db_logger.info(f"✅ Created new user {user_id}")
 
         return user
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_by_id(session: AsyncSession, user_id: int) -> UserModel | None:
+    async def get_user_by_id(session: AsyncSession, user_id: int, show_logs: bool = True) -> UserModel | None:
         """
         Получение пользователя по ID.
 
         Args:
-            session: Сессия БД
-            user_id: ID пользователя
+            session: Сессия БД,
+            user_id: ID пользователя,
+            show_logs: Отображение подробного логирования
 
         Returns:
             UserModel | None: Найденный пользователь или None
@@ -146,10 +147,11 @@ class UserRepository:
 
         user: UserModel | None = await session.get(UserModel, user_id)
 
-        if user:
-            db_logger.info(f"✅ [get_user_by_id] Found user {user_id}")
-        else:
-            db_logger.warning(f"⚠️ [get_user_by_id] User {user_id} not found")
+        if show_logs:
+            if user:
+                db_logger.debug(f"✅ Found user {user_id}")
+            else:
+                db_logger.warning(f"⚠️ [get_user_by_id] User {user_id} not found")
 
         return user
 
@@ -180,7 +182,7 @@ class UserRepository:
         user: UserModel | None = result.scalar_one_or_none()
 
         if user:
-            db_logger.info(f"✅ [get_user_by_phone] Found user {user.FID} for phone {phone}")
+            db_logger.debug(f"✅ Found user {user.FID} for phone {phone}")
         else:
             db_logger.warning(f"⚠️ [get_user_by_phone] No user found for phone {phone}")
 
@@ -217,7 +219,7 @@ class UserRepository:
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_all_users] Found {len(users)} users")
+        db_logger.debug(f"✅ Found {len(users)} users")
         return users
 
     @staticmethod
@@ -259,7 +261,7 @@ class UserRepository:
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_authorized_users] Found {len(users)} authorized users")
+        db_logger.debug(f"✅ Found {len(users)} authorized users")
         return users
 
     @staticmethod
@@ -293,7 +295,7 @@ class UserRepository:
             result = await session.execute(stmt)
             count = result.scalar() or 0
 
-            db_logger.info(f"✅ [get_authorized_users_count] Authorized users count: {count}")
+            db_logger.info(f"✅ Authorized users count: {count}")
             return count
 
         except Exception as e:
@@ -341,7 +343,7 @@ class UserRepository:
         result: Result = await session.execute(stmt)
         users: list[UserModel] = list(result.scalars().all())
 
-        db_logger.info(f"✅ [search_users] Found {len(users)} users matching '{query}'")
+        db_logger.debug(f"✅ Found {len(users)} users matching '{query}'")
         return users
 
     # ==================== 3. РАБОТА С AVANPOST ПОЛЬЗОВАТЕЛЯМИ ====================
@@ -381,7 +383,7 @@ class UserRepository:
         result = await session.execute(stmt)
         users = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_all_avanpost_users] Found {len(users)} Avanpost users")
+        db_logger.debug(f"✅ Found {len(users)} Avanpost users")
         return users
 
     @staticmethod
@@ -389,6 +391,7 @@ class UserRepository:
     async def get_avanpost_user_data(
         session: AsyncSession,
         avanpost_user_id: int,
+        show_logs: bool = True,
     ) -> dict[str, Any] | None:
         """
         Получение данных пользователя из TAvanpostUsers.
@@ -396,6 +399,7 @@ class UserRepository:
         Args:
             session: Сессия БД (main)
             avanpost_user_id: ID пользователя в TAvanpostUsers
+            show_logs: Отображение подробного логирования
 
         Returns:
             dict | None: Данные пользователя или None
@@ -414,7 +418,8 @@ class UserRepository:
             user = result.scalar_one_or_none()
 
             if not user:
-                db_logger.warning(f"⚠️ [get_avanpost_user_data] Avanpost user {avanpost_user_id} not found")
+                if show_logs:
+                    db_logger.warning(f"⚠️ [get_avanpost_user_data] Avanpost user {avanpost_user_id} not found")
                 return None
 
             user_data = {
@@ -428,7 +433,8 @@ class UserRepository:
                 "FPhone": user.FPhone,
             }
 
-            db_logger.info(f"✅ [get_avanpost_user_data] Found Avanpost user {avanpost_user_id}")
+            if show_logs:
+                db_logger.debug(f"✅ Found Avanpost user {avanpost_user_id}")
             return user_data
 
         except Exception as e:
@@ -479,9 +485,7 @@ class UserRepository:
             user: AvanpostUserModel | None = result.scalar_one_or_none()
 
             if user:
-                db_logger.info(
-                    f"✅ [get_avanpost_user_by_telegram_id] Found AvanpostUser {user.FID} for telegram user {telegram_user_id}"
-                )
+                db_logger.debug(f"✅ Found AvanpostUser {user.FID} for telegram user {telegram_user_id}")
             else:
                 db_logger.warning(
                     f"⚠️ [get_avanpost_user_by_telegram_id] No AvanpostUser found for telegram user {telegram_user_id}"
@@ -546,9 +550,7 @@ class UserRepository:
             session.add(user)
             await session.flush()
 
-            db_logger.info(
-                f"✅ [create_avanpost_user] Created AvanpostUser {avanpost_user_id} with contact {fk_contact}"
-            )
+            db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id} with contact {fk_contact}")
             return user
 
         except Exception as e:
@@ -597,7 +599,7 @@ class UserRepository:
 
         try:
             # 1. Проверка существования пользователя в TUsers
-            user = await UserRepository.get_user_by_id(session, telegram_user_id)
+            user = await UserRepository.get_user_by_id(session, telegram_user_id, show_logs=False)
             if not user:
                 db_logger.error(f"❌ [create_or_update_avanpost_user] User {telegram_user_id} not found")
                 return False, None
@@ -612,7 +614,7 @@ class UserRepository:
 
             if avanpost_user:
                 # Обновление существующей записи
-                db_logger.info(f"🔄 [create_or_update_avanpost_user] Updating existing AvanpostUser {avanpost_user_id}")
+                db_logger.debug(f"🔄 Updating existing AvanpostUser {avanpost_user_id}")
 
                 if fk_contact is not None:
                     avanpost_user.FK_Contact = fk_contact
@@ -633,11 +635,11 @@ class UserRepository:
                 avanpost_user.FK_User = telegram_user_id
 
                 await session.flush()
-                db_logger.info(f"✅ [create_or_update_avanpost_user] Updated AvanpostUser {avanpost_user.FID}")
+                db_logger.info(f"✅ Updated AvanpostUser {avanpost_user.FID}")
                 return True, avanpost_user
 
             # 3. Создание нового AvanpostUser
-            db_logger.info(f"🆕 [create_or_update_avanpost_user] Creating new AvanpostUser {avanpost_user_id}")
+            db_logger.debug(f"🆕 Creating new AvanpostUser {avanpost_user_id}")
 
             new_user = AvanpostUserModel(
                 FID=avanpost_user_id,
@@ -653,7 +655,7 @@ class UserRepository:
             session.add(new_user)
             await session.flush()
 
-            db_logger.info(f"✅ [create_or_update_avanpost_user] Created AvanpostUser {avanpost_user_id}")
+            db_logger.info(f"✅ Created AvanpostUser {avanpost_user_id}")
             return True, new_user
 
         except Exception as e:
@@ -664,8 +666,8 @@ class UserRepository:
     @log_exceptions(db_logger)
     async def create_or_update_avanpost_user_upsert(
         session: AsyncSession,
-        telegram_user_id: int,
         avanpost_user_id: int,
+        telegram_user_id: int | None,
         telegram_user_required: bool = True,
         fk_contact: int | None = None,
         fk_language: str | None = None,
@@ -674,6 +676,7 @@ class UserRepository:
         fk_motorcade: int | None = None,
         fname: str | None = None,
         fphone: str | None = None,
+        show_logs: bool = True,
     ) -> tuple[bool, AvanpostUserModel | None]:
         """
         Создание или обновление связи пользователя с Avanpost через UPSERT.
@@ -684,8 +687,8 @@ class UserRepository:
 
         Args:
             session: Сессия БД (main)
-            telegram_user_id: ID пользователя в Telegram
             avanpost_user_id: ID пользователя в Avanpost
+            telegram_user_id: ID пользователя в Telegram
             telegram_user_required: Требуется ли Telegram пользователь
             fk_contact: ID контакта
             fk_language: Код языка
@@ -694,6 +697,7 @@ class UserRepository:
             fk_motorcade: ID моторкада
             fname: Имя
             fphone: Телефон
+            show_logs: Отображение подробного логирования
 
         Returns:
             tuple[bool, AvanpostUserModel | None]: (успех, модель пользователя)
@@ -777,14 +781,14 @@ class UserRepository:
             user = result_user.scalar_one_or_none()
 
             if user:
-                db_logger.info(
-                    f"✅ [create_or_update_avanpost_user_upsert] UPSERT AvanpostUser {avanpost_user_id} for user {telegram_user_id}"
-                )
+                if show_logs:
+                    db_logger.info(f"✅ UPSERT AvanpostUser {avanpost_user_id} for user {telegram_user_id}")
                 return True, user
             else:
-                db_logger.error(
-                    f"❌ [create_or_update_avanpost_user_upsert] Failed to get AvanpostUser {avanpost_user_id}"
-                )
+                if show_logs:
+                    db_logger.error(
+                        f"❌ [create_or_update_avanpost_user_upsert] Failed to get AvanpostUser {avanpost_user_id}"
+                    )
                 return False, None
 
         except Exception as e:
@@ -834,7 +838,7 @@ class UserRepository:
             user.FK_User = telegram_user_id
             await session.flush()
 
-            db_logger.info(f"✅ [update_avanpost_user_telegram_link] Updated AvanpostUser.FK_User = {telegram_user_id}")
+            db_logger.info(f"✅ Updated AvanpostUser.FK_User = {telegram_user_id}")
             return True
 
         except Exception as e:
@@ -886,7 +890,7 @@ class UserRepository:
             if not isinstance(user, UserModel):
                 return None
 
-            db_logger.info(f"✅ [get_user_with_avanpost] Found user {user_id}")
+            db_logger.debug(f"✅ Found user {user_id}")
             return user
 
         except Exception as e:
@@ -947,7 +951,7 @@ class UserRepository:
             if user.avanpost_link.avanpost_user:
                 group_id = user.avanpost_link.avanpost_user.FK_MenuGroup
                 if group_id is not None:
-                    db_logger.info(f"✅ [get_user_group_id] User {user_id} has group {group_id}")
+                    db_logger.info(f"✅ User {user_id} has group {group_id}")
                 else:
                     db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} has no group assigned")
 
@@ -999,7 +1003,7 @@ class UserRepository:
             result = await session.execute(stmt)
             authorized = result.first() is not None
 
-            db_logger.info(f"✅ [is_user_authorized] User {user_id} authorized: {authorized}")
+            db_logger.info(f"✅ User {user_id} authorized: {authorized}")
             return authorized
 
         except Exception as e:
@@ -1043,7 +1047,7 @@ class UserRepository:
                 # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
-                db_logger.info(f"✅ [is_user_authenticated] User {user_id} is authenticated")
+                db_logger.info(f"✅ User {user_id} is authenticated")
                 return True
 
             db_logger.info(f"❌ [is_user_authenticated] User {user_id} is NOT authenticated")
@@ -1103,7 +1107,7 @@ class UserRepository:
                 if not isinstance(user, UserModel):
                     return None
 
-                db_logger.info(f"✅ [get_authenticated_user] Found authenticated user {user_id}")
+                db_logger.debug(f"✅ Found authenticated user {user_id}")
                 return user
 
             db_logger.warning(f"⚠️ [get_authenticated_user] User {user_id} is not authenticated")
@@ -1160,7 +1164,7 @@ class UserRepository:
         if user:
             user.FDateLastActivity = datetime_now()
             await session.flush()
-            db_logger.info(f"✅ [update_last_activity] Updated last activity for user {user_id}")
+            db_logger.info(f"✅ Updated last activity for user {user_id}")
             return True
 
         db_logger.warning(f"⚠️ [update_last_activity] User {user_id} not found")
@@ -1199,14 +1203,14 @@ class UserRepository:
         # Удаление связи с AvanpostUser
         if user.avanpost_user:
             await session.delete(user.avanpost_user)
-            db_logger.info(f"✅ [logout_user] Deleted AvanpostUser for user {user_id}")
+            db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
 
         # Очистка Telegram данных
         user.FK_Chat = None
         user.FDateUpdated = datetime_now()
 
         await session.flush()
-        db_logger.info(f"✅ [logout_user] User {user_id} logged out")
+        db_logger.info(f"✅ User {user_id} logged out")
         return True
 
     @staticmethod
@@ -1230,7 +1234,7 @@ class UserRepository:
         if not user_id or user_id <= 0:
             return False
 
-        db_logger.info(f"🧹 [clear_telegram_data] Clearing Telegram data for user {user_id}")
+        db_logger.debug(f"🧹 Clearing Telegram data for user {user_id}")
 
         user: UserModel | None = await session.get(UserModel, user_id)
         if not user:
@@ -1240,13 +1244,13 @@ class UserRepository:
         if user.avanpost_user:
             # Удаление записи из TAvanpostUsers для этого пользователя
             await session.delete(user.avanpost_user)
-            db_logger.info(f"✅ [clear_telegram_data] Deleted AvanpostUser for user {user_id}")
+            db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
 
         user.FK_Chat = None
         user.FDateUpdated = datetime_now()
         await session.flush()
 
-        db_logger.info(f"✅ [clear_telegram_data] Cleared Telegram data for user {user_id}")
+        db_logger.info(f"✅ Cleared Telegram data for user {user_id}")
         return True
 
     # ==================== 6. СТАТИСТИКА ====================
@@ -1304,9 +1308,7 @@ class UserRepository:
             "created_at": user.FDateCreated.isoformat() if user.FDateCreated else None,
         }
 
-        db_logger.info(
-            f"✅ [get_user_stats] Stats for user {user_id}: messages={messages_count}, errors={errors_resolved}"
-        )
+        db_logger.info(f"✅ Stats for user {user_id}: messages={messages_count}, errors={errors_resolved}")
         return stats
 
 

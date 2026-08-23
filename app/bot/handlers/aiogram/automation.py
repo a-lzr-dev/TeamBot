@@ -191,7 +191,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             "Максимальный размер файла: 50MB\n\n"
             "Для отмены используйте /cancel",
             parse_mode="Markdown",
-            reply_markup=AutomationKeyboard.get_back_keyboard(),
+            reply_markup=await AutomationKeyboard.get_back_keyboard(),
         )
         await state.set_state(AutomationStates.waiting_for_file)
 
@@ -206,7 +206,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 callback,
                 "❌ **Файл не найден**\n\nПожалуйста, отправьте файл заново.",
                 parse_mode="Markdown",
-                reply_markup=AutomationKeyboard.get_back_keyboard(),
+                reply_markup=await AutomationKeyboard.get_back_keyboard(),
             )
             return
 
@@ -227,7 +227,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                     callback,
                     f"❌ **Ошибка конвертации**\n\n{result['error']}",
                     parse_mode="Markdown",
-                    reply_markup=AutomationKeyboard.get_back_keyboard(),
+                    reply_markup=await AutomationKeyboard.get_back_keyboard(),
                 )
                 return
 
@@ -261,7 +261,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 text=f"❌ **Ошибка конвертации**\n\n{str(e)}",
                 callback=callback,
                 parse_mode="Markdown",
-                reply_markup=AutomationKeyboard.get_back_keyboard(),
+                reply_markup=await AutomationKeyboard.get_back_keyboard(),
             )
 
     # --- 3. Создание заявки ---
@@ -272,7 +272,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             "📝 **Новая заявка на автоматизацию**\n\n"
             "Введите **название** заявки (краткое описание того, что нужно автоматизировать):",
             parse_mode="Markdown",
-            reply_markup=AutomationKeyboard.get_back_keyboard(),
+            reply_markup=await AutomationKeyboard.get_back_keyboard(),
         )
         await state.set_state(AutomationStates.waiting_for_request_title)
 
@@ -288,7 +288,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 callback,
                 "❌ **Недостаточно данных**\n\nПожалуйста, начните создание заявки заново.",
                 parse_mode="Markdown",
-                reply_markup=AutomationKeyboard.get_back_keyboard(),
+                reply_markup=await AutomationKeyboard.get_back_keyboard(),
             )
             return
 
@@ -308,7 +308,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 callback,
                 f"❌ **Ошибка создания заявки**\n\n{result['error']}",
                 parse_mode="Markdown",
-                reply_markup=AutomationKeyboard.get_back_keyboard(),
+                reply_markup=await AutomationKeyboard.get_back_keyboard(),
             )
             return
 
@@ -325,7 +325,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             f"Статус: 🆕 Новая\n\n"
             f"Администратор рассмотрит вашу заявку в ближайшее время.",
             parse_mode="Markdown",
-            reply_markup=AutomationKeyboard.get_back_keyboard(),
+            reply_markup=await AutomationKeyboard.get_back_keyboard(),
         )
 
         # Очистка временных данных
@@ -337,7 +337,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             callback,
             "✏️ **Редактирование заявки**\n\nВведите новое **название** заявки:",
             parse_mode="Markdown",
-            reply_markup=AutomationKeyboard.get_back_keyboard(),
+            reply_markup=await AutomationKeyboard.get_back_keyboard(),
         )
         await state.set_state(AutomationStates.waiting_for_request_title)
 
@@ -387,7 +387,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
                 "У вас пока нет заявок на автоматизацию.\n\n"
                 "Используйте 'Оставить заявку' чтобы создать новую.",
                 parse_mode="Markdown",
-                reply_markup=AutomationKeyboard.get_back_keyboard(),
+                reply_markup=await AutomationKeyboard.get_back_keyboard(),
             )
             return
 
@@ -413,7 +413,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
             callback,
             text,
             parse_mode="Markdown",
-            reply_markup=AutomationKeyboard.get_back_keyboard(),
+            reply_markup=await AutomationKeyboard.get_back_keyboard(),
         )
 
     # --- 6. Отмена и возврат ---

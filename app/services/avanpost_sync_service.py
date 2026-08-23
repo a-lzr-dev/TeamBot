@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db import db_manager
 from ..db.repositories import AvanpostRepository, GenericRepository, SystemRepository, UserRepository
-from ..logger import app_logger
+from ..logger import app_logger, stat_logger
 from ..models import datetime_now
 from ..models.avanpost import get_avanpost_model, get_avanpost_table_name
 
@@ -361,12 +361,12 @@ class SyncStatistics:
 
         if not has_changes and not has_errors and not has_user_errors and not force:
             if has_received_data:
-                app_logger.warning(
+                stat_logger.warning(
                     f"⚠️ {title}: Received {self.total_received} records from Avanpost, "
                     f"but no changes detected (all data is up to date)"
                 )
             else:
-                app_logger.info(f"✅ {title}: No changes detected (all data is up to date)")
+                stat_logger.info(f"✅ {title}: No changes detected (all data is up to date)")
             return
 
         duration = None
@@ -399,16 +399,19 @@ class SyncStatistics:
 
         if not filtered_tables:
             if has_received_data:
-                app_logger.info(f"✅ {title}: Received {self.total_received} records but no changes detected")
+                stat_logger.info(f"✅ {title}: Received {self.total_received} records but no changes detected")
             else:
-                app_logger.info(f"✅ {title}: No changes detected")
+                stat_logger.info(f"✅ {title}: No changes detected")
             return
 
         max_table_len = max(50, min(max(len(t) for t in filtered_tables), 80))
         separator_len = max_table_len + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 8 + 10 + 18
 
-        print("\n📋 SYNC STATISTICS:")
-        print("-" * separator_len)
+        # Сбор всех строк в список
+        lines = [
+            "📋 SYNC STATISTICS:",
+            "-" * separator_len,
+        ]
 
         header = (
             f"{'Table':<{max_table_len}} "
@@ -425,8 +428,8 @@ class SyncStatistics:
             f"{'UserErr':>8} "
             f"{'  Status':<10}"
         )
-        print(header)
-        print("-" * separator_len)
+        lines.append(header)
+        lines.append("-" * separator_len)
 
         total_received_upsert = 0
         total_received_delete = 0
@@ -473,7 +476,7 @@ class SyncStatistics:
             else:
                 continue
 
-            print(
+            lines.append(
                 f"{table:<{max_table_len}} "
                 f"{received:>8} "
                 f"{received_delete:>8} "
@@ -489,7 +492,7 @@ class SyncStatistics:
                 f"{status:<10}"
             )
 
-        print("-" * separator_len)
+        lines.append("-" * separator_len)
         status_text = " ⚠️ ERRORS" if total_errors > 0 or len(self.failed_user_ids) > 0 else "  ✅ DONE"
         duration_str = f"{duration:.2f}s" if duration else "N/A"
         total_received = total_received_upsert
@@ -499,7 +502,7 @@ class SyncStatistics:
 
         summary_label = f"📊 SUMMARY (Tables: {len(filtered_tables)}, Duration: {duration_str})"
 
-        print(
+        lines.append(
             f"{summary_label:<{max_table_len - 1}} "
             f"{total_received:>8} "
             f"{total_received_delete:>8} "
@@ -514,23 +517,27 @@ class SyncStatistics:
             f"{users_err:>8} "
             f"{status_text:<10}"
         )
-        print("-" * separator_len)
+        lines.append("-" * separator_len)
 
         if self.failed_user_ids:
-            print(f"\n❌ USERS WITH ERRORS ({len(self.failed_user_ids)}):")
+            lines.append(f"\n❌ USERS WITH ERRORS ({len(self.failed_user_ids)}):")
             failed_ids_str = ", ".join(map(str, self.failed_user_ids))
-            print(f"   {failed_ids_str}")
+            lines.append(f"   {failed_ids_str}")
 
         if self.tables_with_errors:
-            print(f"\n❌ TABLES WITH ERRORS ({len(self.tables_with_errors)}):")
+            lines.append(f"\n❌ TABLES WITH ERRORS ({len(self.tables_with_errors)}):")
             for table in sorted(self.tables_with_errors):
-                print(f"   - {table}")
+                lines.append(f"   - {table}")
             if self.error_messages:
-                print("\n📝 Error details:")
+                lines.append("\n📝 Error details:")
                 for err in self.error_messages[:10]:
-                    print(f"   - {err}")
+                    lines.append(f"   - {err}")
                 if len(self.error_messages) > 10:
-                    print(f"   - ... и еще {len(self.error_messages) - 10} ошибок")
+                    lines.append(f"   - ... и еще {len(self.error_messages) - 10} ошибок")
+
+        # Выводим через stat_logger
+        for line in lines:
+            stat_logger.info(line)
 
 
 # ==================== ОСНОВНОЙ СЕРВИС ====================
@@ -709,16 +716,16 @@ class AvanpostSyncService:
         Args:
             data_types: Список ID типов данных
             user_id: ID пользователя (для пользовательских данных)
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
 
         Returns:
             dict[int, datetime]: Словарь {data_type_id: sync_time}
         """
         async with db_manager.get_session(show_logs=show_logs) as session:
             if user_id is None:
-                return await SystemRepository.get_sync_times(session, data_types, show_logs)  # type: ignore[no-any-return]
+                return await SystemRepository.get_sync_times(session, data_types, show_logs=show_logs)  # type: ignore[no-any-return]
             else:
-                return await SystemRepository.get_user_sync_times(session, user_id, data_types, show_logs)  # type: ignore[no-any-return]
+                return await SystemRepository.get_user_sync_times(session, user_id, data_types)  # type: ignore[no-any-return]
 
     @staticmethod
     async def _update_sync_times(
@@ -732,20 +739,20 @@ class AvanpostSyncService:
         Args:
             sync_times: Словарь {data_type_id: sync_time}
             user_id: ID пользователя (для пользовательских данных)
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         if not sync_times:
             return
 
         async with db_manager.get_session(show_logs=show_logs) as session:
             if user_id is None:
-                await SystemRepository.update_sync_times_bulk(session, sync_times, show_logs)
+                await SystemRepository.update_sync_times_bulk(session, sync_times, show_logs=show_logs)
             else:
-                await SystemRepository.update_user_sync_times_bulk(session, user_id, sync_times, show_logs)
+                await SystemRepository.update_user_sync_times_bulk(session, user_id, sync_times, show_logs=show_logs)
 
     # ==================== 3. СИНХРОНИЗАЦИЯ БАЗОВЫХ ДАННЫХ ====================
 
-    async def sync_base_data(self, force: bool = False) -> SyncStatistics:
+    async def sync_base_data(self, force: bool = False, show_logs: bool = True) -> SyncStatistics:
         """
         Синхронизация базовых данных (справочники).
 
@@ -753,6 +760,7 @@ class AvanpostSyncService:
 
         Args:
             force: Принудительная синхронизация (игнорировать кеш)
+            show_logs: Отображение подробного логирования
 
         Returns:
             SyncStatistics: Статистика синхронизации
@@ -826,14 +834,14 @@ class AvanpostSyncService:
 
             # 5. Обработка полученных данных
             if all_data_items:
-                await self._process_base_data_items(all_data_items, stats)
+                await self._process_base_data_items(all_data_items, stats, show_logs=show_logs)
                 app_logger.info("✅ Base data synchronization completed")
             else:
                 app_logger.debug("ℹ️ No data received from procedure")
 
             # 6. Обновление времени синхронизации в БД
             if sync_times:
-                await self._update_sync_times(sync_times)
+                await self._update_sync_times(sync_times, show_logs=show_logs)
                 app_logger.debug(f"✅ Updated sync times for {len(sync_times)} data types")
 
             stats.finish()
@@ -854,6 +862,7 @@ class AvanpostSyncService:
         self,
         all_data_items: list[dict[str, Any]],
         stats: SyncStatistics,
+        show_logs: bool = True,
     ) -> None:
         """
         Обработка полученных данных для базовой синхронизации.
@@ -927,10 +936,14 @@ class AvanpostSyncService:
             stats.add_received(table_name, upsert_count, delete_count)
 
         # 1. DELETE (в порядке из JSON)
-        await self._process_delete_records(delete_order, delete_records_by_table, data_type_for_table, stats)
+        await self._process_delete_records(
+            delete_order, delete_records_by_table, data_type_for_table, stats, show_logs=show_logs
+        )
 
         # 2. UPSERT (в порядке из JSON)
-        await self._process_upsert_records(upsert_order, upsert_records_by_table, data_type_for_table, stats)
+        await self._process_upsert_records(
+            upsert_order, upsert_records_by_table, data_type_for_table, stats, show_logs=show_logs
+        )
 
     async def _process_delete_records(
         self,
@@ -938,6 +951,7 @@ class AvanpostSyncService:
         delete_records_by_table: dict[str, list[dict[str, Any]]],
         data_type_for_table: dict[str, int],
         stats: SyncStatistics,
+        show_logs: bool = True,
     ) -> None:
         """Обработка DELETE записей."""
         async with db_manager.get_session() as session:
@@ -978,6 +992,7 @@ class AvanpostSyncService:
                         primary_keys=pk_columns,
                         chunk_size=1000,
                         raise_on_error=False,
+                        show_logs=show_logs,
                     )
 
                     if deleted > 0:
@@ -988,7 +1003,7 @@ class AvanpostSyncService:
                         stats.add_error_records(table_name, errors)
                         stats.add_error(table_name, f"DELETE errors: {errors} records")
 
-                    app_logger.debug(
+                    app_logger.info(
                         f"🗑️ DELETE result for {table_name}: deleted={deleted}, unchanged={unchanged}, errors={errors}"
                     )
 
@@ -1079,7 +1094,7 @@ class AvanpostSyncService:
                         if result.get("error_records", 0) > 0:
                             stats.add_error_records(table_name, result["error_records"])
 
-                        app_logger.debug(
+                        app_logger.info(
                             f"✅ UPSERT chunk {chunk_idx // chunk_size_upsert + 1}/{total_chunks} for {table_name}: "
                             f"inserted={result.get('inserted', 0)}, "
                             f"updated={result.get('updated', 0)}, "
@@ -1116,7 +1131,7 @@ class AvanpostSyncService:
             force: Принудительная синхронизация
             mode: Тип синхронизации (1 - base, 2 - details)
             suppress_report: Подавить вывод отчета
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
 
         Returns:
             SyncStatistics: Статистика синхронизации
@@ -1181,7 +1196,7 @@ class AvanpostSyncService:
 
             # 4. Обработка полученных данных
             if all_data_items:
-                await self._process_user_data_items(all_data_items, data_types, stats)
+                await self._process_user_data_items(all_data_items, data_types, stats, show_logs=show_logs)
             elif show_logs:
                 app_logger.debug(f"ℹ️ No data received for user {user_id}")
 
@@ -1191,6 +1206,7 @@ class AvanpostSyncService:
                 processed_data_types=processed_data_types,
                 all_requested_types=all_requested_types,
                 stats=stats,
+                show_logs=show_logs,
             )
 
             stats.finish()
@@ -1212,6 +1228,7 @@ class AvanpostSyncService:
         all_data_items: list[dict[str, Any]],
         data_types: list[int],
         stats: SyncStatistics,
+        show_logs: bool = True,
     ) -> None:
         """Обработка полученных данных для пользовательской синхронизации."""
         # Разделение записей на DELETE и UPSERT
@@ -1273,10 +1290,14 @@ class AvanpostSyncService:
             stats.add_received(table_name, upsert_count, delete_count)
 
         # 1. DELETE
-        await self._process_delete_records(delete_order, delete_records_by_table, data_type_for_table, stats)
+        await self._process_delete_records(
+            delete_order, delete_records_by_table, data_type_for_table, stats, show_logs=show_logs
+        )
 
         # 2. UPSERT
-        await self._process_upsert_records(upsert_order, upsert_records_by_table, data_type_for_table, stats)
+        await self._process_upsert_records(
+            upsert_order, upsert_records_by_table, data_type_for_table, stats, show_logs=show_logs
+        )
 
     async def _update_user_sync_times(
         self,
@@ -1294,7 +1315,7 @@ class AvanpostSyncService:
             processed_data_types: Типы с данными
             all_requested_types: Все запрошенные типы
             stats: Объект статистики
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         # Сбор всех успешно обработанных типов
         successfully_processed_types = set()
@@ -1322,7 +1343,7 @@ class AvanpostSyncService:
             current_time = datetime_now()
             sync_times = dict.fromkeys(successfully_processed_types, current_time)
 
-            await self._update_sync_times(sync_times, user_id)
+            await self._update_sync_times(sync_times, user_id, show_logs=show_logs)
             if show_logs:
                 (app_logger.debug(f"✅ Updated sync times for {len(sync_times)} data types for user {user_id}"))
 
@@ -1379,10 +1400,10 @@ class AvanpostSyncService:
         async with db_manager.get_session() as session:
             if user_ids:
                 # Синхронизация только указанных пользователей
-                app_logger.info(f"👤 Syncing {len(user_ids)} specific users: {user_ids}")
+                app_logger.info(f"🚀 Starting Sync {len(user_ids)} specific users: {user_ids}")
                 users_to_sync = []
                 for uid in user_ids:
-                    user = await UserRepository.get_avanpost_user_data(session, uid)
+                    user = await UserRepository.get_avanpost_user_data(session, uid, show_logs=False)
                     if user:
                         users_to_sync.append(uid)
                     else:

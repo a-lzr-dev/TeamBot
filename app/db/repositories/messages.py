@@ -118,7 +118,7 @@ class MessageRepository:
         await session.flush()
         await session.refresh(message)
 
-        db_logger.info(f"✅ [create_message] Created message {message.FID} in chat {chat_id}")
+        db_logger.info(f"✅ Created message {message.FID} in chat {chat_id}")
         return message
 
     @staticmethod
@@ -174,7 +174,7 @@ class MessageRepository:
         if updated:
             await session.flush()
             await session.refresh(message)
-            db_logger.info(f"✅ [update_message] Updated message {message_id}")
+            db_logger.info(f"✅ Updated message {message_id}")
 
         return message  # type: ignore[no-any-return]
 
@@ -232,7 +232,7 @@ class MessageRepository:
             if updated:
                 await session.flush()
                 await session.refresh(existing)
-                db_logger.info(f"✅ [create_or_update_message] Updated existing message {message_id}")
+                db_logger.info(f"✅ Updated existing message {message_id}")
 
             return existing, False
 
@@ -288,7 +288,7 @@ class MessageRepository:
         message = result.scalar_one_or_none()
 
         if message:
-            db_logger.info(f"✅ [get_message_by_id] Found message {message_id}")
+            db_logger.debug(f"✅ Found message {message_id}")
         else:
             db_logger.warning(f"⚠️ [get_message_by_id] Message {message_id} not found")
 
@@ -328,7 +328,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages_by_ids] Found {len(messages)} messages")
+        db_logger.debug(f"✅ Found {len(messages)} messages")
         return messages
 
     @staticmethod
@@ -364,7 +364,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages_by_chat] Found {len(messages)} messages for chat {chat_id}")
+        db_logger.debug(f"✅ Found {len(messages)} messages for chat {chat_id}")
         return messages
 
     @staticmethod
@@ -422,7 +422,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages_by_filter] Found {len(messages)} messages")
+        db_logger.debug(f"✅ Found {len(messages)} messages")
         return messages
 
     # ==================== СТАТИСТИКА ====================
@@ -453,7 +453,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         count = result.scalar() or 0
 
-        db_logger.info(f"✅ [get_message_count_by_chat] Chat {chat_id} has {count} messages")
+        db_logger.info(f"✅ Chat {chat_id} has {count} messages")
         return count
 
     @staticmethod
@@ -502,7 +502,7 @@ class MessageRepository:
             "expiration_rate": (stats.with_expiration / stats.total * 100) if stats and stats.total else 0,
         }
 
-        db_logger.info(f"✅ [get_message_lifetime_stats] Stats: {stats_dict}")
+        db_logger.info(f"✅ Stats: {stats_dict}")
         return stats_dict
 
     # ==================== УПРАВЛЕНИЕ ВРЕМЕНЕМ ЖИЗНИ ====================
@@ -542,7 +542,7 @@ class MessageRepository:
 
         await session.commit()
 
-        db_logger.info(f"✅ [set_message_lifetime] Lifetime set for message {message_id}")
+        db_logger.info(f"✅ Lifetime set for message {message_id}")
         return True
 
     @staticmethod
@@ -583,7 +583,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_expired_messages] Found {len(messages)} expired messages")
+        db_logger.debug(f"✅ Found {len(messages)} expired messages")
         return messages
 
     # ==================== УДАЛЕНИЕ СООБЩЕНИЙ ====================
@@ -636,7 +636,7 @@ class MessageRepository:
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
 
-        db_logger.info(f"✅ [mark_messages_as_deleted] Marked {rowcount} messages as deleted")
+        db_logger.info(f"✅ Marked {rowcount} messages as deleted")
         return rowcount
 
     @staticmethod
@@ -678,7 +678,7 @@ class MessageRepository:
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
 
-        db_logger.info(f"✅ [mark_messages_deleted_by_ids] Marked {rowcount} messages as deleted")
+        db_logger.info(f"✅ Marked {rowcount} messages as deleted")
         return rowcount
 
     @staticmethod
@@ -742,7 +742,7 @@ class MessageRepository:
                 message.FK_DeletedByMessage = None
                 message.FDeletedByType = None
                 await session.commit()
-                db_logger.info(f"✅ [restore_deleted_message] Message {message_id} restored")
+                db_logger.info(f"✅ Message {message_id} restored")
                 return True
 
             db_logger.warning(f"⚠️ [restore_deleted_message] Deleted message {message_id} not found")
@@ -809,7 +809,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages_by_date_range] Found {len(messages)} messages")
+        db_logger.debug(f"✅ Found {len(messages)} messages")
         return messages
 
     @staticmethod
@@ -850,7 +850,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         messages = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages_by_type] Found {len(messages)} messages of type {message_type}")
+        db_logger.debug(f"✅ Found {len(messages)} messages of type {message_type}")
         return messages
 
     @staticmethod
@@ -881,7 +881,7 @@ class MessageRepository:
         message: ChatMessageModel | None = result.scalar_one_or_none()
 
         if message:
-            db_logger.info(f"✅ [get_last_message_in_chat] Found last message {message.FID} for chat {chat_id}")
+            db_logger.debug(f"✅ Found last message {message.FID} for chat {chat_id}")
         else:
             db_logger.warning(f"⚠️ [get_last_message_in_chat] No messages found for chat {chat_id}")
 
@@ -917,7 +917,7 @@ class MessageRepository:
         result = await session.execute(stmt)
         count = result.scalar() or 0
 
-        db_logger.info(f"✅ [get_message_count_by_type] Found {count} messages of type {message_type}")
+        db_logger.debug(f"✅ Found {count} messages of type {message_type}")
         return count
 
     @staticmethod
@@ -942,7 +942,7 @@ class MessageRepository:
             )
             stats[msg_type.value] = count
 
-        db_logger.info(f"✅ [get_all_message_types_stats] Stats: {stats}")
+        db_logger.info(f"✅ Stats: {stats}")
         return stats
 
     @staticmethod
@@ -973,7 +973,7 @@ class MessageRepository:
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(message_ids)
 
-        db_logger.info(f"✅ [delete_messages_permanently] Permanently deleted {rowcount} messages")
+        db_logger.info(f"✅ Permanently deleted {rowcount} messages")
         return rowcount
 
     @staticmethod
@@ -1013,7 +1013,7 @@ class MessageRepository:
             )
 
         result = {"found": total_found, "deleted": total_deleted}
-        db_logger.info(f"✅ [cleanup_expired_messages] Cleanup complete: found {total_found}, deleted {total_deleted}")
+        db_logger.info(f"✅ Cleanup complete: found {total_found}, deleted {total_deleted}")
         return result
 
 

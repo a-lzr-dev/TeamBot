@@ -37,7 +37,7 @@ class SystemRepository:
         result = await session.execute(stmt)
         data_types = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_all_data_types] Found {len(data_types)} data types")
+        db_logger.debug(f"✅ Found {len(data_types)} data types")
         return data_types
 
     @staticmethod
@@ -79,7 +79,7 @@ class SystemRepository:
             for row in rows
         }
 
-        db_logger.info(f"✅ [get_data_types_dict] Found {len(data_types)} data types")
+        db_logger.debug(f"✅ Found {len(data_types)} data types")
         return data_types
 
     @staticmethod
@@ -87,6 +87,7 @@ class SystemRepository:
     async def get_data_type_by_id(
         session: AsyncSession,
         data_type_id: int,
+        show_logs: bool = True,
     ) -> AvanpostDirSysDataTypeModel | None:
         """
         Получение типа данных по ID.
@@ -94,23 +95,27 @@ class SystemRepository:
         Args:
             session: Сессия БД
             data_type_id: ID типа данных
+            show_logs: Отображение подробного логирования
 
         Returns:
             AvanpostDirSysDataTypeModel | None: Модель типа данных или None
         """
-        db_logger.debug(f"🔍 [get_data_type_by_id] Getting data type by ID: {data_type_id}")
+        if show_logs:
+            db_logger.debug(f"🔍 [get_data_type_by_id] Getting data type by ID: {data_type_id}")
 
         stmt = select(AvanpostDirSysDataTypeModel).where(AvanpostDirSysDataTypeModel.FID == data_type_id)
 
-        db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+        if show_logs:
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
         result = await session.execute(stmt)
         data_type: AvanpostDirSysDataTypeModel | None = result.scalar_one_or_none()
 
-        if data_type:
-            db_logger.info(f"✅ [get_data_type_by_id] Found data type {data_type_id}")
-        else:
-            db_logger.warning(f"⚠️ [get_data_type_by_id] Data type {data_type_id} not found")
+        if show_logs:
+            if data_type:
+                db_logger.debug(f"✅ Found data type {data_type_id}")
+            else:
+                db_logger.warning(f"⚠️ [get_data_type_by_id] Data type {data_type_id} not found")
 
         return data_type
 
@@ -177,7 +182,7 @@ class SystemRepository:
         await session.flush()
         await session.refresh(data_type)
 
-        db_logger.info(f"✅ [create_data_type] Created data type {data_type_id}")
+        db_logger.info(f"✅ Created data type {data_type_id}")
         return data_type
 
     @staticmethod
@@ -209,6 +214,7 @@ class SystemRepository:
                 existing = await SystemRepository.get_data_type_by_id(
                     session=session,
                     data_type_id=data["FID"],
+                    show_logs=False,
                 )
                 if not existing:
                     await SystemRepository.create_data_type(
@@ -224,7 +230,7 @@ class SystemRepository:
                 db_logger.warning(f"⚠️ [create_data_types_bulk] Failed to create data type {data.get('FID')}: {e}")
 
         if created > 0:
-            db_logger.info(f"✅ [create_data_types_bulk] Created {created} new data types")
+            db_logger.info(f"✅ Created {created} new data types")
         else:
             db_logger.debug("ℹ️ [create_data_types_bulk] No new data types created")
 
@@ -322,8 +328,8 @@ class SystemRepository:
         await session.flush()
 
         if show_logs:
-            db_logger.info(
-                f"✅ [get_sync_times] Found {len(existing)} existing sync records, created {len(data_types) - len(existing)} new"
+            db_logger.debug(
+                f"✅ Found {len(existing)} existing sync records, created {len(data_types) - len(existing)} new"
             )
 
         return result
@@ -471,7 +477,7 @@ class SystemRepository:
             db_logger.debug(f"🔄 [update_sync_times_bulk] Updating {len(sync_times)} sync times")
 
         for data_type_id, sync_time in sync_times.items():
-            await SystemRepository.update_sync_time(session, data_type_id, sync_time, show_logs)
+            await SystemRepository.update_sync_time(session, data_type_id, sync_time, show_logs=show_logs)
 
         if show_logs:
             db_logger.info(f"✅ [update_sync_times_bulk] Updated {len(sync_times)} sync times")
@@ -484,7 +490,6 @@ class SystemRepository:
         session: AsyncSession,
         user_id: int,
         data_types: list[int],
-        show_logs: bool = True,
     ) -> dict[int, datetime]:
         """
         Получение времени синхронизации пользователя для списка типов данных.
@@ -640,9 +645,7 @@ class SystemRepository:
             "by_data_type": by_data_type_readable,
         }
 
-        db_logger.info(
-            f"✅ [create_user_sync_records_bulk_with_stats] Created {total_created} records for {users_with_records} users"
-        )
+        db_logger.info(f"✅ Created {total_created} records for {users_with_records} users")
         return result  # type: ignore[no-any-return]
 
     # ==================== ОБНОВЛЕНИЕ ПОЛЬЗОВАТЕЛЬСКИХ НАСТРОЕК ====================
@@ -690,7 +693,7 @@ class SystemRepository:
             session.add(new_record)
 
         if show_logs:
-            db_logger.info(f"✅ [update_user_sync_time] Updated user sync time for user {user_id}, type {data_type_id}")
+            db_logger.info(f"✅ Updated user sync time for user {user_id}, type {data_type_id}")
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -719,10 +722,10 @@ class SystemRepository:
             )
 
         for data_type_id, sync_time in sync_times.items():
-            await SystemRepository.update_user_sync_time(session, user_id, data_type_id, sync_time, show_logs)
+            await SystemRepository.update_user_sync_time(session, user_id, data_type_id, sync_time, show_logs=show_logs)
 
         if show_logs:
-            db_logger.info(f"✅ [update_user_sync_times_bulk] Updated {len(sync_times)} user sync times")
+            db_logger.info(f"✅ Updated {len(sync_times)} user sync times")
 
     # ==================== ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ====================
 
@@ -758,7 +761,7 @@ class SystemRepository:
         await session.delete(record)
         await session.flush()
 
-        db_logger.info(f"✅ [delete_sync_record] Deleted sync record for type {data_type_id}")
+        db_logger.info(f"✅ Deleted sync record for type {data_type_id}")
         return True
 
     @staticmethod
@@ -802,7 +805,7 @@ class SystemRepository:
         await session.delete(record)
         await session.flush()
 
-        db_logger.info(f"✅ [delete_user_sync_record] Deleted user sync record for user {user_id}, type {data_type_id}")
+        db_logger.info(f"✅ Deleted user sync record for user {user_id}, type {data_type_id}")
         return True
 
 

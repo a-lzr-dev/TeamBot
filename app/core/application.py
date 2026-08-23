@@ -19,7 +19,7 @@ from ..config import settings
 from ..db.manager import db_manager
 from ..db.repositories import ReminderRepository
 from ..dtos.reminder import ReminderNotificationDTO
-from ..logger import app_logger
+from ..logger import app_logger, stat_logger
 from ..models import datetime_now
 from ..services.avanpost_sync_service import AvanpostSyncService
 from ..services.log_handler_service import log_handler_service
@@ -259,16 +259,16 @@ class ApplicationManager:
             sync_timeout = getattr(settings, "AVANPOST_SYNC_TIMEOUT", 300)
             sync_required = getattr(settings, "AVANPOST_SYNC_REQUIRED", False)
 
-            app_logger.debug(f"🔄 Starting Avanpost base data sync (force={sync_force})...")
+            app_logger.info(f"🚀 Starting Users Base Data Sync (force={sync_force})...")
 
             try:
                 await asyncio.wait_for(
                     self._sync_avanpost_base_data(force=sync_force),
                     timeout=sync_timeout if sync_timeout > 0 else None,
                 )
-                app_logger.info("✅ Avanpost base data sync completed successfully")
+                app_logger.info("✅ Avanpost Base Data Sync completed successfully")
             except TimeoutError as err:
-                error_msg = f"Avanpost base sync timed out after {sync_timeout}s"
+                error_msg = f"Avanpost Base Data Sync timed out after {sync_timeout}s"
                 if sync_required:
                     raise TimeoutError(error_msg) from err
                 app_logger.error(f"❌ {error_msg}")
@@ -281,68 +281,68 @@ class ApplicationManager:
     async def _sync_avanpost_users_if_enabled(self) -> None:
         """Запуск синхронизации пользовательских данных в фоне с последовательным выполнением."""
         sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
-        app_logger.debug("👤 Starting Avanpost users data sync in background (sequential)...")
 
         async def _sequential_sync() -> None:
             """Последовательное выполнение синхронизаций в фоне."""
             try:
                 # 1. Синхронизация общих данных
                 if getattr(settings, "AVANPOST_SYNC_USERS_BASE", False):
-                    app_logger.debug("📌 Step 1/2: Syncing users base data...")
+                    app_logger.debug("🚀 Step 1/2: Starting Avanpost Users Base Data Sync...")
                     await self._sync_avanpost_users_in_background(force=sync_force, mode=1)
-                    app_logger.info("✅ Step 1/2: Users base data sync completed")
+                    app_logger.info("✅ Step 1/2: Avanpost Users Base Data Sync completed")
                 else:
-                    app_logger.debug("⏭️ Step 1/2: Users base data sync skipped (disabled)")
+                    app_logger.debug("⏭️ Step 1/2: Avanpost Users Base Data Sync skipped (disabled)")
 
                 # 2. Синхронизация персональных данных (после завершения первой)
                 if getattr(settings, "AVANPOST_SYNC_USERS_DETAILS", False):
-                    app_logger.debug("📌 Step 2/2: Syncing users details data...")
+                    app_logger.debug("🚀 Step 2/2: Starting Avanpost Users Details Data Sync...")
                     user_ids = getattr(settings, "AVANPOST_SYNC_USERS_DETAILS_IDS", None)
                     await self._sync_avanpost_users_in_background(force=sync_force, mode=2, user_ids=user_ids)
-                    app_logger.info("✅ Step 2/2: Users details data sync completed")
+                    app_logger.info("✅ Step 2/2: Avanpost Users Details Data Sync completed")
                 else:
-                    app_logger.debug("⏭️ Step 2/2: Users details data sync skipped (disabled)")
+                    app_logger.debug("⏭️ Step 2/2: Avanpost Users Details Data Sync skipped (disabled)")
 
             except asyncio.CancelledError:
-                app_logger.debug("ℹ️ Users data sync cancelled")
+                app_logger.debug("ℹ️ Avanpost Users Data Sync cancelled")
                 raise
             except Exception as e:
-                app_logger.error(f"❌ Users data sync failed: {e}", exc_info=True)
+                app_logger.error(f"❌ Avanpost Users Data Sync failed: {e}", exc_info=True)
 
         # Запуск как отдельную фоновую задачу
         task = asyncio.create_task(_sequential_sync(), name="avanpost_users_sync")
         self._tasks.append(task)
-        app_logger.info("✅ Avanpost users data sync started in background (sequential)")
+        app_logger.info("🚀 Starting Avanpost Users Data Sync in background (sequential)")
 
     @staticmethod
     async def _init_log_handler() -> None:
         """Инициализация сервиса обработки логов."""
         try:
             await log_handler_service.initialize()
-            app_logger.info("✅ LogHandlerService initialized")
         except Exception as e:
             app_logger.error(f"❌ Failed to initialize LogHandlerService: {e}", exc_info=True)
 
     # ==================== СИНХРОНИЗАЦИЯ ДАННЫХ ====================
 
     @staticmethod
-    async def _sync_avanpost_base_data(force: bool = False) -> None:
+    @suppress_debug_logs
+    async def _sync_avanpost_base_data(force: bool = False, show_logs: bool = False) -> None:
         """
         Синхронизация базовых данных Avanpost (справочники).
 
         Args:
-            force: Принудительная синхронизация (игнорировать кеш)
+            force: Принудительная синхронизация (игнорировать кеш),
+            show_logs: Отображение подробного логирования
         """
         try:
             app_logger.debug(f"🔄 Syncing Avanpost base data (force={force})...")
             sync_service = AvanpostSyncService()
             await sync_service.initialize()
 
-            stats = await sync_service.sync_base_data(force=force)
+            stats = await sync_service.sync_base_data(force=force, show_logs=show_logs)
             stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
             if stats_dict.get("total_inserted", 0) > 0 or stats_dict.get("total_updated", 0) > 0:
-                app_logger.info(
+                stat_logger.info(
                     f"📊 Base data sync: "
                     f"inserted={stats_dict.get('total_inserted', 0)}, "
                     f"updated={stats_dict.get('total_updated', 0)}, "
@@ -359,6 +359,7 @@ class ApplicationManager:
             raise
 
     @staticmethod
+    @suppress_debug_logs
     async def _sync_avanpost_users(
         force: bool = False,
         mode: int = 1,
@@ -375,7 +376,7 @@ class ApplicationManager:
                 2 - details (персональные данные пользователей)
             user_ids: Список ID пользователей для синхронизации.
                      Если None или пустой - синхронизируются ВСЕ пользователи.
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         try:
             mode_name = "base" if mode == 1 else "details"
@@ -397,7 +398,6 @@ class ApplicationManager:
             app_logger.error(f"❌ Failed to sync users: {e}", exc_info=True)
             raise
 
-    @suppress_debug_logs
     async def _sync_avanpost_users_in_background(
         self,
         force: bool = False,

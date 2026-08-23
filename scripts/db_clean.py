@@ -355,7 +355,7 @@ async def main():
 
             if not existing_tables:
                 print("\n❌ No tables found in main database!")
-                return 1
+                return 0
 
             # Определение списка таблиц для работы
             if args.tables:

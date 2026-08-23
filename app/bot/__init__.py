@@ -1,13 +1,29 @@
-# --- Импорт get_timestamp из общего utils ---
+"""
+Пакет Telegram бота TeamBot.
+
+Содержит все компоненты для работы с Telegram:
+- Менеджер бота (BotManager) - главный координатор
+- Клиенты (Aiogram, Telethon) - работа с Telegram API
+- Сервисы - бизнес-логика
+- Обработчики - обработка сообщений и колбэков
+- Клавиатуры - создание интерфейсов
+- Колбэки - обработка нажатий кнопок
+- Типы и утилиты - общие определения
+"""
+
+# Импорт get_timestamp из общего utils
 from ..utils.datetime import get_timestamp
 
-# --- Callbacks ---
+# 2. КОЛБЭКИ (Обработчики нажатий кнопок)
 from .callbacks import (
+    # Специализированные
     ActionCallbackHandler,
     AdminCallbackHandler,
     AuthCallbackHandler,
+    # Базовые
     BaseCallbackHandler,
     CallbackHandler,
+    # Generic (универсальные списки)
     GenericListCallbackHandler,
     GenericSearchHandler,
     ListHandlerProtocol,
@@ -19,42 +35,49 @@ from .callbacks import (
     callback_handler,
 )
 
-# --- Clients ---
+# 1. КЛИЕНТЫ (Telegram API обертки)
 from .clients import (
-    AiogramClient,
-    BaseBotClient,
-    TelethonClient,
+    AiogramClient,  # Aiogram клиент (Bot API)
+    BaseBotClient,  # Базовый интерфейс клиента
+    TelethonClient,  # Telethon клиент (User API)
 )
 
-# --- Handlers (Aiogram) ---
+# 3. ОБРАБОТЧИКИ (Handlers)
+# 3.1 Aiogram обработчики (сообщения, команды, колбэки)
 from .handlers.aiogram import (
-    admin_router,
-    commands_router,
-    setup_aiogram_handlers,
-    users_router,
+    admin_router,  # Административные команды
+    commands_router,  # Основные команды (/help, /id, /msg, /find)
+    setup_aiogram_handlers,  # Функция настройки всех Aiogram обработчиков
 )
 
-# --- Handlers (Telethon) ---
+# 3.3 Список пользователей (экспортируется отдельно для удобства)
+from .handlers.aiogram.lists import (
+    users_router,  # Роутер для работы с пользователями (/users)
+)
+
+# 3.2 Telethon обработчики (события чатов, сообщений)
 from .handlers.telethon import (
-    setup_telethon_handlers,
+    setup_telethon_handlers,  # Функция настройки Telethon обработчиков
 )
 
-# --- Keyboards ---
+# 4. КЛАВИАТУРЫ (Keyboards)
 from .keyboards import (
+    # Константы
     BUTTONS_PER_ROW_ACTIONS,
-    # Generic
     DEFAULT_BUTTONS_PER_ROW,
-    # Actions
+    # Действия (меню действий)
     ActionKeyboard,
-    # Admin
+    # Административные
     AdminKeyboard,
-    # Auth
+    # Аутентификация
     AuthKeyboard,
-    # Automation
+    # Автоматизация
     AutomationKeyboard,
+    # Базовые
     BaseKeyboard,
+    # Generic (универсальные)
     ListKeyboardBuilder,
-    # Groups
+    # Пользователи
     UserKeyboard,
     get_action_menu_keyboard,
     get_auth_needed_keyboard,
@@ -75,52 +98,60 @@ from .keyboards import (
     get_users_keyboard,
 )
 
-# --- Manager ---
+# 5. МЕНЕДЖЕР (Главный координатор)
 from .manager import (
-    BotManager,
-    bot_manager,
+    BotManager,  # Класс менеджера бота
+    bot_manager,  # Глобальный экземпляр
 )
 
-# --- Services ---
+# 6. СЕРВИСЫ (Бизнес-логика)
 from .services import (
-    AiogramBotService,
-    ChatSyncEngine,
-    SyncService,
-    TelethonChatService,
-    TelethonUserService,
+    # Aiogram сервисы
+    AiogramBotService,  # Управление ботом (команды, информация)
+    ChatSyncEngine,  # Ядро синхронизации (бизнес-логика)
+    # Синхронизация
+    SyncService,  # Основной сервис синхронизации
+    # Telethon сервисы
+    TelethonChatService,  # Работа с чатами
+    TelethonUserService,  # Работа с пользователями
 )
 
-# --- Types ---
+# 7. ТИПЫ (Type definitions)
 from .types import (
-    ChatInfo,
-    ClientStatus,
-    MessageConverterProtocol,
-    MessageMediaInfo,
-    ServiceStatus,
-    SyncResult,
-    TelegramAccountType,
-    TelegramClientProtocol,
-    UserInfo,
-    safe_datetime_convert,
+    ChatInfo,  # Информация о чате
+    ClientStatus,  # Статус клиента
+    MessageConverterProtocol,  # Конвертер сообщений
+    MessageMediaInfo,  # Информация о медиа
+    # DTO
+    ServiceStatus,  # Статус сервиса
+    SyncResult,  # Результат синхронизации
+    # Перечисления
+    TelegramAccountType,  # Тип аккаунта (bot/user)
+    # Протоколы
+    TelegramClientProtocol,  # Интерфейс клиента
+    UserInfo,  # Информация о пользователе
+    # Утилиты
+    safe_datetime_convert,  # Безопасное преобразование даты
 )
 
-# --- Utils (объединенные) ---
+# 8. УТИЛИТЫ (Utility functions)
 from .utils import (
-    CommandValidator,
-    DataValidator,
-    RateLimitValidator,
-    TextValidator,
-    UserConverter,
-    Validator,
-    # Дополнительные утилиты, если нужны
-    chat_type_from_aiogram,
-    chat_type_from_telethon,
-    user_info_from_aiogram,
-    user_info_from_telethon,
+    CommandValidator,  # Валидация команд
+    DataValidator,  # Валидация данных
+    RateLimitValidator,  # Rate limiting
+    TextValidator,  # Валидация текста
+    # Конвертеры
+    UserConverter,  # Работа с пользователями
+    # Валидаторы
+    Validator,  # Базовый валидатор
+    chat_type_from_aiogram,  # Тип чата из Aiogram
+    chat_type_from_telethon,  # Тип чата из Telethon
+    user_info_from_aiogram,  # Информация о пользователе из Aiogram
+    user_info_from_telethon,  # Информация о пользователе из Telethon
 )
 
 __all__ = [
-    # Типы
+    # ---------- ТИПЫ ----------
     "TelegramAccountType",
     "ClientStatus",
     "TelegramClientProtocol",
@@ -132,59 +163,47 @@ __all__ = [
     "SyncResult",
     "safe_datetime_convert",
     "get_timestamp",
-    # Менеджер
+    # ---------- МЕНЕДЖЕР ----------
     "BotManager",
     "bot_manager",
-    # Клиенты
+    # ---------- КЛИЕНТЫ ----------
     "BaseBotClient",
     "AiogramClient",
     "TelethonClient",
-    # Сервисы
+    # ---------- СЕРВИСЫ ----------
     "AiogramBotService",
     "TelethonChatService",
     "TelethonUserService",
     "SyncService",
     "ChatSyncEngine",
-    # Утилиты
-    "UserConverter",
-    "Validator",
-    "TextValidator",
-    "CommandValidator",
-    "DataValidator",
-    "RateLimitValidator",
-    # Дополнительные утилиты из объединенного модуля
-    "chat_type_from_aiogram",
-    "chat_type_from_telethon",
-    "user_info_from_aiogram",
-    "user_info_from_telethon",
-    # Обработчики
+    # ---------- ОБРАБОТЧИКИ ----------
     "setup_aiogram_handlers",
+    "setup_telethon_handlers",
     "commands_router",
     "admin_router",
-    "setup_telethon_handlers",
     "users_router",
-    # Клавиатуры - Base
+    # ---------- КЛАВИАТУРЫ (Base) ----------
     "BaseKeyboard",
     "get_inline_keyboard",
     "get_reply_keyboard",
-    # Клавиатуры - Auth
+    # ---------- КЛАВИАТУРЫ (Auth) ----------
     "AuthKeyboard",
     "get_auth_request_keyboard",
     "get_auth_needed_keyboard",
     "get_logout_keyboard",
-    # Клавиатуры - Admin
+    # ---------- КЛАВИАТУРЫ (Admin) ----------
     "AdminKeyboard",
     "get_broadcast_confirm_keyboard",
     "get_delete_confirm_keyboard",
-    # Клавиатуры - Actions
+    # ---------- КЛАВИАТУРЫ (Actions) ----------
     "ActionKeyboard",
     "get_action_menu_keyboard",
     "BUTTONS_PER_ROW_ACTIONS",
-    # Клавиатуры - Users
+    # ---------- КЛАВИАТУРЫ (Users) ----------
     "UserKeyboard",
     "get_users_keyboard",
     "get_close_keyboard",
-    # Клавиатуры - Generic
+    # ---------- КЛАВИАТУРЫ (Generic) ----------
     "DEFAULT_BUTTONS_PER_ROW",
     "ListKeyboardBuilder",
     "get_confirm_keyboard",
@@ -194,22 +213,35 @@ __all__ = [
     "get_search_cancel_keyboard",
     "get_priority_keyboard",
     "get_back_to_menu_keyboard",
-    # Клавиатуры - Automation
+    # ---------- КЛАВИАТУРЫ (Automation) ----------
     "AutomationKeyboard",
-    # Колбэки
+    # ---------- КОЛБЭКИ (Base) ----------
     "BaseCallbackHandler",
     "CallbackHandler",
     "callback_handler",
+    # ---------- КОЛБЭКИ (Generic) ----------
+    "GenericListCallbackHandler",
+    "GenericSearchHandler",
+    "ListHandlerProtocol",
+    "ListItemData",
+    "ListStateProtocol",
+    # ---------- КОЛБЭКИ (Специализированные) ----------
     "ActionCallbackHandler",
     "action_callback_handler",
     "AuthCallbackHandler",
     "auth_callback_handler",
     "AdminCallbackHandler",
     "admin_callback_handler",
-    # Generic Callbacks
-    "GenericListCallbackHandler",
-    "GenericSearchHandler",
-    "ListHandlerProtocol",
-    "ListItemData",
-    "ListStateProtocol",
+    # ---------- УТИЛИТЫ ----------
+    "UserConverter",
+    "Validator",
+    "TextValidator",
+    "CommandValidator",
+    "DataValidator",
+    "RateLimitValidator",
+    # ---------- ДОПОЛНИТЕЛЬНЫЕ УТИЛИТЫ ----------
+    "chat_type_from_aiogram",
+    "chat_type_from_telethon",
+    "user_info_from_aiogram",
+    "user_info_from_telethon",
 ]

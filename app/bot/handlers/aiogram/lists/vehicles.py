@@ -209,7 +209,7 @@ class VehiclesListHandler(BaseListHandler):
                     message_type=MessageType.COMMAND_ACTION_INFO,
                     delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
                     parse_mode="Markdown",
-                    reply_markup=self.get_back_keyboard(state),
+                    reply_markup=await self.get_back_keyboard(state),
                 )
                 return
 

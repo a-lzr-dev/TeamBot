@@ -550,6 +550,35 @@ class ExtendedLogger:
         """
         self._logger.error(f"❌ {message}", extra=kwargs)
 
+    def log_stat(
+        self,
+        metric: str,
+        value: float | int | str,
+        tags: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Логирование статистической метрики.
+
+        Args:
+            metric: Название метрики (например, "users_count", "requests_per_second")
+            value: Значение метрики
+            tags: Дополнительные теги для метрики (например, {"endpoint": "/api"})
+            **kwargs: Дополнительные параметры
+        """
+        tags = tags or {}
+        tags_str = " ".join(f"{k}={v}" for k, v in tags.items()) if tags else ""
+
+        extra = kwargs.get("extra", {})
+        if isinstance(extra, dict):
+            extra.update({"metric": metric, "stat_value": value, "stat_tags": tags})
+
+        message = f"📊 STAT: {metric}={value}"
+        if tags_str:
+            message += f" | {tags_str}"
+
+        self._logger.info(message, extra=extra)
+
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
@@ -639,6 +668,7 @@ _api_logger = logger_setup.get_logger("api")
 _bot_logger = logger_setup.get_logger("bot")
 _db_logger = logger_setup.get_logger("db")
 _admin_logger = logger_setup.get_logger("admin")
+_stat_logger = logger_setup.get_logger("stat")
 
 # Расширенные логгеры с дополнительными методами
 app_logger = ExtendedLogger(_app_logger, "app")
@@ -646,6 +676,7 @@ api_logger = ExtendedLogger(_api_logger, "api")
 bot_logger = ExtendedLogger(_bot_logger, "bot")
 db_logger = ExtendedLogger(_db_logger, "db")
 admin_logger = ExtendedLogger(_admin_logger, "admin")
+stat_logger = ExtendedLogger(_stat_logger, "stat")
 
 
 # ==================== ЭКСПОРТ ====================
@@ -667,4 +698,5 @@ __all__ = [
     "bot_logger",
     "db_logger",
     "admin_logger",
+    "stat_logger",
 ]

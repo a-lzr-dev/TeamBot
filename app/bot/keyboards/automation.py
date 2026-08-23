@@ -55,7 +55,7 @@ class AutomationKeyboard:
         )
 
     @staticmethod
-    def get_back_keyboard() -> InlineKeyboardMarkup:
+    async def get_back_keyboard() -> InlineKeyboardMarkup:
         """Клавиатура возврата"""
         return BaseKeyboard.get_inline_keyboard(
             [{"text": "🔙 В меню автоматизации", "callback_data": "automation_menu"}]

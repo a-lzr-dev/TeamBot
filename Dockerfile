@@ -1,5 +1,5 @@
 # ============================================================
-# TeamBot - Production Dockerfile (Alpine)
+# TeamBot - Production Dockerfile (Alpine) с Alembic
 # ============================================================
 
 # ============ Установка зависимостей (builder) ============
@@ -40,11 +40,13 @@ WORKDIR /build
 COPY pyproject.toml uv.lock ./
 
 # Создание виртуального окружения и установка зависимостей
+# Добавлен alembic для миграций
 RUN uv venv .venv && \
     . .venv/bin/activate && \
     uv pip install --no-cache-dir \
         aiogram \
         aiosqlite \
+        alembic \
         asyncpg \
         bcrypt \
         fastapi \
@@ -80,7 +82,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH" \
     LOG_DIR=/app/logs \
-    AUTOMATION_TEMP_DIR=/app/temp/automation
+    AUTOMATION_TEMP_DIR=/app/temp/automation \
+    ALEMBIC_CONFIG=/app/alembic.ini
 
 WORKDIR /app
 
@@ -92,6 +95,10 @@ COPY app/ ./app/
 COPY run.py ./
 COPY run.sh ./
 
+# Копирование Alembic файлов (если существуют)
+COPY alembic.ini ./
+COPY migrations/ ./migrations/
+
 # Создание непривилегированного пользователя
 RUN adduser -D -u 1000 botuser && \
     chown -R botuser:botuser /app
@@ -102,5 +109,13 @@ USER botuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-ENTRYPOINT ["python", "run.py"]
+# ============================================================
+# Точка входа с поддержкой миграций
+# ============================================================
+
+# Скрипт для запуска с миграциями
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["--mode", "full"]

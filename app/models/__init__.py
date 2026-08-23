@@ -1,3 +1,19 @@
+"""
+Модели данных TeamBot.
+
+Содержит все модели данных, используемые в приложении:
+1. Базовые модели и Enum (base.py)
+2. Модели Avanpost для синхронизации (avanpost.py)
+3. Основные модели Telegram (main.py)
+   - Пользователи, чаты, участники, сообщения
+   - Ошибки и фильтры
+   - Периодические задачи
+   - Напоминания
+   - Настройки уведомлений
+   - Автоматизация
+   - Рассылки
+"""
+
 from .avanpost import (
     AvanpostContactLangModel,
     AvanpostContactLinkModel,
@@ -86,18 +102,27 @@ from .base import (
     datetime_now,
 )
 from .main import (
+    # Модели рассылок
+    BroadcastMessageLinkModel,
+    BroadcastModel,
+    # Основные модели Telegram
     ChatMemberModel,
     ChatMessageModel,
     ChatModel,
+    # Модели настроек
     ChatNotificationSettingsModel,
+    # Модели ошибок
     ErrorFilterModel,
     ErrorMessageLinkModel,
     ErrorModel,
+    # Модели периодических задач
     PeriodicTaskModel,
     UserChatMemberModel,
     UserModel,
+    # Модели напоминаний
     UserReminderModel,
     UserReminderShareModel,
+    # Модели автоматизации
     UserRequestAutomationModel,
 )
 
@@ -206,4 +231,7 @@ __all__ = [
     "ChatNotificationSettingsModel",
     # Telegram - автоматизация
     "UserRequestAutomationModel",
+    # Telegram - рассылки
+    "BroadcastModel",
+    "BroadcastMessageLinkModel",
 ]

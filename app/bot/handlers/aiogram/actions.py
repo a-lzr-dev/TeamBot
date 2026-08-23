@@ -13,7 +13,8 @@
 Типы действий:
     - FK_Type=1: Отправка данных на сервер
     - FK_Type=2: Открытие файла
-    - FK_Type=4: Открытие маршрута перевозки
+    - FK_Type=3: Открытие списка переписки (чат details)
+    - FK_Type=4: Открытие маршрута перевозки (точки маршрута)
     - FK_Type=5: Открытие точки маршрута
     - FK_Type=6: Открытие списка контактов
     - FK_Type=7: Открытие контактной информации
@@ -441,7 +442,8 @@ async def _handle_action_by_type(
     Группировка по FK_Type:
         1 - Отправка данных на сервер
         2 - Открытие файла
-        4 - Открытие маршрута перевозки
+        3 - Открытие списка переписки (чат details)
+        4 - Открытие маршрута перевозки (точки маршрута)
         5 - Открытие точки маршрута перевозки
         6 - Открытие списка контактов
         7 - Открытие контактной информации
@@ -473,10 +475,21 @@ async def _handle_action_by_type(
             text=f"📂 Открытие файла. Действие #{action_id}",
             event=callback,
         )
+    elif fk_type == 3:
+        # Открытие списка переписки (chat_details_router)
+        await _handle_open_chat_messages(
+            callback=callback,
+            bot_manager=bot_manager,
+            action_id=action_id,
+            state=state,
+        )
     elif fk_type == 4:
-        await bot_manager.send_toast(
-            text=f"🗺️ Открытие маршрута перевозки. Действие #{action_id}",
-            event=callback,
+        # Открытие маршрута перевозки (точки маршрута)
+        await _handle_open_route_points(
+            callback=callback,
+            bot_manager=bot_manager,
+            action_id=action_id,
+            state=state,
         )
     elif fk_type == 5:
         await bot_manager.send_toast(
@@ -498,6 +511,174 @@ async def _handle_action_by_type(
     else:
         await bot_manager.send_toast(
             text=f"🚧 Неизвестный тип действия: {type_name} (ID: {fk_type})",
+            event=callback,
+        )
+
+
+# ============ ОБРАБОТЧИК: ОТКРЫТИЕ СПИСКА ПЕРЕПИСКИ (FK_Type=3) ============
+
+
+async def _handle_open_chat_messages(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """
+    Обработчик: Открытие списка переписки (FK_Type=3).
+
+    Открывает список переписки чата на основе выбранного чата.
+    Ожидает, что в состоянии есть выбранный чат (selected_chat_id).
+
+    Args:
+        callback: CallbackQuery от пользователя
+        bot_manager: Экземпляр BotManager
+        action_id: ID действия
+        state: Состояние FSM
+    """
+    await bot_manager.send_toast(text="💬 Открытие переписки...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        chat_id = state_data.get("selected_chat_id")
+        avanpost_user_id = (
+            state_data.get("avanpost_user_id") or state_data.get("user_id") or state_data.get("selected_user_id")
+        )
+        parent_item_id = state_data.get("parent_item_id")
+        group_id = state_data.get("group_id")
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
+
+        if not chat_id:
+            await bot_manager.send_toast(
+                text="❌ Не выбран чат для просмотра.",
+                event=callback,
+                show_alert=True,
+            )
+            return
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(
+                text="❌ Не удалось определить пользователя.",
+                event=callback,
+                show_alert=True,
+            )
+            return
+
+        # Добавление текущего пункта в историю
+        history = state_data.get("menu_history", [])
+        history.append(action_id)
+        await state.update_data(menu_history=history)
+
+        await state.update_data(
+            selected_chat_id=chat_id,
+            chat_details_page=0,
+            parent_item_id=parent_item_id,
+            group_id=group_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+        )
+
+        from app.bot.handlers.aiogram.custom.chat_details import ChatDetailsStates, show_chat_details
+
+        await state.set_state(ChatDetailsStates.viewing_messages)
+
+        await show_chat_details(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            chat_id=chat_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to open chat messages: {e}", exc_info=True)
+        await bot_manager.send_toast(
+            text=f"❌ Ошибка открытия переписки: {str(e)[:100]}",
+            event=callback,
+        )
+
+
+# ============ ОБРАБОТЧИК: ОТКРЫТИЕ МАРШРУТА ПЕРЕВОЗКИ (FK_Type=4) ============
+
+
+async def _handle_open_route_points(
+    callback: CallbackQuery,
+    bot_manager: Any,
+    action_id: int,
+    state: FSMContext,
+) -> None:
+    """
+    Обработчик: Открытие маршрута перевозки (FK_Type=4).
+
+    Открывает список точек маршрута для выбранной миссии.
+
+    Args:
+        callback: CallbackQuery от пользователя
+        bot_manager: Экземпляр BotManager
+        action_id: ID действия
+        state: Состояние FSM
+    """
+    await bot_manager.send_toast(text="🗺️ Загрузка маршрута...", event=callback)
+
+    try:
+        state_data = await state.get_data()
+        mission_id = state_data.get("selected_mission_id") or state_data.get("selected_order_id")
+        avanpost_user_id = (
+            state_data.get("avanpost_user_id") or state_data.get("user_id") or state_data.get("selected_user_id")
+        )
+        parent_item_id = state_data.get("parent_item_id")
+        group_id = state_data.get("group_id")
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
+
+        if not mission_id:
+            await bot_manager.send_toast(
+                text="❌ Не выбрана миссия для просмотра.",
+                event=callback,
+                show_alert=True,
+            )
+            return
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(
+                text="❌ Не удалось определить пользователя.",
+                event=callback,
+                show_alert=True,
+            )
+            return
+
+        # Добавление текущего пункта в историю
+        history = state_data.get("menu_history", [])
+        history.append(action_id)
+        await state.update_data(menu_history=history)
+
+        # Переход к состоянию просмотра маршрута
+        await state.update_data(
+            selected_mission_id=mission_id,
+            route_points_page=0,
+            route_points_search_query=None,
+            parent_item_id=parent_item_id,
+            group_id=group_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+        )
+
+        # Отображение точек маршрута
+        from .lists.route_points import show_route_points_list
+
+        await show_route_points_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            mission_id=mission_id,
+            page=0,
+        )
+
+    except Exception as e:
+        bot_logger.error(f"❌ Failed to open route points: {e}", exc_info=True)
+        await bot_manager.send_toast(
+            text=f"❌ Ошибка загрузки маршрута: {str(e)[:100]}",
             event=callback,
         )
 
@@ -587,9 +768,6 @@ async def _handle_open_contact_details(
         text="ℹ️ Контактная информация открывается из списка контактов.",
         event=callback,
     )
-
-    # Можно добавить логику для прямого вызова, если потребуется
-    # Например, если action_id привязан к конкретному контакту
 
 
 # ============ ОБРАБОТЧИК: ОТКРЫТИЕ ЗАКАЗОВ ============
@@ -855,7 +1033,7 @@ async def handle_chat_selection(callback: CallbackQuery, state: FSMContext) -> N
         )
         await state.set_state(ChatDetailsStates.viewing_messages)
 
-        # Показ сообщений чата
+        # Показ сообщений чата (FK_Type=3)
         await show_chat_details(
             event=callback,
             state=state,

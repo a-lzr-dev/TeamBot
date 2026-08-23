@@ -217,7 +217,7 @@ def get_confirm_keyboard(
 # ============================================================
 
 
-def get_back_keyboard(
+async def get_back_keyboard(
     back_text: str = "🔙 Назад",
     back_callback: str = "back",
     prefix: str = "",

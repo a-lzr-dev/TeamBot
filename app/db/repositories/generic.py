@@ -114,6 +114,7 @@ class GenericRepository:
         primary_keys: list[str],
         chunk_size: int = 1000,
         raise_on_error: bool = False,
+        show_logs: bool = True,
     ) -> tuple[int, int, int]:
         """
         Массовое удаление записей по первичному ключу с разбивкой на чанки.
@@ -121,7 +122,7 @@ class GenericRepository:
         Returns:
             tuple[int, int, int]: (удалено, без изменений (не найдены), ошибки)
         """
-        db_logger.info(f"🗑️ [delete_records_bulk] Batch delete from {model.__tablename__}")
+        db_logger.debug(f"🗑️ [delete_records_bulk] Batch delete from {model.__tablename__}")
 
         if not records:
             db_logger.debug("ℹ️ [delete_records_bulk] No records to delete")
@@ -222,9 +223,10 @@ class GenericRepository:
                             raise
                         total_errors += len(chunk_ids)
 
-        db_logger.info(
-            f"✅ [delete_records_bulk] Deleted {total_deleted}, unchanged {total_unchanged}, errors {total_errors}"
-        )
+        if show_logs:
+            db_logger.info(
+                f"✅ [delete_records_bulk] Deleted {total_deleted}, unchanged {total_unchanged}, errors {total_errors}"
+            )
         return total_deleted, total_unchanged, total_errors
 
     @staticmethod
@@ -236,6 +238,7 @@ class GenericRepository:
         model_columns: set[str] | None = None,
         chunk_size: int = 1000,
         raise_on_error: bool = False,
+        show_logs: bool = True,
     ) -> dict[str, int]:
         """
         Массовое обновление или вставка записей (UPSERT) с корректным подсчётом статистики.
@@ -246,9 +249,10 @@ class GenericRepository:
                 "updated": количество ОБНОВЛЕННЫХ записей (были изменения),
                 "unchanged": количество записей БЕЗ ИЗМЕНЕНИЙ (уже существовали и не изменились),
                 "error_records": количество записей с ошибками,
+                "show_logs": Отображение подробного логирования,
             }
         """
-        db_logger.info(f"🔄 [upsert_records_bulk] Batch upsert into {model.__tablename__} ({len(records)} records)")
+        db_logger.debug(f"🔄 [upsert_records_bulk] Batch upsert into {model.__tablename__} ({len(records)} records)")
 
         if not records:
             db_logger.debug("ℹ️ [upsert_records_bulk] No records to upsert")
@@ -493,9 +497,10 @@ class GenericRepository:
             "error_records": error_records_count,
         }
 
-        db_logger.info(
-            f"✅ [upsert_records_bulk] Inserted {inserted}, updated {updated}, unchanged {len(unchanged_records)}, errors {error_records_count}"
-        )
+        if show_logs:
+            db_logger.debug(
+                f"✅ Inserted {inserted}, updated {updated}, unchanged {len(unchanged_records)}, errors {error_records_count}"
+            )
         return result  # type: ignore[no-any-return]
 
     @staticmethod
@@ -520,7 +525,7 @@ class GenericRepository:
             chunk_size: Размер чанка для пакетной обработки
             raise_on_error: Поднимать исключение при ошибке или продолжать
             commit_chunks: Коммитить каждый чанк отдельно (для больших таблиц)
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
 
         Returns:
             dict: Статистика операций
@@ -531,7 +536,7 @@ class GenericRepository:
                 - unchanged_delete: количество записей без изменений при DELETE
                 - error_records: количество записей с ошибками
         """
-        db_logger.info(f"💾 [save_data_bulk] Bulk save into {model.__tablename__}")
+        db_logger.debug(f"💾 [save_data_bulk] Bulk save into {model.__tablename__}")
 
         if not records:
             db_logger.debug("ℹ️ [save_data_bulk] No records to save")
@@ -675,6 +680,7 @@ class GenericRepository:
                             model_columns=model_columns,
                             chunk_size=upsert_chunk_size,
                             raise_on_error=True,
+                            show_logs=show_logs,
                         )
                         total_inserted += result["inserted"]
                         total_updated += result["updated"]
@@ -703,6 +709,7 @@ class GenericRepository:
                     model_columns=model_columns,
                     chunk_size=safe_chunk_size,
                     raise_on_error=raise_on_error,
+                    show_logs=show_logs,
                 )
                 total_inserted += result["inserted"]
                 total_updated += result["updated"]
@@ -718,11 +725,12 @@ class GenericRepository:
             "error_records": total_error_records,
         }
 
-        db_logger.info(
-            f"✅ [save_data_bulk] Inserted {total_inserted}, updated {total_updated}, deleted {total_deleted}, "
-            f"unchanged_upsert {total_unchanged_upsert}, unchanged_delete {total_unchanged_delete}, "
-            f"errors {total_error_records}"
-        )
+        if show_logs:
+            db_logger.info(
+                f"✅ Inserted {total_inserted}, updated {total_updated}, deleted {total_deleted}, "
+                f"unchanged_upsert {total_unchanged_upsert}, unchanged_delete {total_unchanged_delete}, "
+                f"errors {total_error_records}"
+            )
         return result
 
 

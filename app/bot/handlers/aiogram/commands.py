@@ -1,5 +1,3 @@
-# app/bot/handlers/aiogram/commands.py
-
 """
 Модуль дополнительных команд.
 """
@@ -11,7 +9,6 @@ from aiogram.types import Message
 
 from ....bot.dependencies import get_bot_manager
 from ....db import db_manager
-from ....db.repositories import MessageRepository
 from ....logger import bot_logger
 from ....models import MessageActionType, MessageType
 from ....utils.decorators import log_exceptions
@@ -154,8 +151,10 @@ async def cmd_msg(message: Message, state: FSMContext) -> None:
         return
 
     try:
+        from ....db.repositories import AvanpostUserRepository
+
         async with db_manager.get_session() as session:
-            repo = MessageRepository()
+            repo = AvanpostUserRepository()
             db_message = await repo.get_message_by_id(session, message_id)
 
             if not db_message:
@@ -168,13 +167,15 @@ async def cmd_msg(message: Message, state: FSMContext) -> None:
                 )
                 return
 
-            from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
+            from .custom.chat_message_menu import show_message_context_menu
+
+            chat_id = message.chat.id if message.chat else 0
 
             await show_message_context_menu(
                 event=message,
                 state=state,
                 message_id=message_id,
-                chat_id=db_message.FK_Chat,
+                chat_id=chat_id,
                 edit_original=False,
             )
 
@@ -190,102 +191,6 @@ async def cmd_msg(message: Message, state: FSMContext) -> None:
         )
     except Exception as e:
         bot_logger.error(f"❌ Error in cmd_msg: {e}", exc_info=True)
-        await bot_manager.send_answer(
-            text="❌ Ошибка при обработке команды. Попробуйте позже.",
-            event=message,
-            message_type=MessageType.COMMAND_ACTION_INFO,
-            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-        )
-
-
-# ============================================================
-# КОМАНДА /find
-# ============================================================
-
-
-@router.message(Command("find"))
-@log_exceptions(bot_logger)
-async def cmd_find(message: Message, state: FSMContext) -> None:
-    """Команда для поиска сообщения по ID."""
-    bot_manager = get_bot_manager()
-
-    if not message.from_user:
-        await bot_manager.send_answer(
-            text="❌ Не удалось определить пользователя.",
-            event=message,
-            message_type=MessageType.COMMAND_ACTION_INFO,
-            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-        )
-        return
-
-    command_text = message.text or ""
-    parts = command_text.split()
-
-    if len(parts) < 2:
-        await bot_manager.send_answer(
-            text="❌ **Использование:** `/find <id_сообщения>`\n\nНапример: `/find 12345`",
-            event=message,
-            message_type=MessageType.COMMAND_ACTION_INFO,
-            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-            parse_mode="Markdown",
-        )
-        return
-
-    try:
-        message_id = int(parts[1])
-    except ValueError:
-        await bot_manager.send_answer(
-            text="❌ Неверный ID сообщения. Используйте число.",
-            event=message,
-            message_type=MessageType.COMMAND_ACTION_INFO,
-            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-        )
-        return
-
-    try:
-        async with db_manager.get_session() as session:
-            repo = MessageRepository()
-            db_message = await repo.get_message_by_id(session, message_id)
-
-            if not db_message:
-                await bot_manager.send_answer(
-                    text=f"❌ Сообщение с ID `{message_id}` не найдено.",
-                    event=message,
-                    message_type=MessageType.COMMAND_ACTION_INFO,
-                    delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                    parse_mode="Markdown",
-                )
-                return
-
-            text = (
-                f"🔍 **Найдено сообщение #{message_id}**\n\n"
-                f"💬 Чат: `{db_message.FK_Chat}`\n"
-                f"📅 Дата: {db_message.FDateSent.strftime('%d.%m.%Y %H:%M') if db_message.FDateSent else 'неизвестно'}\n\n"
-            )
-            if db_message.FText:
-                text += f"📝 {db_message.FText}\n\n"
-            text += f"🔗 Используйте `/msg {message_id}` для открытия меню действий"
-
-            await bot_manager.send_answer(
-                text=text,
-                event=message,
-                message_type=MessageType.COMMAND_ACTION_INFO,
-                delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-                parse_mode="Markdown",
-            )
-
-            await bot_manager.delete_message_by_link(message)
-
-    except ImportError:
-        bot_logger.error("❌ MessageRepository not found")
-        await bot_manager.send_answer(
-            text="❌ Функция временно недоступна. Попробуйте позже.",
-            event=message,
-            message_type=MessageType.COMMAND_ACTION_INFO,
-            delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-        )
-    except Exception as e:
-        bot_logger.error(f"❌ Error in cmd_find: {e}", exc_info=True)
         await bot_manager.send_answer(
             text="❌ Ошибка при обработке команды. Попробуйте позже.",
             event=message,

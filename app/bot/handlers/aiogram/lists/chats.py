@@ -215,7 +215,7 @@ class ChatsListHandler(BaseListHandler):
                     message_type=MessageType.COMMAND_ACTION_INFO,
                     delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
                     parse_mode="Markdown",
-                    reply_markup=self.get_back_keyboard(state),
+                    reply_markup=await self.get_back_keyboard(state),
                 )
                 return
 
@@ -299,25 +299,22 @@ class ChatsListHandler(BaseListHandler):
         **kwargs: Any,
     ) -> None:
         """
-        Обработка выбора чата - переход к просмотру сообщений чата.
+        Обработка выбора чата - переход к просмотру сообщений чата (FK_Type=3).
 
-        При выборе чата происходит переход к обработчику деталей чата
-        (ChatDetailsHandler), который показывает сообщения.
+        При выборе чата выполняется действие FK_Type=3 (Открытие списка переписки)
+        и происходит переход к обработчику chat_details_router..
 
         Args:
             callback: CallbackQuery от пользователя
             state: Состояние FSM
-            item_id: ID выбранного чата
+            item_id: ID выбранного чата (TAvanpostUsersChats.FID)
             **kwargs: Дополнительные параметры
         """
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(
-            text=f"💬 Открытие чата #{item_id}...",
+            text=f"💬 Открытие переписки чата #{item_id}...",
             event=callback,
         )
-
-        # Переход к обработчику деталей чата
-        from app.bot.handlers.aiogram.custom.chat_details import ChatDetailsStates, show_chat_details
 
         # Получение данных из состояния
         state_data = await state.get_data()
@@ -340,6 +337,10 @@ class ChatsListHandler(BaseListHandler):
             selected_user_id=selected_user_id,
             selected_user_name=selected_user_name,
         )
+
+        # Переход к обработчику деталей чата (FK_Type=3)
+        from ..custom.chat_details import ChatDetailsStates, show_chat_details
+
         await state.set_state(ChatDetailsStates.viewing_messages)
 
         # Отображение сообщений чата

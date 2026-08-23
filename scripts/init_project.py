@@ -44,7 +44,7 @@ async def seed_avanpost_data() -> bool:
                 print("✅ Avanpost system data seeded")
             else:
                 print("⚠️  Avanpost seeding completed with errors")
-            return success
+            return success  # type: ignore[no-any-return]
     except Exception as e:
         print(f"❌ Error seeding Avanpost data: {e}")
         return False

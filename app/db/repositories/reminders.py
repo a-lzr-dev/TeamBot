@@ -56,7 +56,7 @@ class ReminderRepository:
         Returns:
             UserReminderModel: Созданное напоминание
         """
-        db_logger.info(f"🆕 [create_reminder] Creating reminder for user {user_id}: {title[:50]}...")
+        db_logger.debug(f"🆕 [create_reminder] Creating reminder for user {user_id}: {title[:50]}...")
 
         # Подготовка данных
         encrypted_data = None
@@ -124,7 +124,7 @@ class ReminderRepository:
         await session.commit()
         await session.refresh(reminder)
 
-        db_logger.info(f"✅ [create_reminder] Created reminder #{reminder.FID} for user {user_id}")
+        db_logger.info(f"✅ Created reminder #{reminder.FID} for user {user_id}")
         return reminder
 
     # ==================== ЗАВЕРШЕНИЕ ====================
@@ -146,7 +146,7 @@ class ReminderRepository:
         Returns:
             Tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
-        db_logger.info(f"✅ [complete_reminder] Completing reminder #{reminder_id} for user {user_id}")
+        db_logger.debug(f"✅ [complete_reminder] Completing reminder #{reminder_id} for user {user_id}")
 
         # Проверка владельца
         stmt = select(UserReminderModel).where(
@@ -189,7 +189,7 @@ class ReminderRepository:
 
         await session.commit()
 
-        db_logger.info(f"✅ [complete_reminder] Reminder #{reminder_id} completed by user {user_id}")
+        db_logger.info(f"✅ Reminder #{reminder_id} completed by user {user_id}")
         return True, "Reminder completed successfully"
 
     # ==================== ПОЛУЧЕНИЕ СПИСКА ====================
@@ -220,7 +220,7 @@ class ReminderRepository:
         Returns:
             List[ReminderModel]: Список напоминаний
         """
-        db_logger.info(f"📋 [get_reminders] Getting reminders for user {user_id}")
+        db_logger.debug(f"📋 [get_reminders] Getting reminders for user {user_id}")
 
         # Базовый запрос
         stmt = select(UserReminderModel).where(
@@ -260,7 +260,7 @@ class ReminderRepository:
         result = await session.execute(stmt)
         reminders = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_reminders] Found {len(reminders)} reminders for user {user_id}")
+        db_logger.debug(f"✅ Found {len(reminders)} reminders for user {user_id}")
         return reminders
 
     # ==================== ПОЛУЧЕНИЕ ПО ID ====================
@@ -278,7 +278,7 @@ class ReminderRepository:
         Returns:
             UserReminderModel | None: Напоминание или None
         """
-        db_logger.info(f"🔍 [get_reminder_by_id] Getting reminder by ID: {reminder_id}")
+        db_logger.debug(f"🔍 [get_reminder_by_id] Getting reminder by ID: {reminder_id}")
 
         stmt = select(UserReminderModel).where(UserReminderModel.FID == reminder_id)
 
@@ -288,7 +288,7 @@ class ReminderRepository:
         reminder: UserReminderModel | None = result.scalar_one_or_none()
 
         if reminder:
-            db_logger.info(f"✅ [get_reminder_by_id] Found reminder #{reminder_id}")
+            db_logger.debug(f"✅ Found reminder #{reminder_id}")
         else:
             db_logger.warning(f"⚠️ [get_reminder_by_id] Reminder #{reminder_id} not found")
 
@@ -318,7 +318,7 @@ class ReminderRepository:
         Returns:
             List[ReminderModel]: Список найденных напоминаний
         """
-        db_logger.info(f"🔍 [find_by_code_word] Finding reminders by code word: {code_word} for user {user_id}")
+        db_logger.debug(f"🔍 [find_by_code_word] Finding reminders by code word: {code_word} for user {user_id}")
 
         stmt = select(UserReminderModel).where(
             or_(
@@ -345,7 +345,7 @@ class ReminderRepository:
         result = await session.execute(stmt)
         reminders = list(result.scalars().all())
 
-        db_logger.info(f"✅ [find_by_code_word] Found {len(reminders)} reminders by code word '{code_word}'")
+        db_logger.debug(f"✅ Found {len(reminders)} reminders by code word '{code_word}'")
         return reminders
 
     # ==================== АКТИВНЫЕ НАПОМИНАНИЯ ====================
@@ -370,7 +370,7 @@ class ReminderRepository:
         Returns:
             List[ReminderModel]: Список активных напоминаний
         """
-        db_logger.info(f"🔍 [get_active_reminders] Getting active reminders before {before_time or 'now'}")
+        db_logger.debug(f"🔍 [get_active_reminders] Getting active reminders before {before_time or 'now'}")
 
         if before_time is None:
             before_time = datetime_now()
@@ -395,7 +395,7 @@ class ReminderRepository:
         result = await session.execute(stmt)
         reminders = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_active_reminders] Found {len(reminders)} active reminders")
+        db_logger.debug(f"✅ Found {len(reminders)} active reminders")
         return reminders
 
     # ==================== ОБНОВЛЕНИЕ СТАТУСА ====================
@@ -424,7 +424,7 @@ class ReminderRepository:
         Returns:
             bool: Успешно ли обновлено
         """
-        db_logger.info(f"🔄 [update_reminder_status] Updating reminder #{reminder_id} status")
+        db_logger.debug(f"🔄 [update_reminder_status] Updating reminder #{reminder_id} status")
 
         values: dict[str, Any] = {}
 
@@ -454,7 +454,7 @@ class ReminderRepository:
         success = result.rowcount > 0 if hasattr(result, "rowcount") else True
 
         if success:
-            db_logger.info(f"✅ [update_reminder_status] Updated reminder #{reminder_id} status")
+            db_logger.info(f"✅ Updated reminder #{reminder_id} status")
         else:
             db_logger.warning(f"⚠️ [update_reminder_status] Reminder #{reminder_id} not found")
 
@@ -475,7 +475,7 @@ class ReminderRepository:
         Returns:
             bool: Успешно ли деактивировано
         """
-        db_logger.info(f"🔕 [deactivate_reminder] Deactivating reminder #{reminder_id}")
+        db_logger.debug(f"🔕 [deactivate_reminder] Deactivating reminder #{reminder_id}")
 
         update_stmt = update(UserReminderModel).where(UserReminderModel.FID == reminder_id).values(FIsActive=False)
 
@@ -487,7 +487,7 @@ class ReminderRepository:
         success = result.rowcount > 0 if hasattr(result, "rowcount") else True
 
         if success:
-            db_logger.info(f"✅ [deactivate_reminder] Deactivated reminder #{reminder_id}")
+            db_logger.info(f"✅ Deactivated reminder #{reminder_id}")
         else:
             db_logger.warning(f"⚠️ [deactivate_reminder] Reminder #{reminder_id} not found")
 
@@ -509,7 +509,7 @@ class ReminderRepository:
         Returns:
             bool: Успешно ли удалено
         """
-        db_logger.info(f"🗑️ [delete_reminder] Deleting reminder #{reminder_id} (soft={soft})")
+        db_logger.debug(f"🗑️ [delete_reminder] Deleting reminder #{reminder_id} (soft={soft})")
 
         if soft:
             update_stmt = (
@@ -543,7 +543,7 @@ class ReminderRepository:
         success = result.rowcount > 0 if hasattr(result, "rowcount") else True
 
         if success:
-            db_logger.info(f"✅ [delete_reminder] Deleted reminder #{reminder_id}")
+            db_logger.info(f"✅ Deleted reminder #{reminder_id}")
         else:
             db_logger.warning(f"⚠️ [delete_reminder] Reminder #{reminder_id} not found")
 
@@ -569,7 +569,7 @@ class ReminderRepository:
         Returns:
             dict: Статистика
         """
-        db_logger.info(f"📊 [get_stats] Getting reminder stats for user {user_id}, period={period}")
+        db_logger.debug(f"📊 [get_stats] Getting reminder stats for user {user_id}, period={period}")
 
         now = datetime_now()
 
@@ -657,9 +657,7 @@ class ReminderRepository:
             "period": period,
         }
 
-        db_logger.info(
-            f"✅ [get_stats] Stats: total={total}, completed={completed}, rate={result_stats['success_rate']:.1f}%"
-        )
+        db_logger.info(f"✅ Stats: total={total}, completed={completed}, rate={result_stats['success_rate']:.1f}%")
         return result_stats
 
     # ==================== ФОРМАТИРОВАНИЕ ====================
@@ -731,7 +729,7 @@ class ReminderRepository:
             db_logger.debug("ℹ️ [bulk_deactivate] No reminder IDs provided")
             return 0
 
-        db_logger.info(f"🔕 [bulk_deactivate] Deactivating {len(reminder_ids)} reminders")
+        db_logger.debug(f"🔕 [bulk_deactivate] Deactivating {len(reminder_ids)} reminders")
 
         update_stmt = update(UserReminderModel).where(UserReminderModel.FID.in_(reminder_ids)).values(FIsActive=False)
 
@@ -742,7 +740,7 @@ class ReminderRepository:
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(reminder_ids)
 
-        db_logger.info(f"✅ [bulk_deactivate] Deactivated {rowcount} reminders")
+        db_logger.info(f"✅ Deactivated {rowcount} reminders")
         return rowcount
 
     @staticmethod
@@ -767,7 +765,7 @@ class ReminderRepository:
             db_logger.debug("ℹ️ [bulk_delete] No reminder IDs provided")
             return 0
 
-        db_logger.info(f"🗑️ [bulk_delete] Deleting {len(reminder_ids)} reminders (soft={soft})")
+        db_logger.debug(f"🗑️ [bulk_delete] Deleting {len(reminder_ids)} reminders (soft={soft})")
 
         if soft:
             update_stmt = (
@@ -800,7 +798,7 @@ class ReminderRepository:
 
         rowcount = result.rowcount if hasattr(result, "rowcount") else len(reminder_ids)
 
-        db_logger.info(f"✅ [bulk_delete] Deleted {rowcount} reminders")
+        db_logger.info(f"✅ Deleted {rowcount} reminders")
         return rowcount
 
 

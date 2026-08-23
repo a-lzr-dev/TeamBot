@@ -7,6 +7,7 @@
 3. Управление динамическими командами для пользователей
 4. Обработку сообщений и callback-запросов
 5. Синхронизацию чатов и участников
+6. Массовые рассылки с сохранением истории
 """
 
 import asyncio
@@ -23,7 +24,7 @@ from telethon import TelegramClient
 
 from ..config import settings
 from ..db import ChatRepository, MessageRepository, ReminderRepository, UserRepository, db_manager
-from ..db.repositories import StatsRepository
+from ..db.repositories import BroadcastRepository, StatsRepository
 from ..logger import bot_logger
 from ..middlewares.bot.database import DatabaseMiddleware
 from ..middlewares.bot.error_handler import ErrorHandlerMiddleware
@@ -122,6 +123,7 @@ class BotManager:
         self._message_repo = MessageRepository()
         self._reminder_repo = ReminderRepository()
         self._stats_repo = StatsRepository()
+        self._broadcast_repo = BroadcastRepository()  # ← ДОБАВЛЕНО
 
         # === Состояние ===
         # Флаг инициализации менеджера
@@ -578,7 +580,7 @@ class BotManager:
         except Exception as e:
             bot_logger.debug(f"ℹ️ Could not delete command message: {e}")
 
-    # ==================== РАССЫЛКА ====================
+    # ==================== РАССЫЛКА С СОХРАНЕНИЕМ В БД ====================
 
     @log_exceptions(bot_logger)
     @ensure_initialized
@@ -595,12 +597,14 @@ class BotManager:
         sender_username: str | None = None,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         message_thread_id: int | None = None,
+        broadcast_id: int | None = None,  # ← ДОБАВЛЕНО: ID рассылки для связи
     ) -> dict[str, Any]:
         """
-        Рассылка сообщения во все активные чаты.
+        Рассылка сообщения во все активные чаты с сохранением истории.
 
         Отправляет сообщение во все чаты, где присутствует бот.
         Поддерживает фильтрацию по типам чатов и исключение отдельных чатов.
+        Сохраняет связи между рассылкой и отправленными сообщениями.
 
         Args:
             text: Текст сообщения
@@ -614,9 +618,11 @@ class BotManager:
             sender_username: Username отправителя
             progress_callback: Callback для прогресса
             message_thread_id: ID топика
+            broadcast_id: ID рассылки для связи (если None - не сохранять)
 
         Returns:
             dict[str, Any]: Результат рассылки с количеством успешных/неудачных отправок
+                и списком отправленных сообщений
         """
         if not self._aiogram_client.bot:
             return {
@@ -626,6 +632,7 @@ class BotManager:
                 "successful": 0,
                 "failed": 0,
                 "failed_chats": [],
+                "sent_messages": [],
             }
 
         try:
@@ -648,12 +655,14 @@ class BotManager:
                         "failed": 0,
                         "message": "No active chats found",
                         "failed_chats": [],
+                        "sent_messages": [],
                     }
 
                 bot_logger.info(f"📊 Broadcasting to {total_chats} chats")
 
                 success_count = 0
                 failed_chats: list[dict[str, Any]] = []
+                sent_messages: list[dict[str, Any]] = []  # ← ДОБАВЛЕНО
 
                 for idx, chat in enumerate(chats, 1):
                     try:
@@ -671,6 +680,14 @@ class BotManager:
 
                         if result.get("success"):
                             success_count += 1
+                            # Сохраняем информацию об отправленном сообщении
+                            sent_messages.append(
+                                {
+                                    "chat_id": chat.FID,
+                                    "message_id": result.get("message_id"),
+                                    "chat_title": chat.FTitle or f"Chat {chat.FID}",
+                                }
+                            )
                             bot_logger.debug(f"✅ Broadcast to chat {chat.FID} successful")
                         else:
                             error = result.get("error", "Unknown error")
@@ -698,6 +715,21 @@ class BotManager:
                             }
                         )
 
+                # Сохранение связей с сообщениями в БД
+                if broadcast_id and sent_messages:
+                    try:
+                        for msg in sent_messages:
+                            await self._broadcast_repo.link_message(
+                                session=session,
+                                broadcast_id=broadcast_id,
+                                message_id=msg["message_id"],
+                                chat_id=msg["chat_id"],
+                            )
+                        await session.commit()
+                        bot_logger.info(f"✅ Saved {len(sent_messages)} message links for broadcast {broadcast_id}")
+                    except Exception as e:
+                        bot_logger.error(f"❌ Failed to save broadcast links: {e}")
+
                 bot_logger.info(f"✅ Broadcast completed: {success_count}/{total_chats} successful")
 
                 return {
@@ -706,6 +738,7 @@ class BotManager:
                     "successful": success_count,
                     "failed": len(failed_chats),
                     "failed_chats": failed_chats[:10],
+                    "sent_messages": sent_messages,  # ← ДОБАВЛЕНО
                 }
 
         except Exception as e:
@@ -717,6 +750,7 @@ class BotManager:
                 "successful": 0,
                 "failed": 0,
                 "failed_chats": [],
+                "sent_messages": [],
             }
 
     # ==================== ЖИЗНЕННЫЙ ЦИКЛ ====================
@@ -1130,9 +1164,6 @@ class BotManager:
         return [
             {"command": "/start", "description": "🚀 Начало работы / Авторизация"},
             {"command": "/help", "description": "❓ Помощь"},
-            {"command": "/debug_commands", "description": "🔍 Отладка команд"},
-            {"command": "/msg", "description": "⚙️ Меню действий с сообщением"},
-            {"command": "/find", "description": "🔍 Найти сообщение по ID"},
         ]
 
     @staticmethod
@@ -1147,8 +1178,9 @@ class BotManager:
             {"command": "/actions", "description": "📋 Меню действий"},
             {"command": "/automation", "description": "🤖 Меню автоматизации"},
             {"command": "/stats", "description": "📊 Статистика"},
-            {"command": "/id", "description": "🆔 Мой ID"},
             {"command": "/logout", "description": "🚪 Выйти из системы"},
+            {"command": "/msg", "description": "🔍️ Найти сообщение по ID"},
+            {"command": "/id", "description": "🆔 Мой ID"},
         ]
 
     @staticmethod
@@ -1161,8 +1193,10 @@ class BotManager:
         """
         return [
             {"command": "/users", "description": "👥 Пользователи (админ)"},
-            {"command": "/broadcast", "description": "📢 Рассылка (админ)"},
-            {"command": "/delete", "description": "🗑️ Удалить сообщение (админ)"},
+            {"command": "/bc", "description": "📢 Меню рассылки (админ)"},
+            {"command": "/bc_send", "description": "📢 Рассылка (админ)"},
+            {"command": "/bc_del", "description": "🗑️ Отмена рассылки (админ)"},
+            {"command": "/debug_commands", "description": "🔍 Отладка команд"},
             {"command": "/sync", "description": "🔄 Меню синхронизации (админ)"},
             {"command": "/sync_chats", "description": "💬 Синхр. чатов (админ)"},
             {"command": "/sync_base", "description": "📚 Синхр. справочников (админ)"},

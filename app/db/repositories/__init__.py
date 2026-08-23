@@ -2,6 +2,7 @@ from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .avanpost_actions import AvanpostActionRepository
 from .avanpost_users import AvanpostUserRepository
+from .broadcast import BroadcastRepository
 from .chats import ChatRepository
 from .dirs import DirContactGroupRepository, DirLanguageRepository
 from .errors import ErrorRepository
@@ -20,6 +21,7 @@ __all__ = [
     # Основные репозитории
     "AvanpostRepository",
     "AvanpostUserRepository",
+    "BroadcastRepository",
     "ChatRepository",
     "UserRepository",
     "MessageRepository",

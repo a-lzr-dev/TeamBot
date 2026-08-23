@@ -67,20 +67,30 @@ async def show_message_context_menu(
     else:
         # Получение информации о сообщении
         async with db_manager.get_session() as session:
-            repo = MessageRepository()
-            db_message = await repo.get_message_by_id(session, message_id)
+            from app.db.repositories import AvanpostUserRepository
 
-            # Формирование заголовка
-            title += f"🆔 ID: `{message_id}`\n"
-            title += f"💬 Чат: `{chat_id}`\n"
+            avanpost_repo = AvanpostUserRepository()
+            avanpost_message = await avanpost_repo.get_message_by_id(session, message_id)
 
-            if db_message:
-                if db_message.FText:
-                    text_preview = db_message.FText[:100] + "..." if len(db_message.FText) > 100 else db_message.FText
+            if avanpost_message:
+                title += f"🆔 ID: `{message_id}`\n"
+                title += "📂 Источник: Avanpost\n"
+                if avanpost_message.get("author_name"):
+                    title += f"👤 Автор: {avanpost_message['author_name']}\n"
+                if avanpost_message.get("text"):
+                    text = avanpost_message["text"]
+                    text_preview = text[:100] + "..." if len(text) > 100 else text
                     title += f"📝 Текст: {text_preview}\n"
-                if db_message.FDateSent:
-                    title += f"📅 Дата: {db_message.FDateSent.strftime('%d.%m.%Y %H:%M')}\n"
+                if avanpost_message.get("date"):
+                    date_str = avanpost_message["date"][:16] if avanpost_message["date"] else "неизвестно"
+                    title += f"📅 Дата: {date_str}\n"
+                if avanpost_message.get("direction"):
+                    direction = "входящее" if avanpost_message["direction"] == 1 else "исходящее"
+                    title += f"↔️ Направление: {direction}\n"
             else:
+                # Сообщение не найдено нигде
+                title += f"🆔 ID: `{message_id}`\n"
+                title += f"💬 Чат: `{chat_id}`\n"
                 title += "⚠️ Сообщение не найдено в базе данных\n"
 
             title += "\nВыберите действие:"

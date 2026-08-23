@@ -233,7 +233,7 @@ class CarrierOrdersListHandler(BaseListHandler):
                 if group_id:
                     extra_buttons.append(("🏠 В главное меню", "action_home"))
 
-                keyboard = self.get_back_keyboard(state, extra_buttons)
+                keyboard = await self.get_back_keyboard(state, extra_buttons)
 
                 await bot_manager.send_message(
                     chat_id=chat_id,
@@ -326,23 +326,63 @@ class CarrierOrdersListHandler(BaseListHandler):
         **kwargs: Any,
     ) -> None:
         """
-        Обработка выбора заказа перевозчика.
-
-        При выборе заказа показывается детальная информация о заказе.
+        Обработка выбора заказа перевозчика - открывает маршрут (FK_Type=4).
 
         Args:
             callback: CallbackQuery от пользователя
             state: Состояние FSM
-            item_id: ID выбранного заказа (ID миссии)
+            item_id: ID выбранной миссии (TAvanpostUsersMissions.FID)
             **kwargs: Дополнительные параметры
         """
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(
-            text=f"📋 Детали заказа перевозчика #{item_id}",
+            text=f"🗺️ Открытие маршрута #{item_id}...",
             event=callback,
         )
 
-        # TODO: Добавить отображение детальной информации о заказе перевозчика
+        # Получение данных из состояния
+        state_data = await state.get_data()
+        avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
+        parent_item_id = state_data.get("parent_item_id")
+        group_id = state_data.get("group_id")
+        selected_user_id = state_data.get("selected_user_id")
+        selected_user_name = state_data.get("selected_user_name")
+
+        if not avanpost_user_id:
+            await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
+            return
+
+        # Сохранение ID миссии в состоянии
+        await state.update_data(
+            selected_mission_id=item_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+            group_id=group_id,
+            parent_item_id=parent_item_id,
+        )
+
+        # Переключение состояния на просмотр маршрута
+        from app.bot.handlers.aiogram.lists.route_points import RoutePointsStates, show_route_points_list
+
+        await state.set_state(RoutePointsStates.viewing_route_points)
+        await state.update_data(
+            route_points_page=0,
+            route_points_search_query=None,
+            parent_item_id=parent_item_id,
+            avanpost_user_id=avanpost_user_id,
+            group_id=group_id,
+            selected_user_id=selected_user_id,
+            selected_user_name=selected_user_name,
+        )
+
+        # Отображение точек маршрута
+        await show_route_points_list(
+            event=callback,
+            state=state,
+            avanpost_user_id=avanpost_user_id,
+            mission_id=item_id,
+            page=0,
+        )
 
     async def get_state_keys(self) -> dict[str, str]:
         """
@@ -367,7 +407,7 @@ class CarrierOrdersListHandler(BaseListHandler):
         }
 
     @staticmethod
-    def get_back_keyboard(
+    async def get_back_keyboard(
         state: FSMContext,
         extra_buttons: list[tuple[str, str]] | None = None,
     ) -> Any:

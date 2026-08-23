@@ -6,14 +6,15 @@
 
 Группы методов:
 1. Список пользователей (get_avanpost_users_page)
-2. Заказы пользователя (get_user_orders, get_user_orders_page)
-3. Чаты пользователя (get_user_chats, get_user_chats_page)
-4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page)
-5. Заказы перевозчика (get_carrier_orders_page)
-6. Сообщения чата (get_chat_messages_page) с фильтрацией по направлению
+2. Заказы заказчиков пользователя (get_user_orders, get_user_orders_page) - FK_Type=8
+3. Чаты пользователя (get_user_chats, get_user_chats_page) - FK_Type=9
+4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page) - FK_Type=10
+5. Заказы перевозчика (get_carrier_orders_page) - FK_Type=11
+6. Сообщения чата (get_chat_messages_page) с фильтрацией по направлению - FK_Type=3
 7. Контакты пользователя (get_user_contacts_page) - FK_Type=6
 8. Контактная информация (get_contact_details_page) - FK_Type=7
-9. Вспомогательные методы (get_contact_name, get_contact_by_id)
+9. Точки маршрута (get_mission_items_page) - FK_Type=4
+10. Вспомогательные методы (get_contact_name, get_contact_by_id, get_message_by_id)
 """
 
 from typing import Any
@@ -35,6 +36,8 @@ from ...models.avanpost import (
     AvanpostUserChatModel,
     AvanpostUserLinkChatContactMsgModel,
     AvanpostUserLinkContactModel,
+    AvanpostUserMissionItemLangModel,
+    AvanpostUserMissionItemModel,
     AvanpostUserMissionLangModel,
     AvanpostUserMissionModel,
     AvanpostUserOrderLangModel,
@@ -46,20 +49,7 @@ from ...utils.decorators import log_exceptions
 
 
 class AvanpostUserRepository:
-    """
-    Репозиторий для работы с данными пользователей Avanpost.
-
-    Группы методов:
-    1. Список пользователей (get_avanpost_users_page)
-    2. Заказы пользователя (get_user_orders, get_user_orders_page)
-    3. Чаты пользователя (get_user_chats, get_user_chats_page)
-    4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page)
-    5. Заказы перевозчика (get_carrier_orders_page)
-    6. Сообщения чата (get_chat_messages_page) с фильтрацией по направлению
-    7. Контакты пользователя (get_user_contacts_page) - FK_Type=6
-    8. Контактная информация (get_contact_details_page) - FK_Type=7
-    9. Вспомогательные методы (get_contact_name, get_contact_by_id)
-    """
+    """Репозиторий для работы с данными пользователей Avanpost."""
 
     # ==================== 1. СПИСОК ПОЛЬЗОВАТЕЛЕЙ ====================
 
@@ -1151,77 +1141,6 @@ class AvanpostUserRepository:
                 "error": str(e),
             }
 
-    @staticmethod
-    @log_exceptions(db_logger)
-    async def get_message_by_id(
-        session: AsyncSession,
-        message_id: int,
-    ) -> dict[str, Any] | None:
-        """
-        Получение сообщения по ID из TAvanpostContactsMsgs.
-
-        Args:
-            session: Сессия БД
-            message_id: ID сообщения (TAvanpostContactsMsgs.FID)
-
-        Returns:
-            dict | None: Данные сообщения или None
-        """
-        db_logger.debug(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
-
-        try:
-            stmt = (
-                select(
-                    AvanpostContactMsgModel.FID.label("id"),
-                    AvanpostContactMsgModel.FDate.label("date"),
-                    AvanpostContactMsgModel.FK_Direction.label("direction"),
-                    AvanpostContactMsgModel.FK_Type.label("type"),
-                    AvanpostContactMsgModel.FK_ContactAuthor.label("author_contact_id"),
-                    AvanpostContactMsgModel.FK_ContactTarget.label("target_contact_id"),
-                    AvanpostMsgModel.FID.label("msg_id"),
-                    AvanpostMsgModel.FText.label("text"),
-                    AvanpostMsgModel.FSize.label("size"),
-                )
-                .select_from(AvanpostContactMsgModel)
-                .outerjoin(
-                    AvanpostMsgModel,
-                    AvanpostMsgModel.FID == AvanpostContactMsgModel.FK_Link,
-                )
-                .where(AvanpostContactMsgModel.FID == message_id)
-            )
-
-            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
-
-            result = await session.execute(stmt)
-            row = result.first()
-
-            if not row:
-                db_logger.warning(f"⚠️ Message {message_id} not found")
-                return None
-
-            # Получение имен контактов
-            author_name = await AvanpostUserRepository.get_contact_name(session, row.author_contact_id, lang_code="RU")
-            target_name = await AvanpostUserRepository.get_contact_name(session, row.target_contact_id, lang_code="RU")
-
-            return {
-                "id": row.id,
-                "date": row.date.isoformat() if row.date else None,
-                "direction": row.direction,
-                "type": row.type,
-                "author_contact_id": row.author_contact_id,
-                "author_name": author_name,
-                "target_contact_id": row.target_contact_id,
-                "target_name": target_name,
-                "text": row.text,
-                "size": row.size,
-                "has_attachments": row.size is not None and row.size > 0,
-                "msg_id": row.msg_id,
-            }
-
-        except Exception as e:
-            db_logger.error(f"❌ Failed to get message {message_id}: {e}", exc_info=True)
-            return None
-
     # ==================== 7. КОНТАКТЫ ПОЛЬЗОВАТЕЛЯ (FK_Type=6) ====================
 
     @staticmethod
@@ -1506,7 +1425,183 @@ class AvanpostUserRepository:
                 "error": str(e),
             }
 
-    # ==================== 9. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+    # ==================== 9. ТОЧКИ МАРШРУТА (FK_Type=4) ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_mission_items_page(
+        session: AsyncSession,
+        mission_id: int,
+        page: int = 0,
+        page_size: int = 10,
+        search_query: str | None = None,
+        lang_code: str = "RU",
+    ) -> dict[str, Any]:
+        """
+        Получение списка точек маршрута для миссии с пагинацией и поиском.
+
+        Используется при:
+        - Выборе заказа перевозчика (FK_Type=11)
+        - Выполнении действия FK_Type=4 (Открытие маршрута перевозки)
+
+        Args:
+            session: Сессия БД (main)
+            mission_id: ID миссии (TAvanpostUsersMissions.FID)
+            page: Номер страницы (начиная с 0)
+            page_size: Количество точек на странице
+            search_query: Поисковый запрос (поиск по названию)
+            lang_code: Код языка (по умолчанию 'RU')
+
+        Returns:
+            dict: {
+                "items": list[dict],  # Список точек с полями id, name, description, position
+                "mission_name": str | None,  # Название миссии
+                "total": int,  # Общее количество
+                "page": int,  # Текущая страница
+                "total_pages": int,  # Всего страниц
+                "has_prev": bool,  # Есть ли предыдущая страница
+                "has_next": bool,  # Есть ли следующая страница
+                "search_query": str | None  # Текущий поисковый запрос
+            }
+        """
+        db_logger.debug(
+            f"📋 [get_mission_items_page] START: mission_id={mission_id}, page={page}, search={search_query}"
+        )
+
+        try:
+            # Проверка, что миссия принадлежит пользователю
+            check_stmt = select(AvanpostUserMissionModel).where(
+                AvanpostUserMissionModel.FID == mission_id,
+            )
+            check_result = await session.execute(check_stmt)
+            if not check_result.scalar_one_or_none():
+                db_logger.warning(f"⚠️ Mission {mission_id} not found")
+                return {
+                    "items": [],
+                    "mission_name": None,
+                    "total": 0,
+                    "page": page,
+                    "total_pages": 0,
+                    "has_prev": False,
+                    "has_next": False,
+                    "search_query": search_query,
+                    "error": "Mission not found or access denied",
+                }
+
+            # Получение названия миссии
+            mission_name_stmt = select(AvanpostUserMissionLangModel.FName).where(
+                AvanpostUserMissionLangModel.FK_Parent == mission_id,
+                AvanpostUserMissionLangModel.FK_Lang == lang_code,
+            )
+            mission_name_result = await session.execute(mission_name_stmt)
+            mission_name = mission_name_result.scalar_one_or_none()
+
+            # Базовый запрос для получения точек
+            stmt = (
+                select(
+                    AvanpostUserMissionItemModel.FID,
+                    AvanpostUserMissionItemModel.FPosition,
+                    AvanpostUserMissionItemLangModel.FName,
+                    AvanpostUserMissionItemLangModel.FDescription,
+                )
+                .outerjoin(
+                    AvanpostUserMissionItemLangModel,
+                    AvanpostUserMissionItemLangModel.FK_Parent == AvanpostUserMissionItemModel.FID,
+                )
+                .where(
+                    AvanpostUserMissionItemModel.FK_Mission == mission_id,
+                    AvanpostUserMissionItemLangModel.FK_Lang == lang_code,
+                )
+            )
+
+            # Применение поискового фильтра
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                stmt = stmt.where(AvanpostUserMissionItemLangModel.FName.ilike(search_pattern))
+
+            stmt = stmt.order_by(
+                AvanpostUserMissionItemModel.FPosition,
+                AvanpostUserMissionItemModel.FID,
+            )
+
+            db_logger.debug(f"📝 [get_mission_items_page] SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            # Подсчет общего количества
+            count_stmt = (
+                select(func.count())
+                .select_from(AvanpostUserMissionItemModel)
+                .where(AvanpostUserMissionItemModel.FK_Mission == mission_id)
+            )
+            if search_query and len(search_query) >= 2:
+                search_pattern = f"%{search_query}%"
+                count_stmt = count_stmt.where(
+                    AvanpostUserMissionItemModel.FID.in_(
+                        select(AvanpostUserMissionItemLangModel.FK_Parent).where(
+                            AvanpostUserMissionItemLangModel.FName.ilike(search_pattern)
+                        )
+                    )
+                )
+
+            db_logger.debug(
+                f"📝 [get_mission_items_page] SQL (count): {count_stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            total_result = await session.execute(count_stmt)
+            total = total_result.scalar() or 0
+            total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+            # Пагинация
+            offset = page * page_size
+            stmt = stmt.offset(offset).limit(page_size)
+
+            db_logger.debug(
+                f"📝 [get_mission_items_page] SQL (paginated): {stmt.compile(compile_kwargs={'literal_binds': True})}"
+            )
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            items = [
+                {
+                    "id": row.FID,
+                    "name": row.FName or f"Точка #{row.FID}",
+                    "description": row.FDescription,
+                    "position": row.FPosition,
+                }
+                for row in rows
+            ]
+
+            db_logger.info(
+                f"✅ [get_mission_items_page] FINISH: returned {len(items)} items "
+                f"for mission {mission_id} (total={total}, page={page})"
+            )
+
+            return {
+                "items": items,
+                "mission_name": mission_name or f"Миссия #{mission_id}",
+                "total": total,
+                "page": page,
+                "total_pages": total_pages,
+                "has_prev": page > 0,
+                "has_next": page < total_pages - 1,
+                "search_query": search_query,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ [get_mission_items_page] Failed: {e}", exc_info=True)
+            return {
+                "items": [],
+                "mission_name": None,
+                "total": 0,
+                "page": page,
+                "total_pages": 0,
+                "has_prev": False,
+                "has_next": False,
+                "search_query": search_query,
+                "error": str(e),
+            }
+
+    # ==================== 10. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -1595,6 +1690,77 @@ class AvanpostUserRepository:
             }
         except Exception as e:
             db_logger.error(f"❌ [get_contact_by_id] Failed: {e}", exc_info=True)
+            return None
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_message_by_id(
+        session: AsyncSession,
+        message_id: int,
+    ) -> dict[str, Any] | None:
+        """
+        Получение сообщения по ID из TAvanpostContactsMsgs.
+
+        Args:
+            session: Сессия БД
+            message_id: ID сообщения (TAvanpostContactsMsgs.FID)
+
+        Returns:
+            dict | None: Данные сообщения или None
+        """
+        db_logger.debug(f"🔍 [get_message_by_id] Getting message by ID: {message_id}")
+
+        try:
+            stmt = (
+                select(
+                    AvanpostContactMsgModel.FID.label("id"),
+                    AvanpostContactMsgModel.FDate.label("date"),
+                    AvanpostContactMsgModel.FK_Direction.label("direction"),
+                    AvanpostContactMsgModel.FK_Type.label("type"),
+                    AvanpostContactMsgModel.FK_ContactAuthor.label("author_contact_id"),
+                    AvanpostContactMsgModel.FK_ContactTarget.label("target_contact_id"),
+                    AvanpostMsgModel.FID.label("msg_id"),
+                    AvanpostMsgModel.FText.label("text"),
+                    AvanpostMsgModel.FSize.label("size"),
+                )
+                .select_from(AvanpostContactMsgModel)
+                .outerjoin(
+                    AvanpostMsgModel,
+                    AvanpostMsgModel.FID == AvanpostContactMsgModel.FK_Link,
+                )
+                .where(AvanpostContactMsgModel.FID == message_id)
+            )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            row = result.first()
+
+            if not row:
+                db_logger.warning(f"⚠️ Message {message_id} not found")
+                return None
+
+            # Получение имен контактов
+            author_name = await AvanpostUserRepository.get_contact_name(session, row.author_contact_id, lang_code="RU")
+            target_name = await AvanpostUserRepository.get_contact_name(session, row.target_contact_id, lang_code="RU")
+
+            return {
+                "id": row.id,
+                "date": row.date.isoformat() if row.date else None,
+                "direction": row.direction,
+                "type": row.type,
+                "author_contact_id": row.author_contact_id,
+                "author_name": author_name,
+                "target_contact_id": row.target_contact_id,
+                "target_name": target_name,
+                "text": row.text,
+                "size": row.size,
+                "has_attachments": row.size is not None and row.size > 0,
+                "msg_id": row.msg_id,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get message {message_id}: {e}", exc_info=True)
             return None
 
 

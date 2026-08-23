@@ -103,7 +103,7 @@ class ChatRepository:
         merged_chat: ChatModel = await session.merge(chat)
         await session.flush()
 
-        db_logger.info(f"✅ [save_chat] Chat {chat_id} saved successfully")
+        db_logger.info(f"✅ Chat {chat_id} saved successfully")
         return merged_chat
 
     @staticmethod
@@ -157,7 +157,7 @@ class ChatRepository:
         success = result.rowcount > 0 if hasattr(result, "rowcount") else False
 
         if success:
-            db_logger.info(f"✅ [remove_chat_member] Member {user_id} removed from chat {chat_id}")
+            db_logger.info(f"✅ Member {user_id} removed from chat {chat_id}")
         else:
             db_logger.warning(f"⚠️ [remove_chat_member] Member {user_id} not found in chat {chat_id}")
 
@@ -184,7 +184,7 @@ class ChatRepository:
         result: Result = await session.execute(query)
         chats: list[ChatModel] = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_chats] Found {len(chats)} chats")
+        db_logger.debug(f"✅ Found {len(chats)} chats")
         return chats
 
     @staticmethod
@@ -201,7 +201,7 @@ class ChatRepository:
         chat: ChatModel | None = result.scalar_one_or_none()
 
         if chat:
-            db_logger.info(f"✅ [get_chat_by_id] Found chat {chat_id}")
+            db_logger.debug(f"✅ Found chat {chat_id}")
         else:
             db_logger.warning(f"⚠️ [get_chat_by_id] Chat {chat_id} not found")
 
@@ -257,7 +257,7 @@ class ChatRepository:
         result: Result = await session.execute(query)
         members: list[UserChatMemberModel] = [UserChatMemberModel.from_row(row) for row in result.all()]
 
-        db_logger.info(f"✅ [get_user_chat_members] Found {len(members)} members")
+        db_logger.debug(f"✅ Found {len(members)} members")
         return members
 
     @staticmethod
@@ -288,7 +288,7 @@ class ChatRepository:
         result = await session.execute(stmt)
         member_ids = {row[0] for row in result.all()}
 
-        db_logger.info(f"✅ [get_active_member_ids] Found {len(member_ids)} active members in chat {chat_id}")
+        db_logger.debug(f"✅ Found {len(member_ids)} active members in chat {chat_id}")
         return member_ids
 
     @staticmethod
@@ -346,7 +346,7 @@ class ChatRepository:
         deleted = result.rowcount if hasattr(result, "rowcount") else 0
 
         if deleted > 0:
-            db_logger.info(f"✅ [deactivate_missing_members] Deactivated {deleted} members in chat {chat_id}")
+            db_logger.info(f"✅ Deactivated {deleted} members in chat {chat_id}")
         else:
             db_logger.debug(f"ℹ️ [deactivate_missing_members] No members to deactivate in chat {chat_id}")
 
@@ -399,7 +399,7 @@ class ChatRepository:
 
         updated = result.rowcount if hasattr(result, "rowcount") else 0
 
-        db_logger.info(f"✅ [update_members_status] Updated {updated} members status to {status} in chat {chat_id}")
+        db_logger.info(f"✅ Updated {updated} members status to {status} in chat {chat_id}")
         return updated
 
     @staticmethod
@@ -441,7 +441,7 @@ class ChatRepository:
         deleted = result.rowcount if hasattr(result, "rowcount") else 0
 
         if deleted > 0:
-            db_logger.info(f"✅ [deactivate_missing_chats] Deactivated {deleted} chats")
+            db_logger.info(f"✅ Deactivated {deleted} chats")
         else:
             db_logger.debug("ℹ️ [deactivate_missing_chats] No chats to deactivate")
 
@@ -469,7 +469,7 @@ class ChatRepository:
         await session.execute(stmt)
         await session.flush()
 
-        db_logger.info(f"✅ [update_sync_time] Sync time updated for chat {chat_id}")
+        db_logger.info(f"✅ Sync time updated for chat {chat_id}")
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -502,7 +502,7 @@ class ChatRepository:
         await session.execute(stmt)
         await session.flush()
 
-        db_logger.info(f"✅ [update_member_sync_time] Sync time updated for member {user_id} in chat {chat_id}")
+        db_logger.info(f"✅ Sync time updated for member {user_id} in chat {chat_id}")
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -532,9 +532,7 @@ class ChatRepository:
                 message.FK_DeletedByMessage = deleted_by_message_id
                 message.FDeletedByType = deleted_by_type
                 await session.commit()
-                db_logger.info(
-                    f"✅ [deactivate_missing_chat_message] Message {message_id} marked as deleted by {deleted_by_type}"
-                )
+                db_logger.info(f"✅ Message {message_id} marked as deleted by {deleted_by_type}")
                 return True
 
             db_logger.warning(f"⚠️ [deactivate_missing_chat_message] Message {message_id} not found or already deleted")
@@ -581,7 +579,7 @@ class ChatRepository:
         result: Result = await session.execute(query)
         messages: list[ChatMessageModel] = list(result.scalars().all())
 
-        db_logger.info(f"✅ [get_messages] Found {len(messages)} messages")
+        db_logger.debug(f"✅ Found {len(messages)} messages")
         return messages
 
     @staticmethod
@@ -631,7 +629,7 @@ class ChatRepository:
             "by_day": by_day,
         }
 
-        db_logger.info(f"✅ [get_deleted_messages_stats] Stats: total={total}")
+        db_logger.info(f"✅ Stats: total={total}")
         return stats
 
     @staticmethod
@@ -673,7 +671,7 @@ class ChatRepository:
                 }
             )
 
-        db_logger.info(f"✅ [get_deleted_messages_with_initiator] Found {len(deleted_messages)} deleted messages")
+        db_logger.debug(f"✅ Found {len(deleted_messages)} deleted messages")
         return deleted_messages
 
     @staticmethod
@@ -718,7 +716,7 @@ class ChatRepository:
             "period_days": days,
         }
 
-        db_logger.info(f"✅ [get_deletion_stats_by_initiator] Stats: total={total}")
+        db_logger.info(f"✅ Stats: total={total}")
         return stats
 
     @staticmethod
@@ -745,7 +743,7 @@ class ChatRepository:
                 message.FK_DeletedByMessage = None
                 message.FDeletedByType = None
                 await session.commit()
-                db_logger.info(f"✅ [restore_deleted_message] Message {message_id} restored")
+                db_logger.info(f"✅ Message {message_id} restored")
                 return True
 
             db_logger.warning(f"⚠️ [restore_deleted_message] Deleted message {message_id} not found")
