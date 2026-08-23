@@ -1,42 +1,42 @@
 """
-Модуль административных обработчиков AIogram.
+Модуль административных обработчиков Aiogram.
 
-Этот модуль предоставляет обработчики для административных команд:
-- Рассылка сообщений (broadcast)
-- Удаление сообщений
-- Управление администраторами
-- Синхронизация с Avanpost
-- Загрузка пользователей из транспортных средств
+Этот модуль предоставляет обработчики для административных команд,
+сгруппированные по функциональным областям:
 
-Команды:
-    /broadcast - Массовая рассылка сообщений
-    /delete - Удаление сообщения по ID
-    /cancel - Отмена текущей операции
-    /admins - Просмотр списка администраторов
-    /add_admin <id> - Добавление администратора
-    /remove_admin <id> - Удаление администратора
-    /sync_base - Синхронизация справочных данных
-    /sync_contacts - Синхронизация контактов
-    /sync_user <id> - Синхронизация пользователя
-    /sync_all_users - Синхронизация всех пользователей
-    /sync_light - Стандартная синхронизация
-    /sync_force - Полная синхронизация (Force)
-    /sync_vehicles - Загрузка пользователей из ТС
+1. ОТМЕНА ОПЕРАЦИЙ
+   - /cancel - Отмена текущей операции FSM
 
-Состояния FSM:
-    BroadcastStates - Для процесса рассылки
-    DeleteMessageStates - Для процесса удаления сообщений
+2. УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
+   - /admins - Просмотр списка администраторов
+   - /add_admin <id> - Добавление администратора
+   - /remove_admin <id> - Удаление администратора
+
+3. СИНХРОНИЗАЦИЯ С AVANPOST
+   - /sync_base - Синхронизация справочных данных (модели до 205)
+   - /sync_contacts - Синхронизация контактов (модели 301-303)
+   - /sync_user <id> - Синхронизация данных конкретного пользователя
+   - /sync_all_users - Синхронизация данных всех пользователей
+   - /sync_light - Стандартная синхронизация (без Force)
+   - /sync_force - Полная синхронизация (Force=True)
+   - /sync_vehicles - Загрузка пользователей из Avanpost Vehicles
+
+4. ОБРАБОТЧИКИ КОЛБЭКОВ
+   - delete_confirm / delete_cancel - Подтверждение/отмена удаления
+
+Примечания:
+- Все команды доступны только администраторам (проверка по settings.ADMIN_IDS)
+- Синхронизация использует AvanpostSyncService из app.services
+- Загрузка пользователей из Vehicles использует AvanpostSeedService
+- Колбэки удаления обрабатываются через admin_callback_handler
 """
 
-from aiogram import Bot, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram import Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
 from ....bot.dependencies import get_bot_manager
-from ....bot.keyboards import AdminKeyboard
 from ....config import settings
 from ....db import db_manager
 from ....db.repositories import ChatRepository, MessageRepository, UserRepository
@@ -45,604 +45,20 @@ from ....models import MessageActionType, MessageType
 from ....services.avanpost_sync_service import AvanpostSyncService
 from ....services.seed_service import AvanpostSeedService
 from ....utils.decorators import log_exceptions
-from ...callbacks.admin import admin_callback_handler
 
-# Создание роутера для административных команд
+# ============================================================
+# РОУТЕР И РЕПОЗИТОРИИ
+# ============================================================
+
 router = Router(name="aiogram_admin")
 
-# Репозитории (создаются один раз на уровне модуля)
 _chat_repo = ChatRepository()
 _message_repo = MessageRepository()
 _user_repo = UserRepository()
 
 
 # ============================================================
-# СОСТОЯНИЯ ДЛЯ FSM
-# ============================================================
-
-
-class BroadcastStates(StatesGroup):
-    """Состояния для процесса массовой рассылки."""
-
-    waiting_for_text = State()  # Ожидание текста сообщения
-    waiting_for_confirmation = State()  # Ожидание подтверждения
-
-
-class DeleteMessageStates(StatesGroup):
-    """Состояния для процесса удаления сообщения."""
-
-    waiting_for_chat_id = State()  # Ожидание ID чата
-    waiting_for_message_id = State()  # Ожидание ID сообщения
-    waiting_for_confirmation = State()  # Ожидание подтверждения
-
-
-# ============================================================
-# 1. УПРАВЛЕНИЕ РАССЫЛКОЙ
-# ============================================================
-
-
-@router.message(Command("broadcast"))
-@log_exceptions(bot_logger)
-async def cmd_broadcast(message: Message, state: FSMContext) -> None:
-    """
-    Команда для массовой рассылки сообщений во все чаты.
-
-    Args:
-        message: Сообщение от пользователя
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка прав администратора
-    if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
-        await bot_manager.send_answer(
-            message_type=MessageType.COMMAND_ADMIN,
-            event=message,
-            text="⛔ У вас нет прав для этой команды.",
-            clear_previous=True,
-        )
-        return
-
-    if not message.from_user:
-        await bot_manager.send_answer(
-            text="❌ Не удалось определить пользователя.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Установка состояния ожидания текста
-    await state.set_state(BroadcastStates.waiting_for_text)
-
-    await bot_manager.send_answer(
-        text="📨 **Рассылка сообщений**\n\n"
-        "Отправьте текст для рассылки во все чаты.\n"
-        "Поддерживается HTML разметка.\n\n"
-        "Для отмены используйте /cancel",
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        parse_mode="Markdown",
-    )
-
-
-@router.message(BroadcastStates.waiting_for_text)
-@log_exceptions(bot_logger)
-async def broadcast_get_text(message: Message, state: FSMContext) -> None:
-    """
-    Получение текста для рассылки.
-
-    Args:
-        message: Сообщение с текстом
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    if not message.from_user:
-        await bot_manager.send_answer(
-            text="❌ Не удалось определить пользователя.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Проверка отмены
-    if message.text and message.text.lower() in ["/cancel", "отмена", "cancel"]:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Рассылка отменена.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Проверка, что текст не пустой
-    if not message.text or not message.text.strip():
-        await bot_manager.send_answer(
-            text="❌ Текст сообщения не может быть пустым.\nПожалуйста, отправьте текст для рассылки.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Получение количества активных чатов
-    async with db_manager.get_session() as session:
-        chats = await _chat_repo.get_chats(session, is_active=True)
-        chat_count = len(chats)
-
-    if chat_count == 0:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Нет активных чатов для рассылки.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Сохранение данных в состоянии
-    await state.update_data(
-        text=message.text,
-        parse_mode="HTML",
-        sender_user_id=message.from_user.id,
-        sender_first_name=message.from_user.first_name,
-        sender_username=message.from_user.username,
-    )
-
-    await state.set_state(BroadcastStates.waiting_for_confirmation)
-
-    keyboard = AdminKeyboard.get_broadcast_confirm_keyboard()
-
-    # Запрос подтверждения
-    await bot_manager.send_answer(
-        text=f"📊 **Подтверждение рассылки**\n\n"
-        f"Текст будет отправлен в **{chat_count}** чатов.\n\n"
-        f"Текст сообщения:\n"
-        f"```\n{message.text[:200]}{'...' if len(message.text) > 200 else ''}\n```\n\n"
-        f"Отправить?",
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        parse_mode="Markdown",
-        reply_markup=keyboard,
-    )
-
-
-@router.message(BroadcastStates.waiting_for_confirmation)
-@log_exceptions(bot_logger)
-async def broadcast_confirm(message: Message, state: FSMContext) -> None:
-    """
-    Подтверждение или отмена рассылки.
-
-    Args:
-        message: Сообщение с подтверждением
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка отмены
-    if message.text and message.text.lower() in ["нет", "no", "n", "отмена", "cancel"]:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Рассылка отменена.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Проверка подтверждения
-    if not message.text or message.text.lower() not in ["да", "yes", "y", "д"]:
-        await bot_manager.send_answer(
-            text="Пожалуйста, ответьте 'да' или 'нет'.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Получение данных из состояния
-    data = await state.get_data()
-    text = data.get("text")
-    parse_mode = data.get("parse_mode", "HTML")
-    sender_user_id = data.get("sender_user_id")
-    sender_first_name = data.get("sender_first_name")
-    sender_username = data.get("sender_username")
-
-    if not text:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Текст сообщения не найден. Попробуйте начать заново.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Уведомление о начале рассылки
-    await bot_manager.send_answer(
-        text="🔄 Начинаю рассылку...",
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-    )
-
-    # Выполнение рассылки
-    result = await bot_manager.broadcast_message(
-        text=text,
-        parse_mode=parse_mode,
-        disable_web_page_preview=True,
-        sender_user_id=sender_user_id,
-        sender_first_name=sender_first_name,
-        sender_username=sender_username,
-    )
-
-    # Формирование отчета
-    report = (
-        f"📊 **Результат рассылки**\n\n"
-        f"• ✅ Успешно отправлено: {result['successful']}\n"
-        f"• ❌ Ошибок: {result['failed']}\n"
-        f"• 📊 Всего чатов: {result['total']}\n"
-        f"• 📈 Успешность: {result['successful'] * 100 // result['total'] if result['total'] > 0 else 0}%\n"
-    )
-
-    if result.get("failed_chats"):
-        report += "\n**❌ Чаты с ошибками:**\n"
-        for failed in result["failed_chats"][:5]:
-            title = failed.get("title", f"Chat {failed['chat_id']}")
-            report += f"• {title} (ID: {failed['chat_id']}): {failed['error'][:50]}\n"
-        if len(result["failed_chats"]) > 5:
-            report += f"• ... и еще {len(result['failed_chats']) - 5} чатов\n"
-
-    # Отправка отчета
-    await bot_manager.send_answer(
-        text=report,
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        parse_mode="Markdown",
-    )
-
-    await state.clear()
-    if message.from_user:
-        bot_logger.info(f"✅ Broadcast completed by {message.from_user.id}: {result['successful']}/{result['total']}")
-
-
-# ============================================================
-# 2. УПРАВЛЕНИЕ УДАЛЕНИЕМ СООБЩЕНИЙ
-# ============================================================
-
-
-@router.message(Command("delete"))
-@log_exceptions(bot_logger)
-async def cmd_delete_message(message: Message, state: FSMContext) -> None:
-    """
-    Команда для удаления сообщения по ID.
-
-    Поддерживает два формата:
-    - /delete chat_id message_id (сразу с аргументами)
-    - /delete (интерактивный ввод)
-
-    Args:
-        message: Сообщение от пользователя
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка прав администратора
-    if not message.from_user or message.from_user.id not in settings.ADMIN_IDS:
-        await bot_manager.send_answer(
-            text="⛔ У вас нет прав для этой команды.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Сохраняем текст команды до удаления
-    command_text = message.text or ""
-
-    if command_text is None:
-        await bot_manager.send_answer(
-            text="❌ Не удалось получить текст команды.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Проверка наличия аргументов в команде
-    args = command_text.split()
-    if len(args) >= 3:
-        # Если аргументы переданы сразу: /delete chat_id message_id
-        try:
-            chat_id = int(args[1])
-            message_id = int(args[2])
-            await state.update_data(chat_id=chat_id, message_id=message_id)
-            await process_delete_confirmation(message, state)
-            return
-        except ValueError:
-            await bot_manager.send_answer(
-                text="❌ Неверный формат ID. Используйте числа.",
-                event=message,
-                message_type=MessageType.COMMAND_ADMIN,
-                delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-            )
-            return
-
-    # Интерактивный режим - запрос ID чата
-    await state.set_state(DeleteMessageStates.waiting_for_chat_id)
-    await bot_manager.send_answer(
-        text="📨 **Удаление сообщения**\n\n"
-        "Введите ID чата, из которого нужно удалить сообщение.\n"
-        "Для отмены используйте /cancel",
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-    )
-
-
-@router.message(DeleteMessageStates.waiting_for_chat_id)
-@log_exceptions(bot_logger)
-async def delete_get_chat_id(message: Message, state: FSMContext) -> None:
-    """
-    Получение ID чата для удаления.
-
-    Args:
-        message: Сообщение с ID чата
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка отмены
-    if message.text and message.text.lower() in ["/cancel", "отмена", "cancel"]:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Операция отменена.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    text = message.text
-    if text is None or not text.strip():
-        await bot_manager.send_answer(
-            text="❌ Введите ID чата.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    try:
-        chat_id = int(text.strip())
-        await state.update_data(chat_id=chat_id)
-        await state.set_state(DeleteMessageStates.waiting_for_message_id)
-
-        await bot_manager.send_answer(
-            text=f"📨 ID чата: `{chat_id}`\n\n"
-            "Теперь введите ID сообщения для удаления.\n"
-            "Для отмены используйте /cancel",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-            parse_mode="Markdown",
-        )
-    except ValueError:
-        await bot_manager.send_answer(
-            text="❌ Неверный формат ID чата. Используйте число.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-
-
-@router.message(DeleteMessageStates.waiting_for_message_id)
-@log_exceptions(bot_logger)
-async def delete_get_message_id(message: Message, state: FSMContext) -> None:
-    """
-    Получение ID сообщения для удаления.
-
-    Args:
-        message: Сообщение с ID сообщения
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка отмены
-    if message.text and message.text.lower() in ["/cancel", "отмена", "cancel"]:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Операция отменена.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    text = message.text
-    if text is None or not text.strip():
-        await bot_manager.send_answer(
-            text="❌ Введите ID сообщения.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    try:
-        message_id = int(text.strip())
-        await state.update_data(message_id=message_id)
-        await process_delete_confirmation(message, state)
-    except ValueError:
-        await bot_manager.send_answer(
-            text="❌ Неверный формат ID сообщения. Используйте число.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-
-
-async def process_delete_confirmation(message: Message, state: FSMContext) -> None:
-    """
-    Запрос подтверждения удаления сообщения.
-
-    Args:
-        message: Сообщение от пользователя
-        state: Состояние FSM
-    """
-    bot_manager = get_bot_manager()
-
-    data = await state.get_data()
-    chat_id = data.get("chat_id")
-    message_id = data.get("message_id")
-
-    await state.set_state(DeleteMessageStates.waiting_for_confirmation)
-
-    keyboard = AdminKeyboard.get_delete_confirm_keyboard()
-
-    await bot_manager.send_answer(
-        text=f"⚠️ **Подтверждение удаления**\n\n"
-        f"Чат: `{chat_id}`\n"
-        f"Сообщение: `{message_id}`\n\n"
-        f"Вы уверены, что хотите удалить это сообщение?",
-        event=message,
-        message_type=MessageType.COMMAND_ADMIN,
-        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        parse_mode="Markdown",
-        reply_markup=keyboard,
-    )
-
-
-@router.message(DeleteMessageStates.waiting_for_confirmation)
-@log_exceptions(bot_logger)
-async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None:
-    """
-    Подтверждение удаления сообщения.
-
-    Args:
-        message: Сообщение с подтверждением
-        state: Состояние FSM
-        _bot: Экземпляр Bot для удаления из Telegram
-    """
-    bot_manager = get_bot_manager()
-
-    # Проверка отмены
-    if message.text and message.text.lower() in ["нет", "no", "n", "отмена", "cancel"]:
-        await state.clear()
-        await bot_manager.send_answer(
-            text="❌ Удаление отменено.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Проверка подтверждения
-    if not message.text or message.text.lower() not in ["да", "yes", "y", "д"]:
-        await bot_manager.send_answer(
-            text="Пожалуйста, ответьте 'да' или 'нет'.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
-    # Получение данных из состояния
-    data = await state.get_data()
-    chat_id = data.get("chat_id")
-    message_id = data.get("message_id")
-
-    if chat_id is None or message_id is None:
-        await bot_manager.send_answer(
-            text="❌ Данные для удаления не найдены.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        await state.clear()
-        return
-
-    try:
-        # Отметка сообщения как удаленного в БД
-        async with db_manager.get_session() as session:
-            db_message = await _message_repo.get_message_by_id(session, message_id)
-
-            if db_message:
-                deleted_count = await _message_repo.mark_messages_as_deleted(
-                    session=session,
-                    message_ids=[message_id],
-                    deleted_by_type="admin",
-                    deleted_by_message_id=message.message_id,
-                )
-
-                if deleted_count > 0:
-                    if message.from_user:
-                        bot_logger.info(
-                            f"✅ Message {message_id} marked as deleted in DB by admin {message.from_user.id}"
-                        )
-                    await bot_manager.send_answer(
-                        text=f"✅ Сообщение `{message_id}` успешно удалено из чата `{chat_id}`.",
-                        event=message,
-                        message_type=MessageType.COMMAND_ADMIN,
-                        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-                        parse_mode="Markdown",
-                    )
-                else:
-                    # Сообщение уже было удалено или не найдено
-                    await bot_manager.send_answer(
-                        text=f"⚠️ Сообщение `{message_id}` уже было удалено ранее.",
-                        event=message,
-                        message_type=MessageType.COMMAND_ADMIN,
-                        delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-                        parse_mode="Markdown",
-                    )
-            else:
-                await bot_manager.send_answer(
-                    text=f"❌ Сообщение `{message_id}` не найдено в базе данных.",
-                    event=message,
-                    message_type=MessageType.COMMAND_ADMIN,
-                    delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-                    parse_mode="Markdown",
-                )
-
-            await session.commit()
-
-        # Удаление из Telegram (если бот имеет права)
-        try:
-            if chat_id is not None and message_id is not None:
-                await _bot.delete_message(chat_id, message_id)
-                if message.from_user:
-                    bot_logger.info(f"✅ Message {message_id} deleted from Telegram by admin {message.from_user.id}")
-        except TelegramAPIError as e:
-            bot_logger.warning(f"⚠️ Could not delete message {message_id} from Telegram: {e}")
-
-    except TelegramAPIError as e:
-        await bot_manager.send_answer(
-            text=f"❌ Ошибка при удалении из Telegram: {str(e)}",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-    except Exception as e:
-        bot_logger.error(f"❌ Failed to delete message: {e}", exc_info=True)
-        await bot_manager.send_answer(
-            text=f"❌ Ошибка: {str(e)}",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-    finally:
-        await state.clear()
-
-
-# ============================================================
-# 3. ОТМЕНА ОПЕРАЦИЙ
+# 1. ОТМЕНА ОПЕРАЦИЙ
 # ============================================================
 
 
@@ -650,7 +66,7 @@ async def delete_confirm(message: Message, state: FSMContext, _bot: Bot) -> None
 @log_exceptions(bot_logger)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """
-    Отмена текущей операции.
+    Отмена текущей операции FSM.
 
     Args:
         message: Сообщение от пользователя
@@ -678,7 +94,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 
 
 # ============================================================
-# 4. УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
+# 2. УПРАВЛЕНИЕ АДМИНИСТРАТОРАМИ
 # ============================================================
 
 
@@ -702,9 +118,7 @@ async def cmd_admins(message: Message) -> None:
         )
         return
 
-    admin_list = []
-    for admin_id in settings.ADMIN_IDS:
-        admin_list.append(f"• `{admin_id}`")
+    admin_list = [f"• `{admin_id}`" for admin_id in settings.ADMIN_IDS]
 
     response = (
         "👑 **Список администраторов**\n\n"
@@ -727,6 +141,8 @@ async def cmd_add_admin(message: Message) -> None:
     """
     Добавление администратора.
 
+    Формат: /add_admin <user_id>
+
     Args:
         message: Сообщение от пользователя
     """
@@ -741,19 +157,9 @@ async def cmd_add_admin(message: Message) -> None:
         )
         return
 
-    # Сохранение текста команды до удаления
     command_text = message.text or ""
-
-    if command_text is None:
-        await bot_manager.send_answer(
-            text="❌ Не удалось получить текст команды.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
     args = command_text.split()
+
     if len(args) < 2:
         await bot_manager.send_answer(
             text="❌ Использование: /add_admin <user_id>\n"
@@ -787,8 +193,7 @@ async def cmd_add_admin(message: Message) -> None:
             message_type=MessageType.COMMAND_ADMIN,
             delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
         )
-        if message.from_user:
-            bot_logger.info(f"✅ User {new_admin_id} added to admins by {message.from_user.id}")
+        bot_logger.info(f"✅ User {new_admin_id} added to admins by {message.from_user.id}")
 
     except ValueError:
         await bot_manager.send_answer(
@@ -813,6 +218,8 @@ async def cmd_remove_admin(message: Message) -> None:
     """
     Удаление администратора.
 
+    Формат: /remove_admin <user_id>
+
     Args:
         message: Сообщение от пользователя
     """
@@ -836,19 +243,9 @@ async def cmd_remove_admin(message: Message) -> None:
         )
         return
 
-    # Сохранение текста команды до удаления
     command_text = message.text or ""
-
-    if command_text is None:
-        await bot_manager.send_answer(
-            text="❌ Не удалось получить текст команды.",
-            event=message,
-            message_type=MessageType.COMMAND_ADMIN,
-            delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
-        )
-        return
-
     args = command_text.split()
+
     if len(args) < 2:
         await bot_manager.send_answer(
             text="❌ Использование: /remove_admin <user_id>\nНапример: /remove_admin 123456789",
@@ -889,8 +286,7 @@ async def cmd_remove_admin(message: Message) -> None:
             message_type=MessageType.COMMAND_ADMIN,
             delete_by_type=MessageActionType.COMMAND_ADMIN_CLEANUP,
         )
-        if message.from_user:
-            bot_logger.info(f"✅ User {admin_id} removed from admins by {message.from_user.id}")
+        bot_logger.info(f"✅ User {admin_id} removed from admins by {message.from_user.id}")
 
     except ValueError:
         await bot_manager.send_answer(
@@ -910,7 +306,7 @@ async def cmd_remove_admin(message: Message) -> None:
 
 
 # ============================================================
-# 5. СИНХРОНИЗАЦИЯ AVANPOST
+# 3. СИНХРОНИЗАЦИЯ С AVANPOST
 # ============================================================
 
 
@@ -918,7 +314,9 @@ async def cmd_remove_admin(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_base(message: Message) -> None:
     """
-    Синхронизация справочных данных (модели до 205).
+    Синхронизация справочных данных Avanpost.
+
+    Синхронизирует модели с ID 1-205 (справочники, сценарии, меню действий).
 
     Args:
         message: Сообщение от пользователя
@@ -962,7 +360,9 @@ async def cmd_sync_base(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_contacts(message: Message) -> None:
     """
-    Синхронизация контактов (модели 301-303).
+    Синхронизация контактов Avanpost.
+
+    Синхронизирует модели TAvanpostContacts, TAvanpostContactsLangs, TAvanpostContactsLinks.
 
     Args:
         message: Сообщение от пользователя
@@ -983,7 +383,6 @@ async def cmd_sync_contacts(message: Message) -> None:
         stats = await sync_service.sync_base_data(force=False)
         stats_dict = stats.to_dict() if hasattr(stats, "to_dict") else {}
 
-        # Фильтрация статистики только для контактов
         table_stats = stats_dict.get("table_stats", {})
         contact_tables = ["TAvanpostContacts", "TAvanpostContactsLangs", "TAvanpostContactsLinks"]
         contact_stats = {k: v for k, v in table_stats.items() if k in contact_tables}
@@ -1015,7 +414,9 @@ async def cmd_sync_contacts(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_user(message: Message) -> None:
     """
-    Синхронизация данных конкретного пользователя.
+    Синхронизация данных конкретного пользователя Avanpost.
+
+    Формат: /sync_user <user_id>
 
     Args:
         message: Сообщение от пользователя
@@ -1029,19 +430,13 @@ async def cmd_sync_user(message: Message) -> None:
     await bot_manager.delete_message_by_link(message)
 
     command_text = message.text or ""
-    if command_text is None:
-        await bot_manager.send_answer(
-            text="❌ Не удалось получить текст команды.",
-            event=message,
-        )
-        return
-
     parts = command_text.split()
+
     if len(parts) < 2:
         await bot_manager.send_answer(
             text="❌ Использование: /sync_user <user_id>\n"
             "Например: /sync_user 123456789\n\n"
-            "💡 user_id - это ID пользователя в Telegram",
+            "💡 user_id - это ID пользователя в Avanpost",
             event=message,
         )
         return
@@ -1066,7 +461,6 @@ async def cmd_sync_user(message: Message) -> None:
             f"❌ Ошибок: {len(stats_dict.get('error_messages', []))}"
         )
 
-        # Отображение деталей по таблицам, если есть изменения
         table_stats = stats_dict.get("table_stats", {})
         changed_tables = {
             k: v
@@ -1093,7 +487,7 @@ async def cmd_sync_user(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_all_users(message: Message) -> None:
     """
-    Синхронизация данных всех пользователей.
+    Синхронизация данных всех пользователей Avanpost.
 
     Args:
         message: Сообщение от пользователя
@@ -1142,7 +536,7 @@ async def cmd_sync_all_users(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_light(message: Message) -> None:
     """
-    Стандартная синхронизация (без Force).
+    Стандартная синхронизация Avanpost (без Force).
 
     Args:
         message: Сообщение от пользователя
@@ -1185,7 +579,9 @@ async def cmd_sync_light(message: Message) -> None:
 @log_exceptions(bot_logger)
 async def cmd_sync_force(message: Message) -> None:
     """
-    Полная синхронизация с Force=True.
+    Полная синхронизация Avanpost с Force=True.
+
+    Принудительно перезаписывает все данные, игнорируя кеш.
 
     Args:
         message: Сообщение от пользователя
@@ -1227,16 +623,14 @@ async def cmd_sync_force(message: Message) -> None:
         await bot_manager.send_answer(text=f"❌ Ошибка: {e}", event=message)
 
 
-# ============================================================
-# 6. ЗАГРУЗКА ПОЛЬЗОВАТЕЛЕЙ ИЗ VEHICLES
-# ============================================================
-
-
 @router.message(Command("sync_vehicles"))
 @log_exceptions(bot_logger)
 async def cmd_sync_vehicles(message: Message) -> None:
     """
     Загрузка пользователей из Avanpost Vehicles.
+
+    Вызывает хранимую процедуру ext.PA_avp_RSAppUsers_DefaultAdding_Load
+    и добавляет полученных пользователей в TAvanpostUsers.
 
     Args:
         message: Сообщение от пользователя
@@ -1279,28 +673,15 @@ async def cmd_sync_vehicles(message: Message) -> None:
 
 
 # ============================================================
-# 7. ОБРАБОТЧИКИ КОЛБЭКОВ
+# 4. ОБРАБОТЧИКИ КОЛБЭКОВ
 # ============================================================
-
-
-@router.callback_query(lambda c: c.data in ["broadcast_confirm", "broadcast_cancel"])
-@log_exceptions(bot_logger)
-async def handle_broadcast_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков для рассылки.
-
-    Args:
-        callback: CallbackQuery от пользователя
-        state: Состояние FSM
-    """
-    await admin_callback_handler.handle(callback, state)
 
 
 @router.callback_query(lambda c: c.data in ["delete_confirm", "delete_cancel"])
 @log_exceptions(bot_logger)
 async def handle_delete_callback(callback: CallbackQuery, state: FSMContext) -> None:
     """
-    Обработка колбэков для удаления.
+    Обработка колбэков для подтверждения/отмены удаления сообщения.
 
     Args:
         callback: CallbackQuery от пользователя
@@ -1313,15 +694,6 @@ async def handle_delete_callback(callback: CallbackQuery, state: FSMContext) -> 
 
 __all__ = [
     "router",
-    "BroadcastStates",
-    "DeleteMessageStates",
-    "cmd_broadcast",
-    "broadcast_get_text",
-    "broadcast_confirm",
-    "cmd_delete_message",
-    "delete_get_chat_id",
-    "delete_get_message_id",
-    "delete_confirm",
     "cmd_cancel",
     "cmd_admins",
     "cmd_add_admin",

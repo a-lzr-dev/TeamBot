@@ -71,7 +71,7 @@ class BroadcastRepository:
         broadcast_id: int,
         cancelled_by: int,
     ) -> BroadcastModel | None:
-        """Отмена рассылки."""
+        """Отмена рассылки (только для статуса pending)."""
         stmt = (
             update(BroadcastModel)
             .where(
@@ -81,7 +81,34 @@ class BroadcastRepository:
             .values(
                 FStatus="cancelled",
                 FCancelledAt=datetime_now(),
-                FCancelledBy=cancelled_by,
+                FK_CancelledBy=cancelled_by,
+            )
+            .returning(BroadcastModel)
+        )
+        result = await session.execute(stmt)
+        await session.flush()
+        return result.scalar_one_or_none()  # type: ignore[no-any-return]
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def force_cancel_broadcast(
+        session: AsyncSession,
+        broadcast_id: int,
+        cancelled_by: int,
+    ) -> BroadcastModel | None:
+        """
+        Принудительная отмена рассылки.
+        """
+        stmt = (
+            update(BroadcastModel)
+            .where(
+                BroadcastModel.FID == broadcast_id,
+                BroadcastModel.FStatus != "cancelled",
+            )
+            .values(
+                FStatus="cancelled",
+                FCancelledAt=datetime_now(),
+                FK_CancelledBy=cancelled_by,
             )
             .returning(BroadcastModel)
         )

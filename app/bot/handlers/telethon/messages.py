@@ -67,7 +67,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
     async with db_manager.get_session() as session:
         try:
             # Проверка существования чата через репозиторий
-            existing_chat = await _chat_repo.get_chat_by_id(session, message.chat_id)
+            existing_chat = await _chat_repo.get_chat_by_id(session, message.chat_id, show_logs=False)
 
             if existing_chat is None:
                 bot_logger.info(f"🆕 Creating new chat {message.chat_id} in database")

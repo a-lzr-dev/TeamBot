@@ -703,7 +703,7 @@ class UnifiedMessageService(BaseService):
                 return None
 
             # Получение существующего пользователя
-            user = await self._user_repo.get_user_by_id(session, user_id)
+            user = await self._user_repo.get_user_by_id(session, user_id, show_logs=False)
 
             if user:
                 # Обновление существующего пользователя

@@ -190,7 +190,7 @@ class ChatRepository:
     @staticmethod
     @suppress_debug_logs
     @log_exceptions(db_logger)
-    async def get_chat_by_id(session: AsyncSession, chat_id: int) -> ChatModel | None:
+    async def get_chat_by_id(session: AsyncSession, chat_id: int, show_log: bool = True) -> ChatModel | None:
         """Получение чата по ID"""
         db_logger.debug(f"🔍 [get_chat_by_id] Getting chat by ID: {chat_id}")
 
@@ -200,10 +200,11 @@ class ChatRepository:
         result: Result = await session.execute(stmt)
         chat: ChatModel | None = result.scalar_one_or_none()
 
-        if chat:
-            db_logger.debug(f"✅ Found chat {chat_id}")
-        else:
-            db_logger.warning(f"⚠️ [get_chat_by_id] Chat {chat_id} not found")
+        if show_log:
+            if chat:
+                db_logger.debug(f"✅ Found chat {chat_id}")
+            else:
+                db_logger.warning(f"⚠️ [get_chat_by_id] Chat {chat_id} not found")
 
         return chat
 
