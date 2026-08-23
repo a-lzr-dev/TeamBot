@@ -925,15 +925,18 @@ class UnifiedMessageService(BaseService):
         Returns:
             dict[str, Any]: Результат редактирования
         """
+        bot_logger.debug("🔍 [edit_callback_message] CALLED")
+        bot_logger.debug(f"🔍 [edit_callback_message] callback.data = {callback.data}")
+
         bot_manager = get_bot_manager()
 
         if not callback.message or not callback.message.chat:
+            bot_logger.debug("❌ [edit_callback_message] No message in callback")
             return {"success": False, "error": "No message in callback"}
 
         bot_logger.debug(
-            f"📝 Editing callback message: chat={callback.message.chat.id}, msg={callback.message.message_id}"
+            f"✅ [edit_callback_message] Editing message: chat={callback.message.chat.id}, msg={callback.message.message_id}"
         )
-        bot_logger.debug(f"📝 New text: {text[:100]}...")
 
         await bot_manager.send_toast(event=callback)
 
@@ -945,7 +948,8 @@ class UnifiedMessageService(BaseService):
             reply_markup=reply_markup,
             **kwargs,
         )
-        bot_logger.debug(f"📝 Edit result: {result}")
+
+        bot_logger.debug(f"✅ [edit_callback_message] result: {result}")  # ← ДОБАВИТЬ
         return result  # type: ignore[no-any-return]
 
     @log_exceptions(bot_logger)

@@ -1,5 +1,23 @@
 """
-Модуль дополнительных команд.
+Модуль обработчиков основных команд Telegram бота.
+
+Этот модуль предоставляет обработчики для базовых команд, доступных
+всем пользователям, а также дополнительные утилиты для работы с сообщениями.
+
+Содержит команды:
+    1. /help   - Динамическая справка с учетом прав пользователя
+    2. /id     - Получение ID пользователя и чата
+    3. /msg    - Открытие контекстного меню сообщения по ID
+
+Логика работы команд:
+    - /help: Анализирует статус пользователя (неавторизован/авторизован/админ)
+             и показывает только доступные команды.
+    - /id:   Выводит техническую информацию о пользователе и чате.
+    - /msg:  Принимает ID сообщения и открывает контекстное меню для него.
+
+Примечания:
+    - Все команды используют единый механизм очистки старых сообщений.
+    - Для работы /msg требуется доступ к базе данных Avanpost.
 """
 
 from aiogram import Router
@@ -8,23 +26,49 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from ....bot.dependencies import get_bot_manager
+from ....config import settings
 from ....db import db_manager
 from ....logger import bot_logger
 from ....models import MessageActionType, MessageType
 from ....utils.decorators import log_exceptions
+from .auth import is_user_authenticated
 
+# Создание роутера для команд
 router = Router(name="aiogram_commands")
 
 
 # ============================================================
-# КОМАНДА /help
+# 1. КОМАНДА /help - ДИНАМИЧЕСКАЯ СПРАВКА
 # ============================================================
 
 
 @router.message(Command("help"))
 @log_exceptions(bot_logger)
 async def cmd_help(message: Message, state: FSMContext) -> None:
-    """Команда помощи."""
+    """
+    Команда /help — динамическая справка по доступным командам.
+
+    Анализирует статус пользователя и показывает только те команды,
+    которые доступны в текущем контексте.
+
+    Логика вывода:
+        1. Базовые команды (всегда):
+           - /start, /help
+
+        2. Команды для авторизованных пользователей:
+           - /actions, /automation, /stats, /id, /msg, /logout
+
+        3. Административные команды (только для админов):
+           - /users, /bc, /bc_send, /bc_del
+           - /sync*, /admins, /add_admin, /remove_admin
+
+        4. Инструкции для неавторизованных пользователей:
+           - Предложение авторизоваться через /start
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -36,25 +80,61 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
         )
         return
 
-    help_text = (
-        "🤖 **TeamBot - Помощь**\n\n"
-        "**Основные команды:**\n"
-        "/start - Авторизация\n"
-        "/help - Эта справка\n"
-        "/actions - Меню действий\n"
-        "/automation - Автоматизация\n"
-        "/stats - Статистика\n"
-        "/id - Мой ID\n\n"
-        "**Работа с сообщениями:**\n"
-        "/msg <id> - Контекстное меню сообщения\n"
-        "/find <id> - Найти сообщение в чате\n\n"
-        "**Административные:**\n"
-        "/users - Список пользователей\n"
-        "/broadcast - Рассылка\n"
-        "/delete - Удалить сообщение\n"
-        "/sync - Синхронизация\n\n"
-        "📌 Используйте /logout для выхода из системы"
-    )
+    user_id = message.from_user.id
+    is_admin = user_id in settings.ADMIN_IDS
+    is_auth = await is_user_authenticated(user_id)
+
+    help_text = "🤖 **TeamBot - Помощь**\n\n"
+
+    # --- 1. Базовые команды (доступны всегда) ---
+    help_text += "**📋 Основные команды:**\n"
+    help_text += "🚀 /start - Начать работу / Авторизация\n"
+    help_text += "❓ /help - Эта справка\n"
+
+    # --- 2. Команды, требующие авторизации ---
+    if is_auth:
+        help_text += (
+            "\n**🔐 Команды для авторизованных пользователей:**\n"
+            "📋 /actions - Меню действий\n"
+            "🤖 /automation - Меню автоматизации\n"
+            "📊 /stats - Меню статистики\n"
+            "🆔 /id - Мой ID\n"
+            "💬 /msg <id> - Контекстное меню сообщения\n"
+            "🚪 /logout - Выйти из системы\n"
+        )
+    else:
+        help_text += "\n🔐 **Для доступа к расширенным командам**\nиспользуйте `/start` для авторизации.\n"
+
+    # --- 3. Административные команды (только для админов) ---
+    if is_admin:
+        help_text += (
+            "\n**👑 Административные команды:**\n"
+            "👥 /users - Список пользователей\n"
+            "📢 /bc - Меню рассылки\n"
+            "📤 /bc_send - Создать рассылку\n"
+            "🗑️ /bc_del - Отменить рассылку\n"
+            "🔄 /sync - Меню синхронизации\n"
+            "💬 /sync_chats - Синхр. чатов\n"
+            "📚 /sync_base - Синхр. справочников\n"
+            "📇 /sync_contacts - Синхр. контактов\n"
+            "👤 /sync_user <id> - Синхр. пользователя\n"
+            "👥 /sync_all_users - Синхр. всех пользователей\n"
+            "⚡ /sync_light - Стандартная синхр.\n"
+            "💪 /sync_force - Полная синхр. Force\n"
+            "👑 /admins - Список админов\n"
+            "➕ /add_admin <id> - Добавить админа\n"
+            "➖ /remove_admin <id> - Удалить админа\n"
+        )
+
+    # --- 4. Инструкции для неавторизованных ---
+    if not is_auth:
+        help_text += (
+            "\n📌 **Что делать?**\n"
+            "1️⃣ Используйте `/start` для авторизации по номеру телефона.\n"
+            "2️⃣ После авторизации вам станут доступны команды для работы.\n"
+        )
+    else:
+        help_text += "\n📌 Используйте `/logout` для выхода из системы."
 
     await bot_manager.send_answer(
         text=help_text,
@@ -66,14 +146,26 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
 
 
 # ============================================================
-# КОМАНДА /id
+# 2. КОМАНДА /id - ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ
 # ============================================================
 
 
 @router.message(Command("id"))
 @log_exceptions(bot_logger)
 async def cmd_id(message: Message, state: FSMContext) -> None:
-    """Команда для получения ID пользователя и чата."""
+    """
+    Команда /id — получение ID пользователя и чата.
+
+    Выводит техническую информацию:
+        - ID пользователя в Telegram
+        - Имя, фамилию, username
+        - Является ли пользователь ботом
+        - ID текущего чата
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM (не используется)
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:
@@ -105,14 +197,31 @@ async def cmd_id(message: Message, state: FSMContext) -> None:
 
 
 # ============================================================
-# КОМАНДА /msg
+# 3. КОМАНДА /msg - КОНТЕКСТНОЕ МЕНЮ СООБЩЕНИЯ
 # ============================================================
 
 
 @router.message(Command("msg"))
 @log_exceptions(bot_logger)
 async def cmd_msg(message: Message, state: FSMContext) -> None:
-    """Команда для открытия контекстного меню сообщения по ID."""
+    """
+    Команда /msg — открытие контекстного меню для сообщения по ID.
+
+    Позволяет выполнять действия с сообщением:
+        - Ответить на сообщение
+        - Просмотреть вложения
+        - Скопировать ID
+        - Найти в чате
+        - Удалить сообщение (только для админов)
+
+    Формат: `/msg <id_сообщения>`
+
+    Пример: `/msg 12345`
+
+    Args:
+        message: Сообщение от пользователя
+        state: Состояние FSM
+    """
     bot_manager = get_bot_manager()
 
     if not message.from_user:

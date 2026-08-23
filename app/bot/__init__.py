@@ -46,7 +46,7 @@ from .clients import (
 # 3.1 Aiogram обработчики (сообщения, команды, колбэки)
 from .handlers.aiogram import (
     admin_router,  # Административные команды
-    commands_router,  # Основные команды (/help, /id, /msg, /find)
+    commands_router,  # Основные команды (/help, /id, /msg)
     setup_aiogram_handlers,  # Функция настройки всех Aiogram обработчиков
 )
 

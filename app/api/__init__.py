@@ -6,6 +6,7 @@ from .routers import (
     avanpost_router,
     bot_msgs_router,
     bot_sync_router,
+    broadcast_router,
     errors_router,
     reminders_router,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "reminders_router",
     "bot_msgs_router",
     "bot_sync_router",
+    "broadcast_router",
     # Зависимости
     "get_api_manager",
 ]

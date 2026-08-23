@@ -19,7 +19,6 @@
    - /sync_all_users - Синхронизация данных всех пользователей
    - /sync_light - Стандартная синхронизация (без Force)
    - /sync_force - Полная синхронизация (Force=True)
-   - /sync_vehicles - Загрузка пользователей из Avanpost Vehicles
 
 4. ОБРАБОТЧИКИ КОЛБЭКОВ
    - delete_confirm / delete_cancel - Подтверждение/отмена удаления
@@ -623,11 +622,11 @@ async def cmd_sync_force(message: Message) -> None:
         await bot_manager.send_answer(text=f"❌ Ошибка: {e}", event=message)
 
 
-@router.message(Command("sync_vehicles"))
+@router.message(Command("seed_all_users"))
 @log_exceptions(bot_logger)
-async def cmd_sync_vehicles(message: Message) -> None:
+async def cmd_seed_all_users(message: Message) -> None:
     """
-    Загрузка пользователей из Avanpost Vehicles.
+    Загрузка всех пользователей из Avanpost.
 
     Вызывает хранимую процедуру ext.PA_avp_RSAppUsers_DefaultAdding_Load
     и добавляет полученных пользователей в TAvanpostUsers.
@@ -643,7 +642,7 @@ async def cmd_sync_vehicles(message: Message) -> None:
 
     await bot_manager.delete_message_by_link(message)
     await bot_manager.send_answer(
-        text="🚗 Запуск загрузки пользователей из Avanpost Vehicles...",
+        text="🚀 Запуск загрузки всех пользователей из Avanpost...",
         event=message,
     )
 
@@ -655,7 +654,7 @@ async def cmd_sync_vehicles(message: Message) -> None:
             )
 
         report = (
-            f"✅ Загрузка пользователей из ТС завершена!\n"
+            f"✅ Загрузка всех пользователей из Avanpost завершена!\n"
             f"📊 Загружено ID: {result['total_loaded']}\n"
             f"📈 Добавлено: {result['total_added']}\n"
             f"📝 Создано записей синхронизации: {result['sync_records_created']}\n"
@@ -668,7 +667,7 @@ async def cmd_sync_vehicles(message: Message) -> None:
         await bot_manager.send_answer(text=report, event=message)
 
     except Exception as e:
-        bot_logger.error(f"❌ sync_vehicles failed: {e}", exc_info=True)
+        bot_logger.error(f"❌ seed_all_users failed: {e}", exc_info=True)
         await bot_manager.send_answer(text=f"❌ Ошибка: {e}", event=message)
 
 
@@ -704,5 +703,4 @@ __all__ = [
     "cmd_sync_all_users",
     "cmd_sync_light",
     "cmd_sync_force",
-    "cmd_sync_vehicles",
 ]

@@ -22,6 +22,7 @@ from .lists import (
     users_router,
     vehicles_router,
 )
+from .stats import router as stats_router
 
 
 def setup_aiogram_handlers() -> Router:
@@ -43,6 +44,7 @@ def setup_aiogram_handlers() -> Router:
     router.include_router(automation_router)  # Автоматизация
     router.include_router(broadcast_router)  # Рассылка
     router.include_router(commands_router)  # Остальные команды (/help, /id, /msg, и др.)
+    router.include_router(stats_router)  # Статистика
 
     # Списки
     router.include_router(chats_router)  # Список чатов (FK_Type=9)

@@ -34,7 +34,8 @@ from ..middlewares.bot.throttling import ThrottlingMiddleware
 from ..models import MessageType
 from ..utils.decorators import log_exceptions
 from .clients import AiogramClient, TelethonClient
-from .handlers import setup_aiogram_handlers, setup_telethon_handlers
+
+# Импорты обработчиков перенесены внутрь методов _setup_aiogram и _setup_telethon
 from .services import (
     AiogramBotService,
     SyncService,
@@ -380,7 +381,6 @@ class BotManager:
             **kwargs,
         )
 
-    @ensure_initialized
     async def send_toast(
         self,
         event: Message | CallbackQuery | None = None,
@@ -429,7 +429,7 @@ class BotManager:
                     bot_logger.warning(f"⚠️ Failed to show toast for message: {e}")
                 return
 
-            # Отправка по chat_id
+            # Отправка по chat_id (без reply_to)
             if chat_id is not None:
                 try:
                     result = await self.send_message(
@@ -942,7 +942,9 @@ class BotManager:
         # Middleware для throttling (анти-флуд)
         dp.update.middleware(ThrottlingMiddleware(default_throttle=0.5))
 
-        # Подключение обработчиков
+        # Подключение обработчиков (ЛОКАЛЬНЫЙ ИМПОРТ для избежания циклической зависимости)
+        from .handlers import setup_aiogram_handlers
+
         router = setup_aiogram_handlers()
         dp.include_router(router)
 
@@ -956,6 +958,9 @@ class BotManager:
         """Настройка Telethon обработчиков."""
         client = self._telethon_client.client
         if client:
+            # ЛОКАЛЬНЫЙ ИМПОРТ для избежания циклической зависимости
+            from .handlers import setup_telethon_handlers
+
             setup_telethon_handlers(client)
             bot_logger.debug("✅ Telethon handlers configured")
         else:

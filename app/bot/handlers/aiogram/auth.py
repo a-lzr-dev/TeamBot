@@ -224,9 +224,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     telegram_user_id = message.from_user.id
     bot_manager = get_bot_manager()
 
-    # ============================================================
-    # ОБРАБОТКА DEEP LINKING (параметр после /start)
-    # ============================================================
+    # Обработка Deep Linking (параметр после /start)
     payload = None
     if message.text and " " in message.text:
         payload = message.text.split(" ", 1)[1]
@@ -255,9 +253,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
-        # ============================================================
-        # ЕСЛИ ЕСТЬ PAYLOAD - ОБРАБАТЫВАЕМ ПЕРЕХОД К СООБЩЕНИЮ
-        # ============================================================
+        # Обработка перехода к сообщению
         if payload and payload.startswith("msg_"):
             try:
                 msg_id = int(payload.replace("msg_", ""))
@@ -390,7 +386,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
     contact = message.contact
 
     # Отображение toast-уведомления о начале проверки
-    await bot_manager.send_toast(text="⏳ Проверка данных...", message=message)
+    await bot_manager.send_toast(text="⏳ Проверка данных...", chat_id=message.chat.id)
 
     # Проверка наличия номера телефона
     if not contact or not contact.phone_number:
@@ -514,9 +510,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
         except Exception as e:
             bot_logger.warning(f"⚠️ Failed to update commands: {e}")
 
-        # ============================================================
-        # 6. ОБРАБОТКА DEEP LINKING ПОСЛЕ АВТОРИЗАЦИИ
-        # ============================================================
+        # 6. Обработка Deep Linking (после авторизации)
         state_data = await state.get_data()
         deep_link_payload = state_data.get("deep_link_payload")
 
@@ -532,9 +526,6 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
                     from app.bot.handlers.aiogram.custom.chat_details import chat_details_handler
                     from app.bot.handlers.aiogram.custom.chat_message_menu import show_message_context_menu
 
-                    # ============================================================
-                    # ИСПРАВЛЕНИЕ: Используем format_single_message
-                    # ============================================================
                     formatted = chat_details_handler.format_single_message(message_data)
 
                     # Формируем приветствие с сообщением
@@ -957,6 +948,10 @@ def _build_welcome_message(avanpost_user_id: int, menu_group_id: int | None, is_
     """
     Формирование приветственного сообщения для авторизованного пользователя.
 
+    Содержит:
+    1. Информацию о пользователе (ID, группа действий)
+    2. Список доступных команд с иконками (аналогично /help)
+
     Args:
         avanpost_user_id: ID пользователя в Avanpost
         menu_group_id: ID группы меню
@@ -977,14 +972,30 @@ def _build_welcome_message(avanpost_user_id: int, menu_group_id: int | None, is_
     else:
         welcome_text += "\n"
 
-    welcome_text += "**Доступные команды:**\n"
-    welcome_text += "• /help - Помощь\n"
-    welcome_text += "• /actions - Меню действий\n"
-    welcome_text += "• /stats - Статистика\n"
+    welcome_text += "**📋 Доступные команды:**\n"
+    welcome_text += "❓ /help - Эта справка\n"
 
+    # Команды для авторизованных пользователей
+    welcome_text += "📋 /actions - Меню действий\n"
+    welcome_text += "🤖 /automation - Меню автоматизации\n"
+    welcome_text += "📊 /stats - Меню статистики\n"
+    welcome_text += "🆔 /id - Мой ID\n"
+    welcome_text += "💬 /msg <id> - Контекстное меню сообщения\n"
+    welcome_text += "🚪 /logout - Выйти из системы\n"
+
+    # Административные команды (только для админов)
     if is_admin:
-        welcome_text += "• /sync - Синхронизации (админ)\n"
-        welcome_text += "• /groups - Группы действий (админ)\n"
+        welcome_text += (
+            "\n**👑 Административные команды:**\n"
+            "👥 /users - Список пользователей\n"
+            "📢 /bc - Меню рассылки\n"
+            "📤 /bc\\_send - Создать рассылку\n"
+            "🗑️ /bc\\_del - Отменить рассылку\n"
+            "🔄 /sync - Меню синхронизации\n"
+            "👑 /admins - Список админов\n"
+            "➕ /add\\_admin <id> - Добавить админа\n"
+            "➖ /remove\\_admin <id> - Удалить админа\n"
+        )
 
     welcome_text += "\n📌 Используйте /logout для выхода из системы."
 
