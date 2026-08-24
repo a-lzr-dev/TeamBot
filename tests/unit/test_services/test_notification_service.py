@@ -182,7 +182,7 @@ class TestNotificationService:
                     session=mock_async_session,
                 )
                 assert isinstance(result, str)
-                assert "Ежечасный отчет" in result or "hourly report" in result.lower()
+                assert "Ежечасный отчёт" in result or "hourly report" in result.lower()
 
     @pytest.mark.asyncio
     async def test_add_to_queue(self, service):

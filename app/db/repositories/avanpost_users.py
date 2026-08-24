@@ -13,7 +13,8 @@
 7. Контакты пользователя (get_user_contacts_page) - FK_Type=6
 8. Контактная информация (get_contact_details_page) - FK_Type=7
 9. Точки маршрута (get_mission_items_page) - FK_Type=4
-10. Вспомогательные методы (get_contact_name, get_contact_by_id, get_message_by_id)
+10. Детали точки маршрута (get_mission_item_details) - FK_Type=4 (детали)
+11. Вспомогательные методы (get_contact_name, get_contact_by_id, get_message_by_id)
 """
 
 from typing import Any
@@ -825,11 +826,6 @@ class AvanpostUserRepository:
     ) -> dict[str, Any]:
         """Получение списка заказов перевозчиков для пользователя с пагинацией и поиском.
 
-        Цепочка связей:
-        TAvanpostUsersOrders.FID -> TAvanpostUsersLinksOrdersMissions.FK_Parent
-        -> TAvanpostUsersLinksOrdersMissions.FK_Link -> TAvanpostUsersMissions.FID
-        -> TAvanpostUsersMissionsLangs.FK_Parent
-
         Args:
             session: Сессия БД
             avanpost_user_id: ID пользователя в Avanpost
@@ -911,6 +907,9 @@ class AvanpostUserRepository:
                     AvanpostUserMissionLangModel.FK_Lang == lang_code,
                 )
             )
+
+            if order_id is not None:
+                count_stmt = count_stmt.where(AvanpostUserOrderLinkMissionModel.FK_Parent == order_id)
 
             if search_query and len(search_query) >= 2:
                 search_pattern = f"%{search_query}%"
@@ -1589,7 +1588,72 @@ class AvanpostUserRepository:
                 "error": str(e),
             }
 
-    # ==================== 10. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+    # ==================== 10. ДЕТАЛИ ТОЧКИ МАРШРУТА ====================
+
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def get_mission_item_details(
+        session: AsyncSession,
+        item_id: int,
+        lang_code: str = "RU",
+    ) -> dict[str, Any] | None:
+        """Получение детальной информации о точке маршрута по ID.
+
+        Используется при клике на "Подробнее" в списке точек маршрута.
+
+        Args:
+            session: Сессия БД (main)
+            item_id: ID точки (TAvanpostUsersMissionsItems.FID)
+            lang_code: Код языка (по умолчанию 'RU')
+
+        Returns:
+            dict | None: Данные точки с полями:
+                - id: int
+                - position: int | None
+                - name: str
+                - description: str | None
+        """
+        db_logger.debug(f"🔍 [get_mission_item_details] Getting details for item {item_id}")
+
+        try:
+            stmt = (
+                select(
+                    AvanpostUserMissionItemModel.FID.label("id"),
+                    AvanpostUserMissionItemModel.FPosition.label("position"),
+                    AvanpostUserMissionItemLangModel.FName.label("name"),
+                    AvanpostUserMissionItemLangModel.FDescription.label("description"),
+                )
+                .outerjoin(
+                    AvanpostUserMissionItemLangModel,
+                    AvanpostUserMissionItemLangModel.FK_Parent == AvanpostUserMissionItemModel.FID,
+                )
+                .where(
+                    AvanpostUserMissionItemModel.FID == item_id,
+                    AvanpostUserMissionItemLangModel.FK_Lang == lang_code,
+                )
+            )
+
+            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
+
+            result = await session.execute(stmt)
+            row = result.first()
+
+            if not row:
+                db_logger.warning(f"⚠️ Mission item {item_id} not found")
+                return None
+
+            return {
+                "id": row.id,
+                "position": row.position,
+                "name": row.name or f"Точка #{row.id}",
+                "description": row.description,
+            }
+
+        except Exception as e:
+            db_logger.error(f"❌ Failed to get mission item details for {item_id}: {e}", exc_info=True)
+            return None
+
+    # ==================== 11. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     @log_exceptions(db_logger)

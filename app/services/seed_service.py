@@ -1,13 +1,30 @@
-"""Сервис заполнения системных данных Avanpost.
+"""
+Сервис заполнения системных данных Avanpost.
 
-Отвечает за:
-1. Создание типов данных в TAvanpostDirSysDataTypes
-2. Добавление пользователей из настроек (AVANPOST_AUTO_ADD_USERS_IDS_ON_START)
-3. Загрузку пользователей из транспорта Avanpost (опционально)
-4. Создание записей глобальной синхронизации (TAvanpostSysUpdates)
-5. Создание записей пользовательской синхронизации (TAvanpostSysUsersUpdates)
-6. Обработку ошибок и откат транзакций при сбоях
-7. Вывод детальной статистики выполнения
+Назначение:
+    Инициализация всех системных таблиц, необходимых для работы
+    с данными Avanpost. Выполняется при первом запуске приложения.
+
+Основные функции:
+    1. Создание типов данных в TAvanpostDirSysDataTypes
+    2. Добавление пользователей из настроек (AVANPOST_AUTO_ADD_USERS_IDS_ON_START)
+    3. Загрузка пользователей из транспорта Avanpost (опционально)
+    4. Создание записей глобальной синхронизации (TAvanpostSysUpdates)
+    5. Создание записей пользовательской синхронизации (TAvanpostSysUsersUpdates)
+    6. Обработка ошибок и откат транзакций при сбоях
+    7. Вывод детальной статистики выполнения
+
+Технические особенности:
+    - Поддержка массовой вставки для оптимизации производительности
+    - Автоматическое создание недостающих типов данных
+    - Опциональная загрузка всех пользователей из Avanpost
+    - Детальная статистика по каждому этапу
+    - Откат транзакции при ошибках
+
+Архитектура:
+    - Использует репозитории для работы с БД
+    - Работает через единую точку входа seed_all()
+    - Поддерживает асинхронные операции
 """
 
 from datetime import datetime
@@ -36,21 +53,29 @@ from ..models.avanpost import (
 )
 from ..utils.decorators import suppress_debug_logs
 
-# ==================== РЕПОЗИТОРИИ (СИНГЛТОНЫ) ====================
-# Инициализация репозиториев на уровне модуля для повторного использования
+# ============================================================
+# 1. КОНСТАНТЫ И РЕПОЗИТОРИИ
+# ============================================================
+
+# Дата 1900-01-01 означает, что данные никогда не синхронизировались
+DEFAULT_SYNC_DATE = datetime(1900, 1, 1)
+
+# Репозитории (синглтоны)
 _user_repo = UserRepository()  # Работа с пользователями
 _system_repo = SystemRepository()  # Системные данные и синхронизация
 _dir_lang_repo = DirLanguageRepository()  # Справочник языков
 _dir_contact_group_repo = DirContactGroupRepository()  # Группы контактов
 _avanpost_repo = AvanpostRepository()  # Прямой доступ к Avanpost
 
-# ==================== КОНСТАНТЫ ====================
-# Дата 1900-01-01 означает, что данные никогда не синхронизировались
-DEFAULT_SYNC_DATE = datetime(1900, 1, 1)
+
+# ============================================================
+# 2. ОСНОВНОЙ КЛАСС СЕРВИСА
+# ============================================================
 
 
 class AvanpostSeedService:
-    """Сервис для заполнения системных данных Avanpost.
+    """
+    Сервис для заполнения системных данных Avanpost.
 
     Выполняет инициализацию всех системных таблиц, необходимых для работы
     с данными Avanpost: типы данных, пользователи, записи синхронизации.
@@ -62,11 +87,14 @@ class AvanpostSeedService:
     4. Пользовательская синхронизация (TAvanpostSysUsersUpdates)
     """
 
-    # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
+    # ============================================================
+    # 2.1. ПУБЛИЧНЫЕ МЕТОДЫ
+    # ============================================================
 
     @classmethod
     async def seed_all(cls) -> bool:
-        """Точка входа для заполнения всех системных таблиц Avanpost.
+        """
+        Точка входа для заполнения всех системных таблиц Avanpost.
 
         Управляет жизненным циклом соединений с БД и делегирует
         выполнение основному методу seed_system_tables.
@@ -91,12 +119,15 @@ class AvanpostSeedService:
         finally:
             await db_manager.close_all()
 
-    # ==================== ОСНОВНОЙ МЕТОД SEED ====================
+    # ============================================================
+    # 2.2. ОСНОВНОЙ МЕТОД SEED
+    # ============================================================
 
     @staticmethod
     @suppress_debug_logs
     async def seed_system_tables(session: AsyncSession, show_logs: bool = False) -> bool:
-        """Основной метод заполнения системных таблиц Avanpost.
+        """
+        Основной метод заполнения системных таблиц Avanpost.
 
         Выполняет полную инициализацию в правильном порядке с учётом
         зависимостей между таблицами. Обрабатывает ошибки и откатывает
@@ -142,11 +173,14 @@ class AvanpostSeedService:
             await session.rollback()
             return False
 
-    # ==================== ПРИВАТНЫЕ МЕТОДЫ SEED ====================
+    # ============================================================
+    # 2.3. ПРИВАТНЫЕ МЕТОДЫ SEED
+    # ============================================================
 
     @staticmethod
     async def _create_data_types(session: AsyncSession) -> None:
-        """Создание недостающих типов данных в TAvanpostDirSysDataTypes.
+        """
+        Создание недостающих типов данных в TAvanpostDirSysDataTypes.
 
         Проверяет существующие типы и добавляет только отсутствующие.
         Для каждого типа определяет флаги:
@@ -187,13 +221,14 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _seed_all_users_if_enabled(session: AsyncSession) -> None:
-        """Загрузка всех пользователей из avanpost, если включено в настройках.
+        """
+        Загрузка всех пользователей из avanpost, если включено в настройках.
 
         Проверяет флаг AVANPOST_AUTO_ADD_USERS_ALL_ON_START и при необходимости
         загружает всех пользователей из Avanpost.
 
         Args:
-            session: Сессия БД,
+            session: Сессия БД
         """
         if not getattr(settings, "AVANPOST_AUTO_ADD_USERS_ALL_ON_START", False):
             return
@@ -221,13 +256,14 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _create_global_sync_records(session: AsyncSession, show_logs: bool = True) -> None:
-        """Создание записей глобальной синхронизации в TAvanpostSysUpdates.
+        """
+        Создание записей глобальной синхронизации в TAvanpostSysUpdates.
 
         Для всех базовых типов данных создаются записи с датой DEFAULT_SYNC_DATE,
         означающей, что данные никогда не синхронизировались.
 
         Args:
-            session: Сессия БД,
+            session: Сессия БД
             show_logs: Отображение подробного логирования
         """
         all_types = list(AVANPOST_BASE_DATA_TYPES)
@@ -241,7 +277,8 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _create_user_sync_records(session: AsyncSession) -> None:
-        """Создание записей пользовательской синхронизации в TAvanpostSysUsersUpdates.
+        """
+        Создание записей пользовательской синхронизации в TAvanpostSysUsersUpdates.
 
         Для всех существующих пользователей и всех типов данных, связанных
         с пользователями, создаются записи с датой DEFAULT_SYNC_DATE.
@@ -282,7 +319,8 @@ class AvanpostSeedService:
 
     @staticmethod
     def _log_user_sync_stats(stats: dict[str, Any]) -> None:
-        """Вывод статистики созданных записей пользовательской синхронизации.
+        """
+        Вывод статистики созданных записей пользовательской синхронизации.
 
         Форматирует вывод в виде таблицы для наглядного отображения
         количества записей по каждому типу данных.
@@ -308,17 +346,20 @@ class AvanpostSeedService:
 
         stat_logger.info("=" * 60)
 
-    # ==================== МЕТОДЫ ЗАГРУЗКИ ПОЛЬЗОВАТЕЛЕЙ ====================
+    # ============================================================
+    # 2.4. МЕТОДЫ ЗАГРУЗКИ ПОЛЬЗОВАТЕЛЕЙ
+    # ============================================================
 
     @staticmethod
     async def seed_avanpost_users(session: AsyncSession, show_logs: bool = True) -> dict[int, bool]:
-        """Добавление пользователей Avanpost из настроек.
+        """
+        Добавление пользователей Avanpost из настроек.
 
         Использует список ID из конфигурации (AVANPOST_AUTO_ADD_USERS_IDS_ON_START)
         и добавляет их в TAvanpostUsers, если они ещё не существуют.
 
         Args:
-            session: Сессия БД,
+            session: Сессия БД
             show_logs: Отображение подробного логирования
 
         Returns:
@@ -330,7 +371,7 @@ class AvanpostSeedService:
             app_logger.debug("ℹ️ No Avanpost users to add from settings")
             return {}
 
-        app_logger.debug(f"👤 Staring Adding Avanpost users from settings: {user_ids}")
+        app_logger.debug(f"👤 Starting Adding Avanpost users from settings: {user_ids}")
 
         # Проверка и создание языка 'RU'
         try:
@@ -393,11 +434,19 @@ class AvanpostSeedService:
         create_sync_records: bool = False,
         show_logs: bool = True,
     ) -> dict[str, Any]:
-        """Загрузка всех пользователей из Avanpost.
+        """
+        Загрузка всех пользователей из Avanpost.
 
         Загружает пользователей из внешней системы Avanpost
         и добавляет их в локальную БД. Поддерживает массовую вставку для
         оптимизации производительности.
+
+        Этапы:
+        1. Получение списка пользователей из Avanpost
+        2. Проверка существующих пользователей в БД
+        3. Фильтрация новых пользователей
+        4. Массовая вставка новых пользователей
+        5. (Опционально) Создание записей синхронизации
 
         Args:
             session: Сессия БД
@@ -413,7 +462,7 @@ class AvanpostSeedService:
                 - errors: количество ошибок
                 - error_messages: список сообщений об ошибках
         """
-        app_logger.debug("🔄 Starting seed all user from Avanpost ...")
+        app_logger.debug("🔄 Starting seed all users from Avanpost ...")
 
         result: dict[str, Any] = {
             "total_loaded": 0,
@@ -424,7 +473,7 @@ class AvanpostSeedService:
             "error_messages": [],
         }
 
-        # 1. Получение списка пользователей из Avanpost
+        # ---------- ШАГ 1: ПОЛУЧЕНИЕ СПИСКА ПОЛЬЗОВАТЕЛЕЙ ----------
         try:
             async with db_manager.get_session("avanpost") as avanpost_session:
                 user_ids = await _avanpost_repo.get_user_ids_default_adding(avanpost_session, show_logs=show_logs)
@@ -443,7 +492,7 @@ class AvanpostSeedService:
             app_logger.error(f"❌ {error_msg}", exc_info=True)
             return result
 
-        # 2. Проверка существующих пользователей в TAvanpostUsers
+        # ---------- ШАГ 2: ПРОВЕРКА СУЩЕСТВУЮЩИХ ПОЛЬЗОВАТЕЛЕЙ ----------
         try:
             existing_users = await _user_repo.get_all_avanpost_users(session)
             existing_ids = {user.FID for user in existing_users}
@@ -455,7 +504,7 @@ class AvanpostSeedService:
             app_logger.error(f"❌ {error_msg}", exc_info=True)
             return result
 
-        # 3. Фильтрация новых пользователей
+        # ---------- ШАГ 3: ФИЛЬТРАЦИЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ ----------
         new_user_ids = [uid for uid in user_ids if uid not in existing_ids]
         result["total_skipped"] = len(user_ids) - len(new_user_ids)
 
@@ -463,13 +512,13 @@ class AvanpostSeedService:
             app_logger.info(f"🆕 Found {len(new_user_ids):,} new users to add (out of {len(user_ids):,} loaded)")
             app_logger.debug(f"   Sample new user IDs: {new_user_ids[:10]}...")
         else:
-            app_logger.info(f"ℹ️ All {len(user_ids):,} users all already exist in TAvanpostUsers")
+            app_logger.info(f"ℹ️ All {len(user_ids):,} users already exist in TAvanpostUsers")
             return result
 
         if result["total_skipped"] > 0:
             app_logger.info(f"⏭️ Skipping {result['total_skipped']:,} already existing users")
 
-        # 4. Проверка и создание языка 'RU'
+        # ---------- ШАГ 4: ПРОВЕРКА ЯЗЫКА ----------
         try:
             await _dir_lang_repo.ensure_language(
                 session=session,
@@ -483,7 +532,7 @@ class AvanpostSeedService:
             result["error_messages"].append(f"Failed to ensure language 'RU': {str(e)}")
             return result
 
-        # 5. Подготовка данных для массовой вставки
+        # ---------- ШАГ 5: ПОДГОТОВКА ДАННЫХ ДЛЯ МАССОВОЙ ВСТАВКИ ----------
         records_to_insert = []
         for user_id in new_user_ids:
             records_to_insert.append(
@@ -494,7 +543,7 @@ class AvanpostSeedService:
                 }
             )
 
-        # 6. Массовая вставка через GenericRepository
+        # ---------- ШАГ 6: МАССОВАЯ ВСТАВКА ----------
         try:
             model_columns = {column.name for column in inspect(AvanpostUserModel).columns}
 
@@ -522,14 +571,14 @@ class AvanpostSeedService:
             await session.rollback()
             return result
 
-        # 7. Создание записей синхронизации для новых пользователей (опционально)
+        # ---------- ШАГ 7: СОЗДАНИЕ ЗАПИСЕЙ СИНХРОНИЗАЦИИ ----------
         if create_sync_records and result["total_added"] > 0:
             try:
                 added_user_ids = new_user_ids[: result["total_added"]]
 
-                data_type_names = {}
-                for dt_id in AVANPOST_USER_DATA_ALL_TYPES:
-                    data_type_names[dt_id] = get_avanpost_table_name(dt_id) or f"Type_{dt_id}"
+                data_type_names = {
+                    dt_id: get_avanpost_table_name(dt_id) or f"Type_{dt_id}" for dt_id in AVANPOST_USER_DATA_ALL_TYPES
+                }
 
                 stats = await _system_repo.create_user_sync_records_bulk_with_stats(
                     session=session,
@@ -560,7 +609,7 @@ class AvanpostSeedService:
 
         await session.commit()
 
-        # 8. Итоговая статистика
+        # ---------- ШАГ 8: ИТОГОВАЯ СТАТИСТИКА ----------
         stat_logger.info("=" * 60)
         stat_logger.info("📊 USERS SEED SUMMARY")
         stat_logger.info("=" * 60)

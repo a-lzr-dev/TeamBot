@@ -1,13 +1,30 @@
-"""Сервис управления ошибками.
+"""
+Сервис управления ошибками.
 
-Отвечает за:
-1. Логирование ошибок из разных компонентов приложения
-2. Управление внешними ошибками из других систем
-3. Решение и переоткрытие ошибок
-4. Получение статистики по ошибкам
-5. Удаление сообщений, связанных с ошибками
-6. Отправку уведомлений об ошибках в Telegram
-7. Группировку и дедупликацию ошибок
+Назначение:
+    Централизованный сервис для обработки, логирования и управления ошибками
+    во всех компонентах приложения.
+
+Основные функции:
+    1. Логирование ошибок из разных компонентов приложения
+    2. Управление внешними ошибками из других систем
+    3. Решение и переоткрытие ошибок
+    4. Получение статистики по ошибкам
+    5. Удаление сообщений, связанных с ошибками
+    6. Отправка уведомлений об ошибках в Telegram
+    7. Группировка и дедупликация ошибок
+
+Технические особенности:
+    - Автоматическая группировка и дедупликация ошибок
+    - Поддержка внешних ошибок (из других систем)
+    - Интеграция с Telegram для уведомлений
+    - Очистка старых сообщений при повторных ошибках
+    - Детальная статистика по ошибкам и пользователям
+
+Архитектура:
+    - Использует репозитории для работы с БД
+    - Поддерживает асинхронные операции
+    - Кеширование для группировки ошибок
 """
 
 from datetime import datetime
@@ -30,7 +47,7 @@ from ..models import (
 from ..utils.decorators import log_exceptions
 
 # ============================================================
-# РЕПОЗИТОРИИ (СИНГЛТОНЫ)
+# 1. РЕПОЗИТОРИИ (СИНГЛТОНЫ)
 # ============================================================
 
 # Репозитории создаются один раз на уровне модуля для переиспользования
@@ -39,8 +56,14 @@ _message_repo = MessageRepository()  # Репозиторий для работ�
 _avanpost_repo = AvanpostRepository()  # Репозиторий для работы с Avanpost
 
 
+# ============================================================
+# 2. ОСНОВНОЙ КЛАСС СЕРВИСА
+# ============================================================
+
+
 class ErrorService:
-    """Сервис для управления ошибками.
+    """
+    Сервис для управления ошибками.
 
     Предоставляет методы для:
     - Логирования ошибок из разных источников
@@ -48,12 +71,16 @@ class ErrorService:
     - Решения и переоткрытия ошибок
     - Получения статистики
     - Удаления сообщений, связанных с ошибками
+
+    Attributes:
+        _group_cache (dict[str, dict]): Кеш для группировки ошибок
+        _cache_ttl (int): Время жизни кеша в секундах
     """
 
     def __init__(self) -> None:
         """Инициализация сервиса ошибок.
 
-        Создает кеш для группировки ошибок с настраиваемым TTL.
+        Создаёт кеш для группировки ошибок с настраиваемым TTL.
         """
         self._group_cache: dict[str, dict] = {}
         from ..config import settings
@@ -61,12 +88,13 @@ class ErrorService:
         self._cache_ttl = getattr(settings, "ERROR_GROUP_CACHE_TTL_SECONDS", 300)
 
     # ============================================================
-    # ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # 2.1. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
     # ============================================================
 
     @staticmethod
     def _to_str_with_value(value: Any | None, default: str) -> str:
-        """Безопасное преобразование значения с атрибутом value в строку.
+        """
+        Безопасное преобразование значения с атрибутом value в строку.
 
         Args:
             value: Значение для преобразования
@@ -86,7 +114,8 @@ class ErrorService:
 
     @staticmethod
     def _validate_category(category: Any | None) -> ErrorCategory:
-        """Валидация категории ошибки.
+        """
+        Валидация категории ошибки.
 
         Args:
             category: Категория для валидации
@@ -108,13 +137,14 @@ class ErrorService:
 
     @staticmethod
     def _validate_severity(severity: Any | None) -> ErrorSeverity:
-        """Валидация серьезности ошибки.
+        """
+        Валидация серьёзности ошибки.
 
         Args:
-            severity: Серьезность для валидации
+            severity: Серьёзность для валидации
 
         Returns:
-            ErrorSeverity: Валидная серьезность
+            ErrorSeverity: Валидная серьёзность
         """
         if severity is None:
             return ErrorSeverity.ERROR
@@ -130,13 +160,14 @@ class ErrorService:
 
     @staticmethod
     def _determine_category(component: str) -> ErrorCategory:
-        """Определение категории по компоненту.
+        """
+        Определение категории по компоненту.
 
         Args:
             component: Имя компонента
 
         Returns:
-            ErrorCategory: Определенная категория
+            ErrorCategory: Определённая категория
         """
         component_lower = component.lower()
         if "api" in component_lower or "bot" in component_lower:
@@ -148,13 +179,14 @@ class ErrorService:
 
     @staticmethod
     def _determine_severity(error: Exception) -> ErrorSeverity:
-        """Определение серьезности по типу ошибки.
+        """
+        Определение серьёзности по типу ошибки.
 
         Args:
             error: Исключение
 
         Returns:
-            ErrorSeverity: Определенная серьезность
+            ErrorSeverity: Определённая серьёзность
         """
         error_type = type(error).__name__.lower()
         critical_types = ["criticalerror", "fatalerror", "systemexit"]
@@ -169,7 +201,8 @@ class ErrorService:
 
     @staticmethod
     def _get_traceback(error: Exception) -> str | None:
-        """Получение traceback ошибки.
+        """
+        Получение traceback ошибки.
 
         Args:
             error: Исключение
@@ -187,7 +220,8 @@ class ErrorService:
 
     @staticmethod
     def _format_details(error: Exception, component: str, context: dict[str, Any] | None) -> str | None:
-        """Форматирование деталей ошибки.
+        """
+        Форматирование деталей ошибки.
 
         Args:
             error: Исключение
@@ -204,7 +238,7 @@ class ErrorService:
         return "\n".join(details)
 
     # ============================================================
-    # ЛОГИРОВАНИЕ ОШИБОК
+    # 2.2. ЛОГИРОВАНИЕ ОШИБОК
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -221,7 +255,8 @@ class ErrorService:
         severity: Any | None = None,
         context: dict[str, Any] | None = None,
     ) -> tuple[ErrorModel | None, ChatMessageModel | None]:
-        """Логирование ошибки из любого компонента приложения.
+        """
+        Логирование ошибки из любого компонента приложения.
 
         Args:
             error: Исключение
@@ -231,7 +266,7 @@ class ErrorService:
             chat_id: ID чата (опционально)
             message_id: ID сообщения (опционально)
             category: Категория ошибки (опционально)
-            severity: Серьезность ошибки (опционально)
+            severity: Серьёзность ошибки (опционально)
             context: Дополнительный контекст
 
         Returns:
@@ -276,7 +311,8 @@ class ErrorService:
         severity: Any | None = None,
         context: dict[str, Any] | None = None,
     ) -> tuple[ErrorModel | None, ChatMessageModel | None]:
-        """Реализация логирования ошибки.
+        """
+        Реализация логирования ошибки.
 
         Args:
             error: Исключение
@@ -286,7 +322,7 @@ class ErrorService:
             chat_id: ID чата
             message_id: ID сообщения
             category: Категория
-            severity: Серьезность
+            severity: Серьёзность
             context: Контекст
 
         Returns:
@@ -346,7 +382,7 @@ class ErrorService:
         return error_model, chat_message
 
     # ============================================================
-    # ЛОГИРОВАНИЕ ВНЕШНИХ ОШИБОК
+    # 2.3. ЛОГИРОВАНИЕ ВНЕШНИХ ОШИБОК
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -366,7 +402,8 @@ class ErrorService:
         chat_ids: list[int] | None = None,
         send_to_telegram: bool = True,
     ) -> ErrorModel:
-        """Логирование внешней ошибки из другой системы.
+        """
+        Логирование внешней ошибки из другой системы.
 
         Args:
             error_code: Код ошибки
@@ -376,14 +413,14 @@ class ErrorService:
             user_id: ID пользователя (опционально)
             user_login: Логин пользователя (опционально)
             category: Категория ошибки (опционально)
-            severity: Серьезность ошибки (опционально)
+            severity: Серьёзность ошибки (опционально)
             details: Детали ошибки (опционально)
             source_module: Модуль-источник (опционально)
             chat_ids: Список ID чатов для отправки уведомлений (опционально)
             send_to_telegram: Отправлять ли уведомление в Telegram
 
         Returns:
-            ErrorModel: Созданная или обновленная модель ошибки
+            ErrorModel: Созданная или обновлённая модель ошибки
         """
         category_str = self._to_str_with_value(category, "external")
         severity_str = self._to_str_with_value(severity, "error")
@@ -429,14 +466,15 @@ class ErrorService:
         create_dto: CreateErrorDTO,
         session: AsyncSession,
     ) -> ErrorModel:
-        """Реализация логирования внешней ошибки.
+        """
+        Реализация логирования внешней ошибки.
 
         Args:
             create_dto: DTO для создания ошибки
             session: Сессия БД
 
         Returns:
-            ErrorModel: Созданная или обновленная модель ошибки
+            ErrorModel: Созданная или обновлённая модель ошибки
         """
         category_enum = self._validate_category(create_dto.category)
         severity_enum = self._validate_severity(create_dto.severity)
@@ -567,7 +605,7 @@ class ErrorService:
         return error  # type: ignore[no-any-return]
 
     # ============================================================
-    # ОТПРАВКА УВЕДОМЛЕНИЙ
+    # 2.4. ОТПРАВКА УВЕДОМЛЕНИЙ
     # ============================================================
 
     @staticmethod
@@ -577,7 +615,8 @@ class ErrorService:
         is_repeat: bool = False,
         lifetime_seconds: int | None = None,
     ) -> int | None:
-        """Отправка уведомления об ошибке в Telegram.
+        """
+        Отправка уведомления об ошибке в Telegram.
 
         Args:
             chat_id: ID чата
@@ -624,7 +663,7 @@ class ErrorService:
             return None
 
     # ============================================================
-    # УПРАВЛЕНИЕ ОШИБКАМИ
+    # 2.5. УПРАВЛЕНИЕ ОШИБКАМИ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -635,7 +674,8 @@ class ErrorService:
         session: AsyncSession | None = None,
         check_procedure: str | None = None,
     ) -> tuple[bool, str | None]:
-        """Проверка и решение ошибки.
+        """
+        Проверка и решение ошибки.
 
         Args:
             error_id: ID ошибки
@@ -669,7 +709,8 @@ class ErrorService:
         session: AsyncSession,
         check_procedure: str | None = None,
     ) -> tuple[bool, str | None]:
-        """Реализация проверки и решения ошибки.
+        """
+        Реализация проверки и решения ошибки.
 
         Args:
             error_id: ID ошибки
@@ -717,7 +758,8 @@ class ErrorService:
         error_id: int,
         session: AsyncSession | None = None,
     ) -> tuple[bool, str | None]:
-        """Переоткрытие ранее решенной ошибки.
+        """
+        Переоткрытие ранее решённой ошибки.
 
         Args:
             error_id: ID ошибки
@@ -733,7 +775,7 @@ class ErrorService:
             return await _error_repo.reopen_error(session=session, error_id=error_id)  # type: ignore[no-any-return]
 
     # ============================================================
-    # УДАЛЕНИЕ СООБЩЕНИЙ ОШИБКИ
+    # 2.6. УДАЛЕНИЕ СООБЩЕНИЙ ОШИБКИ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -743,7 +785,8 @@ class ErrorService:
         session: AsyncSession | None = None,
         delete_from_telegram: bool = True,
     ) -> dict[str, Any]:
-        """Удаление всех сообщений, связанных с ошибкой.
+        """
+        Удаление всех сообщений, связанных с ошибкой.
 
         Args:
             error_id: ID ошибки
@@ -773,7 +816,8 @@ class ErrorService:
         session: AsyncSession,
         delete_from_telegram: bool = True,
     ) -> dict[str, Any]:
-        """Реализация удаления всех сообщений, связанных с ошибкой.
+        """
+        Реализация удаления всех сообщений, связанных с ошибкой.
 
         Args:
             error_id: ID ошибки
@@ -850,7 +894,7 @@ class ErrorService:
             return result
 
     # ============================================================
-    # СТАТИСТИКА
+    # 2.7. СТАТИСТИКА
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -861,7 +905,8 @@ class ErrorService:
         end_date: datetime | None = None,
         category: Any | None = None,
     ) -> dict[str, Any]:
-        """Получение статистики ошибок.
+        """
+        Получение статистики ошибок.
 
         Args:
             session: Сессия БД (опционально)
@@ -896,7 +941,8 @@ class ErrorService:
         user_id: int,
         session: AsyncSession | None = None,
     ) -> dict[str, Any]:
-        """Получение статистики пользователя по решению ошибок.
+        """
+        Получение статистики пользователя по решению ошибок.
 
         Args:
             user_id: ID пользователя
@@ -918,11 +964,12 @@ class ErrorService:
             )
 
     # ============================================================
-    # ОЧИСТКА СТАРЫХ СООБЩЕНИЙ
+    # 2.8. ОЧИСТКА СТАРЫХ СООБЩЕНИЙ
     # ============================================================
 
     async def _cleanup_old_messages(self, session: AsyncSession, error: ErrorModel) -> None:
-        """Очистка старых сообщений, связанных с ошибкой.
+        """
+        Очистка старых сообщений, связанных с ошибкой.
 
         Args:
             session: Сессия БД
@@ -966,13 +1013,14 @@ class ErrorService:
 
     @staticmethod
     async def _delete_messages_from_bot(messages: list[ChatMessageModel]) -> int:
-        """Удаление сообщений Bot-ом.
+        """
+        Удаление сообщений ботом.
 
         Args:
             messages: Список сообщений для удаления
 
         Returns:
-            int: Количество удаленных сообщений
+            int: Количество удалённых сообщений
         """
         deleted = 0
         try:

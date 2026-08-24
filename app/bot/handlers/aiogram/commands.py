@@ -139,7 +139,7 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
         event=message,
         message_type=MessageType.COMMAND_ACTION_INFO,
         delete_by_type=MessageActionType.COMMAND_ACTION_CLEANUP,
-        parse_mode="Markdown",
+        parse_mode=None,
     )
 
 

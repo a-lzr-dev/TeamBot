@@ -1,16 +1,33 @@
-"""Модели данных для основного приложения TeamBot.
+"""
+Модели данных для основного приложения TeamBot.
 
-Содержит модели для:
-1. Пользователей (TUsers)
-2. Чатов (TChats)
-3. Участников чатов (TChatsMembers)
-4. Сообщений (TChatsMessages)
-5. Ошибок (TErrors, TErrorsMessagesLinks, TErrorsFilters)
-6. Периодических задач (TPeriodicTasks)
-7. Напоминаний (TUsersReminders, TUsersRemindersShares)
-8. Настроек уведомлений (TChatsNotificationsSettings)
-9. Автоматизации (TUsersRequestsAutomations)
-10. Рассылок (TBroadcasts, TBroadcastsMessagesLinks)
+Назначение:
+    Содержит все модели SQLAlchemy для основного приложения TeamBot,
+    включая пользователей, чаты, сообщения, ошибки и другие сущности.
+
+Основные разделы:
+    1. Пользователи (TUsers)
+    2. Чаты (TChats)
+    3. Участники чатов (TChatsMembers)
+    4. Сообщения (TChatsMessages)
+    5. Ошибки (TErrors, TErrorsMessagesLinks, TErrorsFilters)
+    6. Периодические задачи (TPeriodicTasks)
+    7. Напоминания (TUsersReminders, TUsersRemindersShares)
+    8. Настройки уведомлений (TChatsNotificationsSettings)
+    9. Автоматизация (TUsersRequestsAutomations)
+    10. Рассылки (TBroadcasts, TBroadcastsMessagesLinks)
+
+Технические особенности:
+    - Использование SQLAlchemy 2.0 с аннотациями типов (Mapped)
+    - Поддержка SQLite и PostgreSQL через адаптивные настройки
+    - Внешние ключи с каскадным удалением
+    - Индексы для оптимизации запросов
+    - Связи через relationship с back_populates
+
+Архитектура:
+    - Единый модуль всех моделей основного приложения
+    - Использует базовые модели и enum'ы из models.base
+    - Связи с Avanpost моделями из models.avanpost
 """
 
 import sys
@@ -55,19 +72,31 @@ _IS_SQLITE = "sqlite" in sys.modules or "aiosqlite" in str(sys.modules.get("sqla
 
 
 def _get_table_args(autoincrement: bool = True) -> tuple:
-    """Возвращает дополнительные аргументы для таблицы с учетом БД."""
+    """Возвращает дополнительные аргументы для таблицы с учётом БД."""
     if _IS_SQLITE and autoincrement:
         return ({"sqlite_autoincrement": True},)
     return ()
 
 
-# ============ ОСНОВНЫЕ МОДЕЛИ TELEGRAM ============
+# ============================================================
+# 1. ОСНОВНЫЕ МОДЕЛИ TELEGRAM
+# ============================================================
 
 
 class UserModel(BaseModel, UserMixin):
-    """Пользователь Telegram.
+    """
+    Пользователь Telegram.
 
-    Хранит информацию о пользователях Telegram, включая их данные, связи с Avanpost и статистику активности.
+    Хранит информацию о пользователях Telegram, включая их данные,
+    связи с Avanpost и статистику активности.
+
+    Attributes:
+        FK_Chat: ID чата пользователя (личный чат)
+        FK_Language: Предпочитаемый язык пользователя
+        FPhone: Номер телефона
+        FDateCreated: Дата создания записи
+        FDateUpdated: Дата последнего обновления
+        FDateLastActivity: Дата последней активности
     """
 
     __tablename__ = "TUsers"
@@ -77,6 +106,7 @@ class UserModel(BaseModel, UserMixin):
         UniqueConstraint("FPhone", name="UK_Users_FPhone"),
     )
 
+    # ==================== ПОЛЯ ====================
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     FK_Chat: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     FK_Language: Mapped[str | None] = mapped_column(String(2), nullable=True)
@@ -85,7 +115,7 @@ class UserModel(BaseModel, UserMixin):
     FDateUpdated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
     FDateLastActivity: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     ChatsMembers: Mapped[list["ChatMemberModel"]] = relationship(
         "ChatMemberModel", back_populates="user", cascade="all, delete-orphan"
     )
@@ -98,20 +128,20 @@ class UserModel(BaseModel, UserMixin):
         "ErrorModel", foreign_keys="ErrorModel.FK_ResolvedBy", back_populates="resolved_by_user"
     )
 
-    # Связи с автоматизацией
     RequestsAutomations: Mapped[list["UserRequestAutomationModel"]] = relationship(
         "UserRequestAutomationModel", foreign_keys="UserRequestAutomationModel.FK_User", back_populates="user"
     )
+
     RequestsAutomationsCompleted: Mapped[list["UserRequestAutomationModel"]] = relationship(
         "UserRequestAutomationModel",
         foreign_keys="UserRequestAutomationModel.FCompletedBy",
         back_populates="completed_by_user",
     )
 
-    # Связи с рассылками
     Broadcasts: Mapped[list["BroadcastModel"]] = relationship(
         "BroadcastModel", foreign_keys="BroadcastModel.FK_User", back_populates="user"
     )
+
     BroadcastsCancelled: Mapped[list["BroadcastModel"]] = relationship(
         "BroadcastModel", foreign_keys="BroadcastModel.FK_CancelledBy", back_populates="cancelled_by_user"
     )
@@ -124,6 +154,8 @@ class UserModel(BaseModel, UserMixin):
         cascade="all, delete-orphan",
     )
 
+    # ==================== СВОЙСТВА ====================
+
     def __str__(self) -> str:
         return self.fullname
 
@@ -132,6 +164,7 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def fullname(self) -> str:
+        """Полное имя пользователя."""
         if self.FFirstName and self.FLastName:
             return f"{self.FFirstName} {self.FLastName}"
         if self.FFirstName:
@@ -198,15 +231,30 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def display_name(self) -> str:
+        """Отображаемое имя пользователя."""
         if self.fullname and self.fullname != self.FUserName:
             return f"{self.fullname} (@{self.FUserName})"
         return f"@{self.FUserName}"
 
 
 class ChatModel(BaseModel):
-    """Чат Telegram.
+    """
+    Чат Telegram.
 
-    Хранит информацию о чатах Telegram, включая тип чата, название, активность и статистику.
+    Хранит информацию о чатах Telegram, включая тип чата, название,
+    активность и статистику.
+
+    Attributes:
+        FID: ID чата
+        FType: Тип чата (private, group, supergroup, channel)
+        FTitle: Название чата
+        FFlagActive: Активен ли чат
+        FDateRestrictedUntil: До какой даты чат ограничен
+        FDateSynced: Дата последней синхронизации
+        FDateCreated: Дата создания записи
+        FDateUpdated: Дата последнего обновления
+        FCountMessages: Количество сообщений
+        FCountMembers: Количество участников
     """
 
     __tablename__ = "TChats"
@@ -226,7 +274,7 @@ class ChatModel(BaseModel):
     FCountMessages: Mapped[int] = mapped_column(Integer, default=0)
     FCountMembers: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     ChatsMembers: Mapped[list["ChatMemberModel"]] = relationship(
         "ChatMemberModel", back_populates="chat", cascade="all, delete-orphan"
     )
@@ -247,7 +295,6 @@ class ChatModel(BaseModel):
         "UserReminderModel", back_populates="chat", foreign_keys="UserReminderModel.FK_Chat"
     )
 
-    # Связи с автоматизацией
     RequestsAutomations: Mapped[list["UserRequestAutomationModel"]] = relationship(
         "UserRequestAutomationModel", foreign_keys="UserRequestAutomationModel.FK_Chat", back_populates="chat"
     )
@@ -257,7 +304,8 @@ class ChatModel(BaseModel):
 
 
 class UserChatMemberModel(BaseModel, UserMixin, ChatMemberMixin):
-    """Пользователь и участник чата (абстрактный).
+    """
+    Пользователь и участник чата (абстрактный).
 
     Используется для представления пользователя с информацией о его статусе в чате.
     """
@@ -277,9 +325,19 @@ class UserChatMemberModel(BaseModel, UserMixin, ChatMemberMixin):
 
 
 class ChatMemberModel(BaseModel, ChatMemberMixin):
-    """Участник чата.
+    """
+    Участник чата.
 
-    Хранит информацию о статусе пользователя в чате, времени присоединения и последнего обновления.
+    Хранит информацию о статусе пользователя в чате, времени присоединения
+    и последнего обновления.
+
+    Attributes:
+        FID: ID записи
+        FK_Chat: ID чата
+        FK_User: ID пользователя
+        FDateJoined: Дата присоединения к чату
+        FDateUpdated: Дата последнего обновления
+        FDateRestrictedUntil: До какой даты участник ограничен
     """
 
     __tablename__ = "TChatsMembers"
@@ -296,6 +354,7 @@ class ChatMemberModel(BaseModel, ChatMemberMixin):
     FDateUpdated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
     FDateRestrictedUntil: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", back_populates="ChatsMembers")
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatsMembers")
 
@@ -308,10 +367,42 @@ class ChatMemberModel(BaseModel, ChatMemberMixin):
 
 
 class ChatMessageModel(BaseModel):
-    """Сообщение в чате Telegram.
+    """
+    Сообщение в чате Telegram.
 
-    Хранит полную информацию о сообщении: текст, тип, источник, время жизни, статус удаления, медиа-вложения и связи с
-    другими сущностями.
+    Хранит полную информацию о сообщении: текст, тип, источник, время жизни,
+    статус удаления, медиа-вложения и связи с другими сущностями.
+
+    Attributes:
+        FID: ID сообщения
+        FK_Chat: ID чата
+        FK_User: ID пользователя (отправителя)
+        FK_ChatMember: ID участника чата
+        FK_MessageType: Тип сообщения
+        FK_ReplyToMessage: ID сообщения, на которое отвечают
+        FK_ContentType: Тип содержимого
+        FText: Текст сообщения
+        FCaption: Подпись к медиа
+        FSource: Источник сообщения
+        FCommand: Команда (если есть)
+        FCommandArgs: Аргументы команды
+        FErrorMessage: Сообщение об ошибке
+        FErrorTraceback: Traceback ошибки
+        FCategory: Категория
+        FLifetimeSeconds: Время жизни в секундах
+        FExpiresAt: Дата истечения срока жизни
+        FDateSent: Дата отправки
+        FDateEdited: Дата редактирования
+        FDateDeleted: Дата удаления
+        FFlagForwarded: Переслано ли сообщение
+        FFlagReply: Является ли ответом
+        FFlagDeleted: Удалено ли сообщение
+        FK_DeletedByMessage: ID сообщения, удалившего это
+        FDeletedByType: Тип удаления
+        FK_File: ID файла
+        FK_FileUnique: Уникальный ID файла
+        FFileSize: Размер файла
+        FMimeType: MIME тип файла
     """
 
     __tablename__ = "TChatsMessages"
@@ -373,7 +464,7 @@ class ChatMessageModel(BaseModel):
     FFileSize: Mapped[int | None] = mapped_column(Integer, nullable=True)
     FMimeType: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatMessages")
     user: Mapped[Optional["UserModel"]] = relationship("UserModel", back_populates="UserMessages")
     chat_member: Mapped[Optional["ChatMemberModel"]] = relationship(
@@ -388,14 +479,14 @@ class ChatMessageModel(BaseModel):
         back_populates="message",
         cascade="all, delete-orphan",
     )
-
-    # Связи с рассылками
     broadcast_links: Mapped[list["BroadcastMessageLinkModel"]] = relationship(
         "BroadcastMessageLinkModel",
         foreign_keys="BroadcastMessageLinkModel.FK_Message",
         back_populates="message",
         cascade="all, delete-orphan",
     )
+
+    # ==================== МЕТОДЫ ====================
 
     def __repr__(self) -> str:
         status = "deleted" if self.FFlagDeleted else "active"
@@ -404,6 +495,7 @@ class ChatMessageModel(BaseModel):
 
     @property
     def display_text(self) -> str:
+        """Отображаемый текст сообщения."""
         if self.FFlagDeleted:
             if self.FK_DeletedByMessage:
                 return f"[DELETED by message {self.FK_DeletedByMessage}]"
@@ -415,14 +507,46 @@ class ChatMessageModel(BaseModel):
         return f"[{self.FK_MessageType.value}]"
 
 
-# ============ МОДЕЛИ ОШИБОК ============
+# ============================================================
+# 2. МОДЕЛИ ОШИБОК
+# ============================================================
 
 
 class ErrorModel(BaseModel):
-    """Внешняя ошибка из другой системы.
+    """
+    Внешняя ошибка из другой системы.
 
-    Хранит информацию об ошибках, полученных из внешних систем, включая код, сообщение, источник, статус решения и
-    статистику повторений.
+    Хранит информацию об ошибках, полученных из внешних систем,
+    включая код, сообщение, источник, статус решения и статистику повторений.
+
+    Attributes:
+        FID: ID ошибки
+        FErrorCode: Код ошибки
+        FErrorMessage: Сообщение об ошибке
+        FErrorDetails: Детали ошибки
+        FSourceSystem: Система-источник
+        FSourceModule: Модуль-источник
+        FCategory: Категория ошибки
+        FSeverity: Серьёзность ошибки
+        FStatus: Статус ошибки
+        FUserID: ID пользователя (опционально)
+        FUserLogin: Логин пользователя (опционально)
+        FCountOccurrences: Количество повторений
+        FFirstOccurrence: Первое появление
+        FLastOccurrence: Последнее появление
+        FResolvedBy: Кто решил
+        FResolvedAt: Дата решения
+        FResolvedNote: Примечание к решению
+        FReopenedCount: Количество переоткрытий
+        FReopenedAt: Дата переоткрытия
+        FSilencedUntil: Заглушена до
+        FIsSilenced: Заглушена ли
+        FNotifiedAt: Дата уведомления
+        FNotifiedUserIds: ID уведомлённых пользователей
+        FGroupHash: Хеш для группировки
+        FCreatedAt: Дата создания записи
+        FUpdatedAt: Дата обновления записи
+        FK_ResolvedBy: ID пользователя, решившего ошибку
     """
 
     __tablename__ = "TErrors"
@@ -432,7 +556,7 @@ class ErrorModel(BaseModel):
         Index("IX_Errors_Status", "FStatus"),
         Index("IX_Errors_CreatedAt", "FCreatedAt"),
         Index("IX_Errors_GroupHash", "FGroupHash"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -478,7 +602,7 @@ class ErrorModel(BaseModel):
 
     FK_ResolvedBy: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("TUsers.FID"), nullable=True)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     resolved_by_user: Mapped[Optional["UserModel"]] = relationship(
         "UserModel", foreign_keys=[FK_ResolvedBy], back_populates="ResolvedErrors"
     )
@@ -491,9 +615,16 @@ class ErrorModel(BaseModel):
 
 
 class ErrorMessageLinkModel(BaseModel):
-    """Связь между ошибкой и сообщением (N:M).
+    """
+    Связь между ошибкой и сообщением (N:M).
 
     Связывает ошибки из TErrors с сообщениями из TChatsMessages.
+
+    Attributes:
+        FID: ID записи
+        FK_Error: ID ошибки
+        FK_Message: ID сообщения
+        FDateCreated: Дата создания связи
     """
 
     __tablename__ = "TErrorsMessagesLinks"
@@ -506,7 +637,7 @@ class ErrorMessageLinkModel(BaseModel):
         Index("IX_ErrorsMessagesLinks_Error", "FK_Error"),
         Index("IX_ErrorsMessagesLinks_Message", "FK_Message"),
         UniqueConstraint("FK_Error", "FK_Message", name="UK_ErrorsMessagesLinks_Error_Message"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -521,9 +652,25 @@ class ErrorMessageLinkModel(BaseModel):
 
 
 class ErrorFilterModel(BaseModel):
-    """Фильтр для ошибок (какие не показывать).
+    """
+    Фильтр для ошибок (какие не показывать).
 
-    Позволяет настраивать фильтрацию ошибок для конкретных чатов по паттернам, категориям, кодам и системам-источникам.
+    Позволяет настраивать фильтрацию ошибок для конкретных чатов
+    по паттернам, категориям, кодам и системам-источникам.
+
+    Attributes:
+        FID: ID фильтра
+        FK_Chat: ID чата
+        FPattern: Паттерн для фильтрации
+        FPatternType: Тип паттерна (contains, startswith, endswith, exact)
+        FCategory: Категория ошибки (опционально)
+        FErrorCode: Код ошибки (опционально)
+        FSourceSystem: Система-источник (опционально)
+        FIsActive: Активен ли фильтр
+        FIsRegex: Является ли паттерн регулярным выражением
+        FDescription: Описание фильтра
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TErrorsFilters"
@@ -532,7 +679,7 @@ class ErrorFilterModel(BaseModel):
         UniqueConstraint("FK_Chat", "FPattern", name="UK_ErrorsFilters_Chat_Pattern"),
         Index("IX_ErrorsFilters_Chat", "FK_Chat"),
         Index("IX_ErrorsFilters_Active", "FIsActive"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -556,13 +703,41 @@ class ErrorFilterModel(BaseModel):
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ErrorsFilters")
 
 
-# ============ МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ ============
+# ============================================================
+# 3. МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ
+# ============================================================
 
 
 class PeriodicTaskModel(BaseModel):
-    """Модель для периодических задач и их уведомлений.
+    """
+    Модель для периодических задач и их уведомлений.
 
-    Хранит информацию о периодических задачах, их расписании, статусе выполнения и уведомлениях об ошибках.
+    Хранит информацию о периодических задачах, их расписании,
+    статусе выполнения и уведомлениях об ошибках.
+
+    Attributes:
+        FID: ID задачи
+        FTaskName: Название задачи
+        FTaskDescription: Описание задачи
+        FCategory: Категория ошибки
+        FSchedule: Расписание в формате cron
+        FIsActive: Активна ли задача
+        FLastRun: Время последнего запуска
+        FNextRun: Время следующего запуска
+        FLastSuccess: Время последнего успешного выполнения
+        FLastError: Время последней ошибки
+        FSuccessCount: Количество успешных выполнений
+        FFailCount: Количество неудачных выполнений
+        FConsecutiveFailures: Количество последовательных ошибок
+        FMaxConsecutiveFailures: Максимальное количество последовательных ошибок
+        FExecutionTimeoutSeconds: Таймаут выполнения в секундах
+        FLastExecutionDuration: Длительность последнего выполнения
+        FErrorCount: Количество ошибок
+        FLastErrorText: Текст последней ошибки
+        FNotifiedOnFailure: Было ли уведомление о сбое
+        FNotifiedOnTimeout: Было ли уведомление о таймауте
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TPeriodicTasks"
@@ -570,7 +745,7 @@ class PeriodicTaskModel(BaseModel):
         PrimaryKeyConstraint("FID", name="PK_PeriodicTasks"),
         Index("IX_PeriodicTasks_TaskName", "FTaskName"),
         Index("IX_PeriodicTasks_NextRun", "FNextRun"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -607,14 +782,44 @@ class PeriodicTaskModel(BaseModel):
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
 
-# ============ МОДЕЛИ НАПОМИНАНИЙ ============
+# ============================================================
+# 4. МОДЕЛИ НАПОМИНАНИЙ
+# ============================================================
 
 
 class UserReminderModel(BaseModel):
-    """Модель для напоминаний (дела, события).
+    """
+    Модель для напоминаний (дела, события).
 
-    Хранит информацию о напоминаниях пользователей: название, описание, время, интервалы повторения, статус выполнения и
-    возможность шифрования.
+    Хранит информацию о напоминаниях пользователей: название, описание,
+    время, интервалы повторения, статус выполнения и возможность шифрования.
+
+    Attributes:
+        FID: ID напоминания
+        FK_User: ID пользователя
+        FTitle: Название
+        FDescription: Описание
+        FCategory: Категория
+        FRemindAt: Время напоминания
+        FRemindUntil: Дата окончания повторений
+        FRemindInterval: Интервал повторений в минутах
+        FLastReminded: Время последнего напоминания
+        FRemindCount: Количество отправленных уведомлений
+        FMaxRemindCount: Максимальное количество уведомлений
+        FIsCompleted: Завершено ли
+        FIsSuccessful: Успешно ли завершено
+        FCompletedAt: Дата завершения
+        FGroupID: ID группы (для общих дел)
+        FIsGroupReminder: Является ли общим
+        FCodeWord: Кодовое слово для поиска
+        FIsEncrypted: Зашифровано ли
+        FEncryptedData: Зашифрованные данные
+        FNotificationType: Тип уведомления (private, group, both)
+        FK_Chat: ID чата для групповых уведомлений
+        FIsActive: Активно ли
+        FIsDeleted: Удалено ли
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TUsersReminders"
@@ -625,7 +830,7 @@ class UserReminderModel(BaseModel):
         Index("IX_UsersReminders_IsCompleted", "FIsCompleted"),
         Index("IX_UsersReminders_GroupID", "FGroupID"),
         Index("IX_UsersReminders_CodeWord", "FCodeWord"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -663,6 +868,7 @@ class UserReminderModel(BaseModel):
     FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
+    # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User])
     chat: Mapped[Optional["ChatModel"]] = relationship("ChatModel", foreign_keys=[FK_Chat], back_populates="Reminders")
 
@@ -676,9 +882,20 @@ class UserReminderModel(BaseModel):
 
 
 class UserReminderShareModel(BaseModel):
-    """Связь дела с пользователем (для общих дел).
+    """
+    Связь дела с пользователем (для общих дел).
 
-    Позволяет делиться напоминаниями между пользователями и отслеживать статус выполнения для каждого участника.
+    Позволяет делиться напоминаниями между пользователями и отслеживать
+    статус выполнения для каждого участника.
+
+    Attributes:
+        FK_Reminder: ID напоминания
+        FK_User: ID пользователя
+        FIsCompleted: Завершено ли
+        FIsSuccessful: Успешно ли завершено
+        FCompletedAt: Дата завершения
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TUsersRemindersShares"
@@ -702,14 +919,38 @@ class UserReminderShareModel(BaseModel):
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
 
-# ============ МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ ============
+# ============================================================
+# 5. МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ
+# ============================================================
 
 
 class ChatNotificationSettingsModel(BaseModel):
-    """Настройки уведомлений для чата.
+    """
+    Настройки уведомлений для чата.
 
-    Управляет поведением уведомлений в конкретном чате: режим тишины, типы уведомлений, группировка ошибок,
-    автоматические отчёты.
+    Управляет поведением уведомлений в конкретном чате: режим тишины,
+    типы уведомлений, группировка ошибок, автоматические отчёты.
+
+    Attributes:
+        FK_Chat: ID чата
+        FSilenceStart: Начало режима тишины (HH:MM)
+        FSilenceEnd: Конец режима тишины (HH:MM)
+        FSilenceEnabled: Включён ли режим тишины
+        FNotifyErrors: Уведомлять об ошибках
+        FNotifyPeriodicTasks: Уведомлять о периодических задачах
+        FNotifyTaskExecution: Уведомлять о выполнении задач
+        FNotifySystem: Уведомлять о системных событиях
+        FNotifyUserOnError: Уведомлять пользователя об ошибке
+        FNotifyUserOnResolution: Уведомлять о решении ошибки
+        FNotificationLevel: Минимальный уровень серьёзности
+        FGroupingEnabled: Включена ли группировка
+        FGroupingWindowMinutes: Окно группировки в минутах
+        FEnableAutoReports: Включены ли автоматические отчёты
+        FAutoReportInterval: Интервал отчётов в минутах
+        FAutoReportHourStart: Начало рабочего дня для отчётов
+        FAutoReportHourEnd: Конец рабочего дня для отчётов
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TChatsNotificationsSettings"
@@ -752,14 +993,31 @@ class ChatNotificationSettingsModel(BaseModel):
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatsNotificationsSettings")
 
 
-# ============ МОДЕЛИ АВТОМАТИЗАЦИИ ============
+# ============================================================
+# 6. МОДЕЛИ АВТОМАТИЗАЦИИ
+# ============================================================
 
 
 class UserRequestAutomationModel(BaseModel):
-    """Модель заявки на автоматизацию.
+    """
+    Модель заявки на автоматизацию.
 
-    Хранит заявки пользователей на автоматизацию задач, включая название, описание, приоритет, статус и историю
-    обработки.
+    Хранит заявки пользователей на автоматизацию задач, включая название,
+    описание, приоритет, статус и историю обработки.
+
+    Attributes:
+        FID: ID заявки
+        FK_User: ID пользователя
+        FTitle: Название заявки
+        FDescription: Описание заявки
+        FPriority: Приоритет
+        FStatus: Статус
+        FK_Chat: ID чата
+        FNote: Примечание
+        FCompletedAt: Дата завершения
+        FCompletedBy: Кто завершил
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
     """
 
     __tablename__ = "TUsersRequestsAutomations"
@@ -774,7 +1032,7 @@ class UserRequestAutomationModel(BaseModel):
         ForeignKeyConstraint(
             ["FCompletedBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_UsersRequestsAutomations_CompletedBy"
         ),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -800,7 +1058,7 @@ class UserRequestAutomationModel(BaseModel):
     FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="RequestsAutomations")
     chat: Mapped[Optional["ChatModel"]] = relationship(
         "ChatModel", foreign_keys=[FK_Chat], back_populates="RequestsAutomations"
@@ -813,13 +1071,32 @@ class UserRequestAutomationModel(BaseModel):
         return f"<UserRequestAutomation (id={self.FID}, user={self.FK_User}, status={self.FStatus}, priority={self.FPriority})>"
 
 
-# ============ МОДЕЛИ РАССЫЛОК ============
+# ============================================================
+# 7. МОДЕЛИ РАССЫЛОК
+# ============================================================
 
 
 class BroadcastModel(BaseModel):
-    """Модель рассылки.
+    """
+    Модель рассылки.
 
-    Хранит информацию о массовых рассылках: автор, текст, статус, статистика отправки и связи с сообщениями.
+    Хранит информацию о массовых рассылках: автор, текст, статус,
+    статистика отправки и связи с сообщениями.
+
+    Attributes:
+        FID: ID рассылки
+        FK_User: ID автора
+        FTitle: Название рассылки
+        FText: Текст рассылки
+        FParseMode: Режим парсинга
+        FTotalChats: Всего чатов для отправки
+        FSuccessCount: Успешно отправлено
+        FFailedCount: Неудачных отправок
+        FStatus: Статус (pending, sent, cancelled, failed)
+        FCreatedAt: Дата создания
+        FSentAt: Дата отправки
+        FCancelledAt: Дата отмены
+        FK_CancelledBy: Кто отменил
     """
 
     __tablename__ = "TBroadcasts"
@@ -828,19 +1105,9 @@ class BroadcastModel(BaseModel):
         Index("IX_Broadcasts_User", "FK_User"),
         Index("IX_Broadcasts_Status", "FStatus"),
         Index("IX_Broadcasts_CreatedAt", "FCreatedAt"),
-        ForeignKeyConstraint(
-            ["FK_User"],
-            ["TUsers.FID"],
-            ondelete="CASCADE",
-            name="FK_Broadcasts_User",
-        ),
-        ForeignKeyConstraint(
-            ["FK_CancelledBy"],
-            ["TUsers.FID"],
-            ondelete="SET NULL",
-            name="FK_Broadcasts_CancelledBy",
-        ),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        ForeignKeyConstraint(["FK_User"], ["TUsers.FID"], ondelete="CASCADE", name="FK_Broadcasts_User"),
+        ForeignKeyConstraint(["FK_CancelledBy"], ["TUsers.FID"], ondelete="SET NULL", name="FK_Broadcasts_CancelledBy"),
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -861,17 +1128,11 @@ class BroadcastModel(BaseModel):
     FCancelledAt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     FK_CancelledBy: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
-    # ==================== СВЯЗИ (relationships) ====================
-
-    # Связь с автором рассылки
+    # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="Broadcasts")
-
-    # Связь с пользователем, который отменил рассылку
     cancelled_by_user: Mapped[Optional["UserModel"]] = relationship(
         "UserModel", foreign_keys=[FK_CancelledBy], back_populates="BroadcastsCancelled"
     )
-
-    # Связь с сообщениями рассылки
     messages: Mapped[list["BroadcastMessageLinkModel"]] = relationship(
         "BroadcastMessageLinkModel", back_populates="broadcast", cascade="all, delete-orphan"
     )
@@ -881,10 +1142,20 @@ class BroadcastModel(BaseModel):
 
 
 class BroadcastMessageLinkModel(BaseModel):
-    """Связь рассылки с отправленными сообщениями.
+    """
+    Связь рассылки с отправленными сообщениями.
 
-    Связывает рассылку из TBroadcasts с сообщениями из TChatsMessages. Позволяет отслеживать все сообщения, отправленные
-    в рамках одной рассылки, и управлять ими (например, отменять рассылку с удалением всех сообщений).
+    Связывает рассылку из TBroadcasts с сообщениями из TChatsMessages.
+    Позволяет отслеживать все сообщения, отправленные в рамках одной рассылки,
+    и управлять ими (например, отменять рассылку с удалением всех сообщений).
+
+    Attributes:
+        FID: ID записи
+        FK_Broadcast: ID рассылки
+        FK_Message: ID сообщения
+        FK_Chat: ID чата
+        FIsDeleted: Удалена ли связь
+        FDeletedAt: Дата удаления
     """
 
     __tablename__ = "TBroadcastsMessagesLinks"
@@ -901,7 +1172,7 @@ class BroadcastMessageLinkModel(BaseModel):
         ),
         ForeignKeyConstraint(["FK_Chat"], ["TChats.FID"], ondelete="CASCADE", name="FK_BroadcastsMessagesLinks_Chat"),
         UniqueConstraint("FK_Broadcast", "FK_Message", name="UK_BroadcastsMessagesLinks_Broadcast_Message"),
-        *_get_table_args(autoincrement=True),  # sqlite_autoincrement для SQLite
+        *_get_table_args(autoincrement=True),
     )
 
     FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -912,7 +1183,7 @@ class BroadcastMessageLinkModel(BaseModel):
     FIsDeleted: Mapped[bool] = mapped_column(Boolean, default=False)
     FDeletedAt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # Связи
+    # ==================== СВЯЗИ ====================
     broadcast: Mapped["BroadcastModel"] = relationship("BroadcastModel", back_populates="messages")
     message: Mapped["ChatMessageModel"] = relationship(
         "ChatMessageModel", foreign_keys=[FK_Message], back_populates="broadcast_links"
@@ -922,8 +1193,6 @@ class BroadcastMessageLinkModel(BaseModel):
     def __repr__(self) -> str:
         return f"<BroadcastMessageLink(broadcast={self.FK_Broadcast}, message={self.FK_Message}, chat={self.FK_Chat})>"
 
-
-# ============ ЭКСПОРТ ============
 
 __all__ = [
     # Основные модели

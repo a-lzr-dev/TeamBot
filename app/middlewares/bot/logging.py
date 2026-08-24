@@ -1,3 +1,26 @@
+"""
+Middleware для логирования и отслеживания активности в Telegram боте.
+
+Назначение:
+    Предоставляет набор middleware для логирования событий и отслеживания
+    активности пользователей и чатов.
+
+Основные модули:
+    1. LoggingMiddleware — логирование всех входящих событий
+    2. ChatActivityMiddleware — отслеживание активности в чатах
+
+Технические особенности:
+    - Интеграция с Aiogram через BaseMiddleware
+    - Кеширование информации о боте
+    - Автоматическое создание пользователей и чатов
+    - Логирование времени выполнения обработчиков
+
+Архитектура:
+    - Реализует интерфейс BaseMiddleware от Aiogram
+    - Использует репозитории для работы с БД
+    - Интегрируется с bot_logger
+"""
+
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -15,12 +38,30 @@ from ...db.repositories import ChatRepository, UserRepository
 from ...logger import bot_logger
 from .utils import get_chat_id, get_message_preview, get_user_id
 
+# ============================================================
+# 1. MIDDLEWARE ДЛЯ ЛОГИРОВАНИЯ
+# ============================================================
+
 
 class LoggingMiddleware(BaseMiddleware):
-    """Middleware для логирования обновлений Bot-а."""
+    """
+    Middleware для логирования обновлений бота.
+
+    Логирует все входящие события, время выполнения обработчиков
+    и ошибки. Поддерживает кеширование информации о боте.
+
+    Attributes:
+        log_requests (bool): Включить логирование запросов
+        log_updates (bool): Включить логирование обновлений
+        component (str): Имя компонента для логов
+        _bot_info_cache (dict): Кеш информации о боте
+        _cache_time (float): Время кеширования
+        _cache_ttl (int): Время жизни кеша в секундах
+    """
 
     def __init__(self, log_requests: bool = True, log_updates: bool = True, component: str = "bot") -> None:
-        """Инициализация middleware логирования.
+        """
+        Инициализация middleware логирования.
 
         Args:
             log_requests: Включить логирование запросов
@@ -35,13 +76,18 @@ class LoggingMiddleware(BaseMiddleware):
         self._cache_ttl: int = 60  # Кеширование на 60 секунд
         super().__init__()
 
+    # ============================================================
+    # 1.1. ОСНОВНОЙ МЕТОД ОБРАБОТКИ СОБЫТИЯ
+    # ============================================================
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обработка входящего обновления с логированием.
+        """
+        Основной метод обработки события с логированием.
 
         Args:
             handler: Функция-обработчик события
@@ -50,11 +96,19 @@ class LoggingMiddleware(BaseMiddleware):
 
         Returns:
             Any: Результат выполнения обработчика
+
+        Flow:
+            1. Определение user_id и chat_id
+            2. Логирование обновления
+            3. Замер времени выполнения
+            4. Вызов обработчика
+            5. Логирование успешного выполнения
+            6. При ошибке — логирование с контекстом
         """
         user_id = get_user_id(event)
         chat_id = get_chat_id(event)
 
-        # Логирование обновления
+        # 1. Логирование обновления
         if self.log_updates:
             bot_logger.log_telegram_event(
                 event_type=self._get_event_type(event),
@@ -66,13 +120,14 @@ class LoggingMiddleware(BaseMiddleware):
                 },
             )
 
-        # Замер времени выполнения
+        # 2. Замер времени выполнения
         start_time = time.time()
 
         try:
+            # 3. Вызов обработчика
             result = await handler(event, data)
 
-            # Логирование успешного выполнения
+            # 4. Логирование успешного выполнения
             if self.log_requests:
                 duration_ms = (time.time() - start_time) * 1000
                 bot_logger.info(
@@ -84,6 +139,7 @@ class LoggingMiddleware(BaseMiddleware):
             return result
 
         except Exception as e:
+            # 5. Логирование ошибки
             duration_ms = (time.time() - start_time) * 1000
             bot_logger.log_error(
                 error=e,
@@ -99,8 +155,13 @@ class LoggingMiddleware(BaseMiddleware):
             )
             raise
 
+    # ============================================================
+    # 1.2. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+    # ============================================================
+
     def _get_event_type(self, event: TelegramObject) -> str:
-        """Определение типа события.
+        """
+        Определение типа события.
 
         Args:
             event: Событие от Telegram
@@ -120,7 +181,8 @@ class LoggingMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_update_type(update: Update) -> str:
-        """Определение типа обновления.
+        """
+        Определение типа обновления.
 
         Args:
             update: Обновление от Telegram
@@ -146,7 +208,8 @@ class LoggingMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_update_id(event: TelegramObject) -> int | None:
-        """Получение ID обновления.
+        """
+        Получение ID обновления.
 
         Args:
             event: Событие от Telegram
@@ -162,7 +225,15 @@ class LoggingMiddleware(BaseMiddleware):
         return None
 
     async def _is_message_for_bot(self, message: Message, bot: Bot) -> bool:
-        """Основная проверка адресованности боту.
+        """
+        Проверка, адресовано ли сообщение боту.
+
+        Поддерживает:
+        - Личные чаты (всегда адресованы боту)
+        - Команды (/command или /command@bot_username)
+        - Reply на сообщение бота
+        - Упоминания @bot_username
+        - Text mentions
 
         Args:
             message: Сообщение от пользователя
@@ -185,11 +256,11 @@ class LoggingMiddleware(BaseMiddleware):
         if not bot_id or not bot_username:
             return False
 
-        # === 1. Личный чат ===
+        # 1. Личный чат
         if message.chat.type == "private":
             return True
 
-        # === 2. Команда ===
+        # 2. Команда
         if message.text and message.text.startswith("/"):
             command_parts = message.text.split()
             command = command_parts[0]
@@ -202,7 +273,7 @@ class LoggingMiddleware(BaseMiddleware):
                 # /command — для нашего бота
                 return True
 
-        # === 3. Reply на сообщение бота ===
+        # 3. Reply на сообщение бота
         if (
             message.reply_to_message
             and message.reply_to_message.from_user
@@ -210,11 +281,11 @@ class LoggingMiddleware(BaseMiddleware):
         ):
             return True
 
-        # === 4. Упоминание @username ===
+        # 4. Упоминание @username
         if message.text and f"@{bot_username}" in message.text:
             return True
 
-        # === 5. Проверка entities ===
+        # 5. Проверка entities
         if message.entities:
             for entity in message.entities:
                 if entity.type == "mention":
@@ -228,7 +299,8 @@ class LoggingMiddleware(BaseMiddleware):
         return False
 
     async def _get_bot_info(self, bot: Bot) -> dict:
-        """Кешированное получение информации о боте.
+        """
+        Кешированное получение информации о боте.
 
         Args:
             bot: Экземпляр бота
@@ -255,11 +327,28 @@ class LoggingMiddleware(BaseMiddleware):
             return {}
 
 
+# ============================================================
+# 2. MIDDLEWARE ДЛЯ ОТСЛЕЖИВАНИЯ АКТИВНОСТИ
+# ============================================================
+
+
 class ChatActivityMiddleware(BaseMiddleware):
-    """Middleware для отслеживания активности в чатах."""
+    """
+    Middleware для отслеживания активности в чатах.
+
+    Обновляет информацию о пользователях и чатах при каждом сообщении.
+    Автоматически создаёт новых пользователей и чаты при необходимости.
+
+    Attributes:
+        db_manager (DBManager): Менеджер базы данных
+        update_interval (int): Интервал обновления активности в секундах
+        component (str): Имя компонента для логов
+        _last_updates (dict[int, float]): Время последнего обновления по чатам
+    """
 
     def __init__(self, db_manager: DBManager, update_interval: int = 60, component: str = "bot") -> None:
-        """Инициализация middleware активности чатов.
+        """
+        Инициализация middleware активности чатов.
 
         Args:
             db_manager: Менеджер базы данных
@@ -272,13 +361,18 @@ class ChatActivityMiddleware(BaseMiddleware):
         self._last_updates: dict[int, float] = {}
         super().__init__()
 
+    # ============================================================
+    # 2.1. ОСНОВНОЙ МЕТОД ОБРАБОТКИ СОБЫТИЯ
+    # ============================================================
+
     async def __call__(
         self,
         handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обновление времени последней активности.
+        """
+        Основной метод обработки события с обновлением активности.
 
         Args:
             handler: Функция-обработчик события
@@ -287,6 +381,12 @@ class ChatActivityMiddleware(BaseMiddleware):
 
         Returns:
             Any: Результат выполнения обработчика
+
+        Flow:
+            1. Проверка, является ли событие Message
+            2. Проверка необходимости обновления (по интервалу)
+            3. Обновление активности через репозитории
+            4. Вызов обработчика
         """
         if isinstance(event, Message) and event.from_user and event.chat:
             chat_id = event.chat.id
@@ -295,6 +395,7 @@ class ChatActivityMiddleware(BaseMiddleware):
             current_time = time.time()
             last_update = self._last_updates.get(chat_id, 0)
 
+            # Обновляем только если прошло достаточно времени
             if current_time - last_update >= self.update_interval:
                 try:
                     await self._update_activity(event, user)
@@ -308,8 +409,13 @@ class ChatActivityMiddleware(BaseMiddleware):
 
         return await handler(event, data)
 
+    # ============================================================
+    # 2.2. ОБНОВЛЕНИЕ АКТИВНОСТИ
+    # ============================================================
+
     async def _update_activity(self, message: Message, user: Any) -> None:
-        """Обновление активности пользователя и чата через репозитории.
+        """
+        Обновление активности пользователя и чата через репозитории.
 
         Args:
             message: Объект сообщения
@@ -323,7 +429,7 @@ class ChatActivityMiddleware(BaseMiddleware):
 
         async with self.db_manager.get_session() as session:
             try:
-                # Обновление пользователя через репозиторий
+                # 1. Обновление пользователя
                 db_user = await UserRepository.get_user_by_id(session, user_id)
                 if db_user:
                     # Обновляем только если данные изменились
@@ -334,11 +440,9 @@ class ChatActivityMiddleware(BaseMiddleware):
                     if db_user.FUserName != user.username:
                         db_user.FUserName = user.username
 
-                    # Обновляем время последней активности
                     db_user.FDateLastActivity = now
-
                     await session.flush()
-                    bot_logger.debug("User {user_id} activity updated")
+                    bot_logger.debug(f"User {user_id} activity updated")
                 else:
                     # Создание пользователя, если его нет
                     await UserRepository.save_user(
@@ -350,9 +454,9 @@ class ChatActivityMiddleware(BaseMiddleware):
                         username=user.username,
                         is_bot=user.is_bot,
                     )
-                    bot_logger.debug("New user {user_id} created from activity")
+                    bot_logger.debug(f"New user {user_id} created from activity")
 
-                # Обновление чата через репозиторий
+                # 2. Обновление чата
                 chat = await ChatRepository.get_chat_by_id(session, chat_id)
                 if chat:
                     chat.FDateUpdated = now
@@ -362,7 +466,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                         chat.FTitle = message.chat.title
 
                     await session.flush()
-                    bot_logger.debug("Chat {chat_id} activity updated")
+                    bot_logger.debug(f"Chat {chat_id} activity updated")
                 else:
                     # Создание чата, если его нет
                     from ...core.converters import chat_type_from_aiogram, chat_type_to_str
@@ -377,7 +481,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                         title=message.chat.title,
                         is_active=True,
                     )
-                    bot_logger.debug("New chat {chat_id} created from activity")
+                    bot_logger.debug(f"New chat {chat_id} created from activity")
 
                 await session.commit()
 

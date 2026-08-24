@@ -1,12 +1,29 @@
-"""Централизованный модуль для всех декораторов приложения.
+"""
+Централизованный модуль для всех декораторов приложения.
 
-Содержит:
-1. Контекстные переменные для управления логами
-2. Декораторы для управления логами (suppress_debug_logs, suppress_all_logs)
-3. Декораторы для обработки ошибок (log_exceptions, handle_exception)
-4. Декораторы для повторных попыток (retry_on_failure)
-5. Декораторы для кеширования (cached_result)
-6. Комбинированные декораторы (silent_operation, with_retry_and_log, silent_retry, robust_operation)
+Назначение:
+    Предоставляет набор декораторов для решения типовых задач:
+    управление логами, обработка ошибок, повторные попытки, кеширование.
+
+Основные разделы:
+    1. Контекстные переменные для управления логами
+    2. Декораторы для управления логами (suppress_debug_logs, suppress_all_logs)
+    3. Декораторы для обработки ошибок (log_exceptions, handle_exception)
+    4. Декораторы для повторных попыток (retry_on_failure)
+    5. Декораторы для кеширования (cached_result)
+    6. Комбинированные декораторы (silent_operation, with_retry_and_log, silent_retry, robust_operation)
+
+Технические особенности:
+    - Поддержка синхронных и асинхронных функций
+    - Использование contextvars для изоляции контекста
+    - Protocol для типобезопасной работы с логгерами
+    - Все декораторы сохраняют метаданные через functools.wraps
+    - Безопасная работа с любыми объектами логгеров
+
+Архитектура:
+    - Модуль централизованного импорта декораторов
+    - Единый источник декораторов для всего приложения
+    - Композиция декораторов для сложных сценариев
 """
 
 import asyncio
@@ -23,10 +40,11 @@ from typing import Any, Protocol
 
 
 class LoggerProtocol(Protocol):
-    """Протокол для объектов, поддерживающих методы логирования.
+    """
+    Протокол для объектов, поддерживающих методы логирования.
 
-    Используется для того, чтобы декораторы могли принимать как стандартный logging.Logger, так и ExtendedLogger из
-    проекта.
+    Используется для того, чтобы декораторы могли принимать как
+    стандартный logging.Logger, так и ExtendedLogger из проекта.
     """
 
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
@@ -53,7 +71,8 @@ _timer_start = contextvars.ContextVar("timer_start", default=None)
 
 
 def is_debug_suppressed() -> bool:
-    """Проверка, подавлены ли debug-логи в текущем контексте.
+    """
+    Проверка, подавлены ли debug-логи в текущем контексте.
 
     Returns:
         bool: True если debug-логи подавлены
@@ -62,7 +81,8 @@ def is_debug_suppressed() -> bool:
 
 
 def is_all_logs_suppressed() -> bool:
-    """Проверка, подавлены ли все логи в текущем контексте.
+    """
+    Проверка, подавлены ли все логи в текущем контексте.
 
     Returns:
         bool: True если все логи подавлены
@@ -76,30 +96,24 @@ def is_all_logs_suppressed() -> bool:
 
 
 def suppress_debug_logs(func: Callable) -> Callable:
-    """Декоратор, который отключает debug-логи в текущем контексте выполнения.
+    """
+    Декоратор, который отключает debug-логи в текущем контексте выполнения.
 
-    Другие параллельные задачи не затрагиваются.
+    Другие параллельные задачи не затрагиваются благодаря contextvars.
 
-    Использование:
+    Пример:
         @suppress_debug_logs
         async def sync_avanpost():
             db_logger.debug("Это не выведется")  # ← подавлено
             await some_internal()  # ← здесь тоже подавлено
 
-    Вложенные вызовы:
-        @suppress_debug_logs
-        async def outer():
-            db_logger.debug("Не выведется")  # ← подавлено
-            await inner()  # ← здесь тоже подавлено
-
-        async def inner():
-            db_logger.debug("Тоже не выведется")  # ← подавлено (контекст сохраняется)
+    Вложенные вызовы сохраняют контекст.
 
     Args:
         func: Декорируемая функция
 
     Returns:
-        Callable: Обернутая функция
+        Callable: Обёрнутая функция
     """
 
     @functools.wraps(func)
@@ -122,9 +136,10 @@ def suppress_debug_logs(func: Callable) -> Callable:
 
 
 def suppress_all_logs(func: Callable) -> Callable:
-    """Декоратор, который отключает ВСЕ логи (кроме critical) в текущем контексте.
+    """
+    Декоратор, который отключает ВСЕ логи (кроме critical) в текущем контексте.
 
-    Использование:
+    Пример:
         @suppress_all_logs
         async def heavy_operation():
             db_logger.info("Не выведется")  # ← подавлено
@@ -134,7 +149,7 @@ def suppress_all_logs(func: Callable) -> Callable:
         func: Декорируемая функция
 
     Returns:
-        Callable: Обернутая функция
+        Callable: Обёрнутая функция
     """
 
     @functools.wraps(func)
@@ -161,14 +176,15 @@ def log_execution_time(
     level: int = logging.DEBUG,
     message: str = "Executed {func_name} in {duration:.2f}ms",
 ) -> Callable:
-    """Декоратор для замера времени выполнения функции.
+    """
+    Декоратор для замера времени выполнения функции.
 
     Args:
-        logger: Логгер для вывода (принимает logging.Logger, ExtendedLogger или любой объект с методами логирования)
+        logger: Логгер для вывода (любой объект с методами логирования)
         level: Уровень логирования
         message: Шаблон сообщения (доступны: func_name, duration, args, kwargs)
 
-    Использование:
+    Пример:
         @log_execution_time()
         async def my_function():
             await asyncio.sleep(1)
@@ -238,17 +254,18 @@ def log_exceptions(
     log_level: str = "error",
     reraise: bool = True,
 ) -> Callable:
-    """Декоратор для логирования исключений в асинхронных/синхронных функциях.
+    """
+    Декоратор для логирования исключений в асинхронных/синхронных функциях.
 
     Поддерживает:
     - Стандартный logging.Logger
     - ExtendedLogger из проекта
-    - Любой объект с методами логирования (debug, info, warning, error, critical)
+    - Любой объект с методами логирования
 
     Args:
         logger: Логгер для вывода (по умолчанию app_logger)
         log_level: Уровень логирования (debug, info, warning, error, critical)
-        reraise: Пробрасывать исключение дальше после логирования (по умолчанию True)
+        reraise: Пробрасывать исключение дальше после логирования
 
     Особенности:
         - asyncio.CancelledError логируется на уровне DEBUG и пробрасывается
@@ -302,7 +319,16 @@ def log_exceptions(
 
 
 def _get_log_method(logger: Any, log_level: str) -> Callable[..., None]:
-    """Безопасное получение метода логирования из объекта."""
+    """
+    Безопасное получение метода логирования из объекта.
+
+    Args:
+        logger: Объект логгера
+        log_level: Уровень логирования
+
+    Returns:
+        Callable: Метод логирования
+    """
     # Пробуем получить метод с указанным уровнем
     if hasattr(logger, log_level):
         method = getattr(logger, log_level)
@@ -324,14 +350,15 @@ async def handle_exception(
     logger: logging.Logger | LoggerProtocol | Any | None = None,
     component: str = "app",
 ) -> None:
-    """Глобальный обработчик исключений с категоризацией.
+    """
+    Глобальный обработчик исключений с категоризацией.
 
     Args:
         exception: Исключение для обработки
         logger: Логгер для вывода (по умолчанию app_logger)
-        component: Компонент, в котором произошла ошибка (для контекста)
+        component: Компонент, в котором произошла ошибка
 
-    Использование:
+    Пример:
         try:
             await risky_operation()
         except Exception as e:
@@ -368,7 +395,8 @@ def retry_on_failure(
     exceptions: tuple = (Exception,),
     logger: logging.Logger | LoggerProtocol | Any | None = None,
 ) -> Callable:
-    """Декоратор для повторных попыток при ошибках.
+    """
+    Декоратор для повторных попыток при ошибках.
 
     Args:
         attempts: Количество попыток
@@ -377,7 +405,7 @@ def retry_on_failure(
         exceptions: Кортеж исключений, при которых нужно повторять
         logger: Логгер для вывода (по умолчанию app_logger)
 
-    Использование:
+    Пример:
         @retry_on_failure(attempts=3, delay=1.0)
         async def unstable_operation():
             ...
@@ -457,7 +485,7 @@ def cached_result(ttl: float | None = None) -> Callable:
     Args:
         ttl: Время жизни кеша в секундах (None = бесконечно)
 
-    Использование:
+    Пример:
         @cached_result(ttl=60)
         async def get_expensive_data():
             ...
@@ -505,15 +533,15 @@ def cached_result(ttl: float | None = None) -> Callable:
 
 
 def silent_operation(log_level: str = "debug") -> Callable:
-    """Комбинированный декоратор для "тихих" операций:
-
-    - Подавляет debug-логи
-    - Измеряет время выполнения
+    """
+    Комбинированный декоратор для "тихих" операций:
+        - Подавляет debug-логи
+        - Измеряет время выполнения
 
     Args:
         log_level: Уровень логирования для результата (debug, info, warning)
 
-    Использование:
+    Пример:
         @silent_operation()
         async def sync_data():
             # Все debug-логи внутри подавлены
@@ -532,7 +560,7 @@ def silent_operation(log_level: str = "debug") -> Callable:
     log_level_int = level_map.get(log_level, logging.DEBUG)
 
     def decorator(func: Callable) -> Callable:
-        # Применение декораторрв в правильном порядке
+        # Применение декораторов в правильном порядке
         decorated = suppress_debug_logs(func)
         decorated = log_execution_time(level=log_level_int)(decorated)
         return decorated
@@ -548,11 +576,12 @@ def with_retry_and_log(
     logger: logging.Logger | LoggerProtocol | Any | None = None,
     log_level: str = "error",
 ) -> Callable:
-    """Комбинированный декоратор: повторяет попытки и логирует финальную ошибку.
+    """
+    Комбинированный декоратор: повторяет попытки и логирует финальную ошибку.
 
     Порядок: retry (внутри) → log_exceptions (снаружи)
 
-    Использование:
+    Пример:
         @with_retry_and_log(attempts=3, log_level="error")
         async def fetch_from_api():
             return await http_client.get("https://api.example.com/data")
@@ -582,11 +611,12 @@ def silent_retry(
     exceptions: tuple = (Exception,),
     log_level: str = "warning",
 ) -> Callable:
-    """ "Тихий" повтор: подавляет debug-логи, логирует только финальную ошибку.
+    """
+    "Тихий" повтор: подавляет debug-логи, логирует только финальную ошибку.
 
     Комбинация: suppress_debug_logs + with_retry_and_log
 
-    Использование:
+    Пример:
         @silent_retry(attempts=3)
         async def sync_data():
             # Все debug-логи внутри подавлены
@@ -614,7 +644,8 @@ def robust_operation(
     log_level: str = "error",
     measure_time: bool = True,
 ) -> Callable:
-    """Полный комбинированный декоратор для надежных операций.
+    """
+    Полный комбинированный декоратор для надёжных операций.
 
     Комбинация:
         - retry_on_failure: повторные попытки при ошибках
@@ -622,7 +653,7 @@ def robust_operation(
         - log_execution_time: измерение времени выполнения
         - suppress_debug_logs: подавление debug-логов
 
-    Использование:
+    Пример:
         @robust_operation(attempts=5, log_level="error")
         async def critical_sync():
             # До 5 попыток при ошибках

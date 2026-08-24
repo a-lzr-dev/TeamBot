@@ -805,74 +805,33 @@ def _format_system_stats(stats: dict[str, Any]) -> str:
 
 
 def _format_db_stats(table_stats: dict[str, int], db_info: dict[str, Any]) -> str:
-    """Форматирование статистики таблиц БД.
+    """Упрощенное форматирование статистики БД."""
+    import html
 
-    Отображает количество записей во всех таблицах базы данных main,
-    отсортированных по убыванию, с общей статистикой.
+    # Базовое форматирование без сложных элементов
+    lines = ["🗄️ **СТАТИСТИКА БАЗЫ ДАННЫХ (main)**", "═" * 30]
 
-    Args:
-        table_stats: Словарь {имя_таблицы: количество_записей}
-        db_info: Информация о БД от db_manager.get_stats()
-    """
-    databases = db_info.get("databases", {})
     primary = db_info.get("primary", "unknown")
-    session_counter = db_info.get("session_counter", 0)
+    lines.append(f"📁 Основная БД: {html.escape(primary)}")
+    lines.append(f"📊 Всего БД: {db_info.get('total_databases', 0)}")
+    lines.append(f"🔄 Сессий создано: {db_info.get('session_counter', 0)}")
+    lines.append("")
+    lines.append("**📊 Количество записей по таблицам:**")
 
-    # Сортировка таблиц по количеству записей (по убыванию)
     sorted_tables = sorted(table_stats.items(), key=lambda x: x[1], reverse=True)
+    total_rows = 0
 
-    response_parts = [
-        "🗄️ **СТАТИСТИКА БАЗЫ ДАННЫХ (main)**",
-        "═" * 30,
-        "",
-        f"📁 Основная БД: {primary}",
-        f"📊 Всего БД: {db_info.get('total_databases', 0)}",
-        f"🔄 Сессий создано: {session_counter}",
-        "",
-        "**📋 Информация о БД:**",
-    ]
+    for table, count in sorted_tables[:20]:  # Показываем только топ-20 таблиц
+        if count >= 0:
+            total_rows += count
+            lines.append(f"  • {html.escape(table)}: {count:,}")
 
-    for name, info in databases.items():
-        status = "✅" if info.get("initialized") else "❌"
-        is_primary = "⭐" if info.get("is_primary") else ""
-        response_parts.append(f"  • {name} {is_primary}: {info.get('type', 'unknown')} {status}")
+    lines.append("")
+    lines.append(f"📊 **Всего записей: {total_rows:,}**")
+    lines.append("─" * 30)
+    lines.append(f"🕐 {datetime_now().strftime('%d.%m.%Y %H:%M:%S')}")
 
-    response_parts.extend(
-        [
-            "",
-            "**📊 Количество записей по таблицам:**",
-        ]
-    )
-
-    if sorted_tables:
-        total_rows = 0
-        for table, count in sorted_tables:
-            if count >= 0:
-                total_rows += count
-                # Форматируем с выравниванием
-                count_str = f"{count:,}" if count > 0 else "0"
-                response_parts.append(f"  • {table}: {count_str}")
-            else:
-                response_parts.append(f"  • {table}: ❌ ошибка")
-
-        response_parts.extend(
-            [
-                "",
-                f"📊 **Всего записей: {total_rows:,}**",
-            ]
-        )
-    else:
-        response_parts.append("  Нет данных")
-
-    response_parts.extend(
-        [
-            "",
-            "─" * 30,
-            f"🕐 {datetime_now().strftime('%d.%m.%Y %H:%M:%S')}",
-        ]
-    )
-
-    return "\n".join(response_parts)
+    return "\n".join(lines)
 
 
 __all__ = [

@@ -357,7 +357,9 @@ class CarrierOrdersListHandler(BaseListHandler):
             selected_user_id=selected_user_id,
             selected_user_name=selected_user_name,
             group_id=group_id,
-            parent_item_id=current_parent_item_id,  # Сохраняем родительский ID для навигации
+            parent_item_id=current_parent_item_id,
+            _return_to_carrier_orders=True,
+            selected_carrier_order_id=item_id,
         )
 
         # Переключение состояния на просмотр маршрута

@@ -1,10 +1,29 @@
-"""Сервис синхронизации данных Avanpost.
+"""
+Сервис синхронизации данных Avanpost.
 
-Отвечает за:
-1. Синхронизацию базовых данных (справочники)
-2. Синхронизацию пользовательских данных (общие и персональные)
-3. Ведение статистики синхронизации
-4. Управление кешем и временем синхронизации
+Назначение:
+    Обеспечивает синхронизацию данных между внешней системой Avanpost
+    и внутренней базой данных приложения.
+
+Основные функции:
+    1. Синхронизация базовых данных (справочники, справочная информация)
+    2. Синхронизация пользовательских данных (общие и персональные)
+    3. Ведение детальной статистики синхронизации
+    4. Управление кешем и временем синхронизации
+    5. Пакетная обработка данных с разбивкой на чанки
+
+Технические особенности:
+    - Поддержка двух режимов синхронизации пользователей (base и details)
+    - Автоматическое отслеживание времени последней синхронизации
+    - Разбивка на чанки для оптимальной производительности
+    - Детальная статистика по каждой таблице
+    - Обработка DELETE и UPSERT записей
+    - Кеширование моделей и колонок
+
+Архитектура:
+    - Использует хранимые процедуры Avanpost для получения данных
+    - Работает через SQLAlchemy async
+    - Поддерживает пакетные операции (bulk insert/update/delete)
 """
 
 import logging
@@ -25,12 +44,21 @@ from ..models.avanpost import get_avanpost_model, get_avanpost_table_name
 ModelType = TypeVar("ModelType")
 
 
-# ==================== СТАТИСТИКА СИНХРОНИЗАЦИИ ====================
+# ============================================================
+# 1. СТАТИСТИКА СИНХРОНИЗАЦИИ
+# ============================================================
 
 
 @dataclass
 class SyncStatistics:
-    """Статистика синхронизации.
+    """
+    Статистика синхронизации.
+
+    Собирает и агрегирует данные о процессе синхронизации:
+    - Количество полученных, вставленных, обновлённых и удалённых записей
+    - Статистика по каждой таблице
+    - Информация об ошибках
+    - Время выполнения
 
     Поля отчета:
         - Recv:         Общее количество записей, полученных от Avanpost
@@ -49,97 +77,107 @@ class SyncStatistics:
 
     # ==================== ОБЩИЕ СЧЕТЧИКИ ====================
 
-    total_data_types: int = 0
-    processed_data_types: int = 0
-    failed_data_types: int = 0
+    total_data_types: int = 0  # Всего типов данных
+    processed_data_types: int = 0  # Обработано типов данных
+    failed_data_types: int = 0  # Типов данных с ошибками
 
     # ==================== СЧЕТЧИКИ ПО ОПЕРАЦИЯМ ====================
 
-    tables_with_inserts: set[str] = field(default_factory=set)
-    tables_with_updates: set[str] = field(default_factory=set)
-    tables_with_deletes: set[str] = field(default_factory=set)
-    tables_with_errors: set[str] = field(default_factory=set)
-    tables_with_unchanged_upserts: set[str] = field(default_factory=set)
-    tables_with_unchanged_deletes: set[str] = field(default_factory=set)
+    tables_with_inserts: set[str] = field(default_factory=set)  # Таблицы с вставками
+    tables_with_updates: set[str] = field(default_factory=set)  # Таблицы с обновлениями
+    tables_with_deletes: set[str] = field(default_factory=set)  # Таблицы с удалениями
+    tables_with_errors: set[str] = field(default_factory=set)  # Таблицы с ошибками
+    tables_with_unchanged_upserts: set[str] = field(default_factory=set)  # Таблицы с неизменными UPSERT
+    tables_with_unchanged_deletes: set[str] = field(default_factory=set)  # Таблицы с неизменными DELETE
 
     # ==================== КОЛИЧЕСТВО ЗАПИСЕЙ ====================
 
-    total_inserted: int = 0
-    total_updated: int = 0
-    total_deleted: int = 0
-    total_unchanged_upsert: int = 0
-    total_unchanged_delete: int = 0
-    total_error_records: int = 0
+    total_inserted: int = 0  # Всего вставлено
+    total_updated: int = 0  # Всего обновлено
+    total_deleted: int = 0  # Всего удалено
+    total_unchanged_upsert: int = 0  # Пропущено при UPSERT
+    total_unchanged_delete: int = 0  # Пропущено при DELETE
+    total_error_records: int = 0  # Записей с ошибками
 
     # ==================== КОЛИЧЕСТВО ПОЛУЧЕННЫХ ЗАПИСЕЙ ====================
 
-    total_received: int = 0
-    total_received_upsert: int = 0
-    total_received_delete: int = 0
+    total_received: int = 0  # Всего получено
+    total_received_upsert: int = 0  # Получено для UPSERT
+    total_received_delete: int = 0  # Получено для DELETE
 
     # ==================== ДЕТАЛЬНАЯ СТАТИСТИКА ПО ТАБЛИЦАМ ====================
 
     table_stats: dict[str, dict[str, int]] = field(
         default_factory=lambda: defaultdict(
             lambda: {
-                "inserted": 0,
-                "updated": 0,
-                "deleted": 0,
-                "errors": 0,
-                "error_records": 0,
-                "unchanged_upsert": 0,
-                "unchanged_delete": 0,
-                "received": 0,
-                "received_upsert": 0,
-                "received_delete": 0,
-                "users_ok": 0,
-                "users_err": 0,
+                "inserted": 0,  # Вставлено записей
+                "updated": 0,  # Обновлено записей
+                "deleted": 0,  # Удалено записей
+                "errors": 0,  # Количество ошибок
+                "error_records": 0,  # Записей с ошибками
+                "unchanged_upsert": 0,  # Пропущено при UPSERT
+                "unchanged_delete": 0,  # Пропущено при DELETE
+                "received": 0,  # Получено записей
+                "received_upsert": 0,  # Получено для UPSERT
+                "received_delete": 0,  # Получено для DELETE
+                "users_ok": 0,  # Пользователей успешно
+                "users_err": 0,  # Пользователей с ошибками
             }
         )
     )
 
     # ==================== ФЛАГИ ДЛЯ ОТСЛЕЖИВАНИЯ ИЗМЕНЕНИЙ ====================
 
-    _current_table_has_changes: set[str] = field(default_factory=set)
-    _current_table_has_error: set[str] = field(default_factory=set)
+    _current_table_has_changes: set[str] = field(default_factory=set)  # Текущие таблицы с изменениями
+    _current_table_has_error: set[str] = field(default_factory=set)  # Текущие таблицы с ошибками
 
     # ==================== ОШИБКИ ====================
 
-    error_messages: list[str] = field(default_factory=list)
+    error_messages: list[str] = field(default_factory=list)  # Список сообщений об ошибках
 
     # ==================== СТАТИСТИКА ПО ПОЛЬЗОВАТЕЛЯМ ====================
 
-    total_users_processed: int = 0
-    failed_user_ids: list[int] = field(default_factory=list)
+    total_users_processed: int = 0  # Обработано пользователей
+    failed_user_ids: list[int] = field(default_factory=list)  # ID пользователей с ошибками
 
     # ==================== ВРЕМЯ ====================
 
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    start_time: datetime | None = None  # Время начала синхронизации
+    end_time: datetime | None = None  # Время окончания синхронизации
 
     # ==================== ВНУТРЕННИЕ ФЛАГИ ====================
 
-    _suppress_report: bool = False
-    _current_user_id: int | None = None
+    _suppress_report: bool = False  # Подавление вывода отчета
+    _current_user_id: int | None = None  # Текущий обрабатываемый пользователь
 
     # ==================== УПРАВЛЕНИЕ ВРЕМЕНЕМ ====================
 
     def start(self) -> None:
-        """Запуск таймера."""
+        """Запуск таймера - фиксирует время начала синхронизации."""
         self.start_time = datetime_now()
 
     def finish(self) -> None:
-        """Остановка таймера."""
+        """Остановка таймера - фиксирует время окончания синхронизации."""
         self.end_time = datetime_now()
 
     def suppress_report(self, value: bool = True) -> None:
-        """Управление выводом отчета."""
+        """
+        Управление выводом отчета.
+
+        Args:
+            value: True - подавить вывод отчета
+        """
         self._suppress_report = value
 
     # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
 
     def set_current_user(self, user_id: int) -> None:
-        """Установка текущего пользователя для отслеживания статистики."""
+        """
+        Установка текущего пользователя для отслеживания статистики.
+
+        Args:
+            user_id: ID пользователя
+        """
         self._current_user_id = user_id
         self._current_table_has_changes.clear()
         self._current_table_has_error.clear()
@@ -163,7 +201,12 @@ class SyncStatistics:
         self.total_users_processed += 1
 
     def add_failed_user(self, user_id: int) -> None:
-        """Добавление ID пользователя с ошибкой."""
+        """
+        Добавление ID пользователя с ошибкой.
+
+        Args:
+            user_id: ID пользователя
+        """
         if user_id not in self.failed_user_ids:
             self.failed_user_ids.append(user_id)
 
@@ -180,7 +223,8 @@ class SyncStatistics:
     # ==================== ДОБАВЛЕНИЕ СТАТИСТИКИ ====================
 
     def add_received(self, table_name: str, upsert_count: int = 0, delete_count: int = 0) -> None:
-        """Добавление полученных записей.
+        """
+        Добавление полученных записей.
 
         Args:
             table_name: Имя таблицы
@@ -197,7 +241,13 @@ class SyncStatistics:
             self.table_stats[table_name]["received_delete"] += delete_count
 
     def add_insert(self, table_name: str, count: int = 1) -> None:
-        """Добавление вставленных записей."""
+        """
+        Добавление вставленных записей.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.tables_with_inserts.add(table_name)
             self.total_inserted += count
@@ -205,7 +255,13 @@ class SyncStatistics:
             self._mark_table_change(table_name)
 
     def add_update(self, table_name: str, count: int = 1) -> None:
-        """Добавление обновленных записей."""
+        """
+        Добавление обновленных записей.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.tables_with_updates.add(table_name)
             self.total_updated += count
@@ -213,7 +269,13 @@ class SyncStatistics:
             self._mark_table_change(table_name)
 
     def add_delete(self, table_name: str, count: int = 1) -> None:
-        """Добавление удаленных записей."""
+        """
+        Добавление удаленных записей.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.tables_with_deletes.add(table_name)
             self.total_deleted += count
@@ -221,21 +283,34 @@ class SyncStatistics:
             self._mark_table_change(table_name)
 
     def add_unchanged_upsert(self, table_name: str, count: int = 1) -> None:
-        """Записи UPSERT без изменений."""
+        """
+        Добавление записей UPSERT без изменений.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.tables_with_unchanged_upserts.add(table_name)
             self.total_unchanged_upsert += count
             self.table_stats[table_name]["unchanged_upsert"] += count
 
     def add_unchanged_delete(self, table_name: str, count: int = 1) -> None:
-        """Записи DELETE без изменений."""
+        """
+        Добавление записей DELETE без изменений.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.tables_with_unchanged_deletes.add(table_name)
             self.total_unchanged_delete += count
             self.table_stats[table_name]["unchanged_delete"] += count
 
     def add_error(self, table_name: str, error: str, error_count: int = 1) -> None:
-        """Добавление ошибки для таблицы.
+        """
+        Добавление ошибки для таблицы.
 
         Args:
             table_name: Имя таблицы
@@ -253,7 +328,13 @@ class SyncStatistics:
         self.error_messages.append(f"[{table_name}] {error[:200]}")
 
     def add_error_records(self, table_name: str, count: int = 1) -> None:
-        """Добавление количества записей с ошибками."""
+        """
+        Добавление количества записей с ошибками.
+
+        Args:
+            table_name: Имя таблицы
+            count: Количество записей
+        """
         if count > 0:
             self.total_error_records += count
             self.table_stats[table_name]["error_records"] = self.table_stats[table_name].get("error_records", 0) + count
@@ -262,7 +343,12 @@ class SyncStatistics:
             self._mark_table_error(table_name)
 
     def merge(self, other: "SyncStatistics") -> None:
-        """Объединение статистики из другого объекта."""
+        """
+        Объединение статистики из другого объекта.
+
+        Args:
+            other: Другой объект статистики для объединения
+        """
         self.total_data_types += other.total_data_types
         self.processed_data_types += other.processed_data_types
         self.failed_data_types += other.failed_data_types
@@ -296,7 +382,12 @@ class SyncStatistics:
     # ==================== ПРЕОБРАЗОВАНИЕ В СЛОВАРЬ ====================
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование статистики в словарь для вывода."""
+        """
+        Преобразование статистики в словарь для вывода.
+
+        Returns:
+            dict[str, Any]: Статистика в виде словаря
+        """
         duration = None
         if self.start_time and self.end_time:
             duration = (self.end_time - self.start_time).total_seconds()
@@ -333,7 +424,8 @@ class SyncStatistics:
     # ==================== ВЫВОД ОТЧЕТА ====================
 
     def print_report(self, title: str = "Sync Report", force: bool = False) -> None:
-        """Вывод отчета в консоль.
+        """
+        Вывод отчета в консоль.
 
         Args:
             title: Заголовок отчета
@@ -535,11 +627,14 @@ class SyncStatistics:
             stat_logger.info(line)
 
 
-# ==================== ОСНОВНОЙ СЕРВИС ====================
+# ============================================================
+# 2. ОСНОВНОЙ СЕРВИС
+# ============================================================
 
 
 class AvanpostSyncService:
-    """Сервис синхронизации данных Avanpost.
+    """
+    Сервис синхронизации данных Avanpost.
 
     Группы методов:
     1. Инициализация и настройка
@@ -557,14 +652,14 @@ class AvanpostSyncService:
         self._last_sync_time: datetime | None = None
         self._data_type_cache: dict[int, dict[str, Any]] = {}
         self._stats: dict[str, Any] = {
-            "total_syncs": 0,
-            "successful_syncs": 0,
-            "failed_syncs": 0,
-            "last_sync_duration": 0.0,
-            "total_records_synced": 0,
+            "total_syncs": 0,  # Всего синхронизаций
+            "successful_syncs": 0,  # Успешных синхронизаций
+            "failed_syncs": 0,  # Неудачных синхронизаций
+            "last_sync_duration": 0.0,  # Длительность последней синхронизации
+            "total_records_synced": 0,  # Всего синхронизировано записей
         }
-        self._fk_cache: dict[str, set[Any]] = {}
-        self._model_columns_cache: dict[tuple[Any, bool], set[str]] = {}
+        self._fk_cache: dict[str, set[Any]] = {}  # Кеш внешних ключей
+        self._model_columns_cache: dict[tuple[Any, bool], set[str]] = {}  # Кеш колонок моделей
 
         from ..models.avanpost import (
             AVANPOST_BASE_DATA_TYPES,
@@ -575,15 +670,14 @@ class AvanpostSyncService:
         # Типы данных для синхронизации
         self.base_data_types = AVANPOST_BASE_DATA_TYPES
         self.user_data_base_types = AVANPOST_USER_DATA_BASE_TYPES
-        #        self.user_data_details_types = AVANPOST_USER_DATA_DETAILS_TYPES
 
         # Маппинг режимов на типы данных
         self._user_data_types_by_mode = {
-            1: AVANPOST_USER_DATA_BASE_TYPES,
-            2: AVANPOST_USER_DATA_DETAILS_TYPES,
+            1: AVANPOST_USER_DATA_BASE_TYPES,  # Базовые данные пользователя
+            2: AVANPOST_USER_DATA_DETAILS_TYPES,  # Детальные данные пользователя
         }
 
-    # ==================== СВОЙСТВА ====================
+    # ==================== 1. СВОЙСТВА ====================
 
     @property
     def is_initialized(self) -> bool:
@@ -595,10 +689,11 @@ class AvanpostSyncService:
         """Проверка, выполняется ли синхронизация."""
         return self._sync_in_progress
 
-    # ==================== 1. ИНИЦИАЛИЗАЦИЯ ====================
+    # ==================== 2. ИНИЦИАЛИЗАЦИЯ ====================
 
     async def initialize(self, session: AsyncSession | None = None) -> None:
-        """Инициализация сервиса.
+        """
+        Инициализация сервиса.
 
         Загружает кеш типов данных из БД.
 
@@ -617,11 +712,12 @@ class AvanpostSyncService:
         self._initialized = True
         app_logger.info(f"✅ AvanpostSyncService initialized with {len(self._data_type_cache)} data types")
 
-    # ==================== 2. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
+    # ==================== 3. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     def _get_model_by_data_type(data_type_id: int) -> Any:
-        """Получение модели SQLAlchemy по типу данных.
+        """
+        Получение модели SQLAlchemy по типу данных.
 
         Args:
             data_type_id: ID типа данных
@@ -633,7 +729,8 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_table_name(data_type_id: int) -> str | None:
-        """Получение имени таблицы по типу данных.
+        """
+        Получение имени таблицы по типу данных.
 
         Args:
             data_type_id: ID типа данных
@@ -644,7 +741,8 @@ class AvanpostSyncService:
         return get_avanpost_table_name(data_type_id)
 
     def _get_model_columns(self, model: Any, include_all: bool = True) -> set[str]:
-        """Получение списка колонок модели с кешированием.
+        """
+        Получение списка колонок модели с кешированием.
 
         Args:
             model: Модель SQLAlchemy
@@ -670,7 +768,8 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_pk_columns(model: Any) -> list[str]:
-        """Получение списка колонок первичного ключа.
+        """
+        Получение списка колонок первичного ключа.
 
         Args:
             model: Модель SQLAlchemy
@@ -682,7 +781,8 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_required_columns(model: Any) -> list[str]:
-        """Получение списка NOT NULL колонок.
+        """
+        Получение списка NOT NULL колонок.
 
         Args:
             model: Модель SQLAlchemy
@@ -698,7 +798,8 @@ class AvanpostSyncService:
         user_id: int | None = None,
         show_logs: bool = True,
     ) -> dict[int, datetime]:
-        """Получение времени синхронизации для списка типов данных.
+        """
+        Получение времени синхронизации для списка типов данных.
 
         Args:
             data_types: Список ID типов данных
@@ -708,7 +809,6 @@ class AvanpostSyncService:
         Returns:
             dict[int, datetime]: Словарь {data_type_id: sync_time}
         """
-
         async with db_manager.get_session(show_logs=show_logs) as session:
             if user_id is None:
                 return await SystemRepository.get_sync_times(session, data_types, show_logs=show_logs)  # type: ignore[no-any-return]
@@ -721,7 +821,8 @@ class AvanpostSyncService:
         user_id: int | None = None,
         show_logs: bool = True,
     ) -> None:
-        """Обновление времени синхронизации для типов данных.
+        """
+        Обновление времени синхронизации для типов данных.
 
         Args:
             sync_times: Словарь {data_type_id: sync_time}
@@ -737,10 +838,11 @@ class AvanpostSyncService:
             else:
                 await SystemRepository.update_user_sync_times_bulk(session, user_id, sync_times, show_logs=show_logs)
 
-    # ==================== 3. СИНХРОНИЗАЦИЯ БАЗОВЫХ ДАННЫХ ====================
+    # ==================== 4. СИНХРОНИЗАЦИЯ БАЗОВЫХ ДАННЫХ ====================
 
     async def sync_base_data(self, force: bool = False, show_logs: bool = True) -> SyncStatistics:
-        """Синхронизация базовых данных (справочники).
+        """
+        Синхронизация базовых данных (справочники).
 
         Выполняется синхронно, блокирует выполнение до завершения.
 
@@ -850,11 +952,13 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """Обработка полученных данных для базовой синхронизации.
+        """
+        Обработка полученных данных для базовой синхронизации.
 
         Args:
             all_data_items: Список элементов данных
             stats: Объект статистики для обновления
+            show_logs: Отображение подробного логирования
         """
         # Разделение записей на DELETE и UPSERT
         delete_records_by_table: dict[str, list[dict[str, Any]]] = {}
@@ -930,6 +1034,8 @@ class AvanpostSyncService:
             upsert_order, upsert_records_by_table, data_type_for_table, stats, show_logs=show_logs
         )
 
+    # ==================== 5. ОБРАБОТКА DELETE И UPSERT ====================
+
     async def _process_delete_records(
         self,
         delete_order: list[str],
@@ -938,8 +1044,16 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """Обработка DELETE записей."""
+        """
+        Обработка DELETE записей.
 
+        Args:
+            delete_order: Порядок удаления таблиц
+            delete_records_by_table: Словарь записей для удаления по таблицам
+            data_type_for_table: Маппинг таблица -> DataTypeId
+            stats: Объект статистики
+            show_logs: Отображение подробного логирования
+        """
         async with db_manager.get_session() as session:
             for table_name in delete_order:
                 records = delete_records_by_table[table_name]
@@ -1006,8 +1120,16 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """Обработка UPSERT записей."""
+        """
+        Обработка UPSERT записей.
 
+        Args:
+            upsert_order: Порядок обновления таблиц
+            upsert_records_by_table: Словарь записей для UPSERT по таблицам
+            data_type_for_table: Маппинг таблица -> DataTypeId
+            stats: Объект статистики
+            show_logs: Отображение подробного логирования
+        """
         async with db_manager.get_session() as session:
             for table_name in upsert_order:
                 records = upsert_records_by_table[table_name]
@@ -1100,7 +1222,7 @@ class AvanpostSyncService:
                         await session.rollback()
                         break
 
-    # ==================== 4. СИНХРОНИЗАЦИЯ ДАННЫХ ПОЛЬЗОВАТЕЛЯ ====================
+    # ==================== 6. СИНХРОНИЗАЦИЯ ДАННЫХ ПОЛЬЗОВАТЕЛЯ ====================
 
     async def sync_user_data(
         self,
@@ -1110,7 +1232,8 @@ class AvanpostSyncService:
         suppress_report: bool = True,
         show_logs: bool = True,
     ) -> SyncStatistics:
-        """Синхронизация данных пользователя.
+        """
+        Синхронизация данных пользователя.
 
         Args:
             user_id: ID пользователя в Avanpost
@@ -1215,7 +1338,15 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """Обработка полученных данных для пользовательской синхронизации."""
+        """
+        Обработка полученных данных для пользовательской синхронизации.
+
+        Args:
+            all_data_items: Список элементов данных
+            data_types: Список типов данных
+            stats: Объект статистики
+            show_logs: Отображение подробного логирования
+        """
         # Разделение записей на DELETE и UPSERT
         delete_records_by_table: dict[str, list[dict[str, Any]]] = {}
         upsert_records_by_table: dict[str, list[dict[str, Any]]] = {}
@@ -1292,7 +1423,8 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """Обновление времени синхронизации для пользователя.
+        """
+        Обновление времени синхронизации для пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1329,7 +1461,7 @@ class AvanpostSyncService:
 
             await self._update_sync_times(sync_times, user_id, show_logs=show_logs)
             if show_logs:
-                (app_logger.debug(f"✅ Updated sync times for {len(sync_times)} data types for user {user_id}"))
+                app_logger.debug(f"✅ Updated sync times for {len(sync_times)} data types for user {user_id}")
 
             # Детальный лог
             if logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -1353,7 +1485,7 @@ class AvanpostSyncService:
                 else:
                     app_logger.debug(f"   Type {dt_id}: unknown reason")
 
-    # ==================== 5. СИНХРОНИЗАЦИЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ ====================
+    # ==================== 7. СИНХРОНИЗАЦИЯ ВСЕХ ПОЛЬЗОВАТЕЛЕЙ ====================
 
     async def sync_all_users(
         self,
@@ -1362,7 +1494,8 @@ class AvanpostSyncService:
         user_ids: list[int] | None = None,
         show_logs: bool = True,
     ) -> dict[str, Any]:
-        """Синхронизация всех пользователей или указанных пользователей.
+        """
+        Синхронизация всех пользователей или указанных пользователей.
 
         Args:
             force: Принудительная синхронизация
@@ -1470,10 +1603,11 @@ class AvanpostSyncService:
 
             return result_stats
 
-    # ==================== 6. ПОЛНАЯ СИНХРОНИЗАЦИЯ ====================
+    # ==================== 8. ПОЛНАЯ СИНХРОНИЗАЦИЯ ====================
 
     async def sync_all(self, force: bool = False) -> dict[str, Any]:
-        """Полная синхронизация всех данных (базовые + пользовательские).
+        """
+        Полная синхронизация всех данных (базовые + пользовательские).
 
         Args:
             force: Принудительная синхронизация
@@ -1522,7 +1656,7 @@ class AvanpostSyncService:
 
         return result
 
-    # ==================== 7. СТАТУС И ЗДОРОВЬЕ ====================
+    # ==================== 9. СТАТУС И ЗДОРОВЬЕ ====================
 
     def clear_fk_cache(self) -> None:
         """Очистка кеша внешних ключей."""
@@ -1530,7 +1664,8 @@ class AvanpostSyncService:
         app_logger.debug("🧹 FK cache cleared")
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса.
+        """
+        Получение статуса сервиса.
 
         Returns:
             dict: Статус сервиса
@@ -1545,7 +1680,8 @@ class AvanpostSyncService:
         }
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса.
+        """
+        Проверка здоровья сервиса.
 
         Returns:
             bool: True если сервис здоров

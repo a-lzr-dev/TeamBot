@@ -1,12 +1,30 @@
-"""Сервис для управления напоминаниями и делами.
+"""
+Сервис для управления напоминаниями и делами.
 
-Отвечает за:
-1. Создание напоминаний (личных и общих)
-2. Завершение дел
-3. Получение списка дел с фильтрацией
-4. Поиск по кодовому слову
-5. Управление статусом напоминаний
-6. Статистику по делам
+Назначение:
+    Предоставляет полный набор методов для управления напоминаниями и делами
+    пользователей с поддержкой личных и общих дел.
+
+Основные функции:
+    1. Создание напоминаний (личных и общих)
+    2. Завершение дел с отметкой успешности
+    3. Получение списка дел с фильтрацией
+    4. Поиск по кодовому слову
+    5. Управление статусом напоминаний
+    6. Статистика по делам
+    7. Деактивация и удаление напоминаний
+
+Технические особенности:
+    - Поддержка личных и общих дел (shared_with)
+    - Шифрование конфиденциальных данных
+    - Поддержка повторяющихся напоминаний
+    - Поиск по уникальному кодовому слову
+    - Мягкое и жёсткое удаление
+
+Архитектура:
+    - Использует ReminderRepository для работы с БД
+    - Поддерживает асинхронные операции
+    - Возвращает отформатированные данные через DTO
 """
 
 from datetime import datetime
@@ -19,11 +37,20 @@ from ..logger import app_logger
 from ..models import UserReminderModel
 from ..utils.decorators import log_exceptions
 
+# ============================================================
+# 1. ОСНОВНОЙ КЛАСС СЕРВИСА
+# ============================================================
+
 
 class ReminderService:
-    """Сервис для управления напоминаниями и делами.
+    """
+    Сервис для управления напоминаниями и делами.
 
-    Предоставляет методы для CRUD операций с напоминаниями, а также для получения статистики и поиска.
+    Предоставляет методы для CRUD операций с напоминаниями,
+    а также для получения статистики и поиска.
+
+    Attributes:
+        _repository (ReminderRepository): Репозиторий для работы с напоминаниями
     """
 
     def __init__(self) -> None:
@@ -31,7 +58,7 @@ class ReminderService:
         self._repository = ReminderRepository()
 
     # ============================================================
-    # СОЗДАНИЕ
+    # 1.1. СОЗДАНИЕ НАПОМИНАНИЯ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -52,7 +79,8 @@ class ReminderService:
         shared_with: list[int] | None = None,
         encrypt: bool = False,
     ) -> UserReminderModel:
-        """Создание нового напоминания.
+        """
+        Создание нового напоминания.
 
         Args:
             user_id: ID пользователя-владельца
@@ -75,6 +103,7 @@ class ReminderService:
 
         Note:
             При encrypt=True название, описание и категория шифруются.
+            Кодовое слово должно быть уникальным.
         """
         return await self._repository.create_reminder(  # type: ignore[no-any-return]
             session=session,
@@ -94,7 +123,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # ЗАВЕРШЕНИЕ
+    # 1.2. ЗАВЕРШЕНИЕ ДЕЛА
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -105,7 +134,8 @@ class ReminderService:
         session: AsyncSession,
         successful: bool = True,
     ) -> tuple[bool, str | None]:
-        """Завершение дела.
+        """
+        Завершение дела.
 
         Args:
             reminder_id: ID напоминания
@@ -118,6 +148,7 @@ class ReminderService:
 
         Note:
             Проверяет права пользователя (владелец или участник общего дела).
+            При успешном завершении напоминание деактивируется.
         """
         return await self._repository.complete_reminder(  # type: ignore[no-any-return]
             session=session,
@@ -127,7 +158,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # ПОЛУЧЕНИЕ СПИСКА
+    # 1.3. ПОЛУЧЕНИЕ СПИСКА ДЕЛ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -141,14 +172,15 @@ class ReminderService:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Получение списка дел пользователя.
+        """
+        Получение списка дел пользователя.
 
         Args:
             user_id: ID пользователя
             session: Сессия БД
             date: Фильтр по дате (опционально)
             category: Фильтр по категории (опционально)
-            include_completed: Включать завершенные дела
+            include_completed: Включать завершённые дела
             limit: Лимит записей
             offset: Смещение
 
@@ -158,6 +190,7 @@ class ReminderService:
         Note:
             Возвращает как личные дела пользователя, так и общие,
             в которых он участвует.
+            Результат сортируется по дате напоминания.
         """
         reminders = await self._repository.get_reminders(
             session=session,
@@ -173,7 +206,7 @@ class ReminderService:
         return [ReminderRepository.format_reminder(r) for r in reminders]
 
     # ============================================================
-    # ПОЛУЧЕНИЕ ПО ID
+    # 1.4. ПОЛУЧЕНИЕ ДЕЛА ПО ID
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -182,7 +215,8 @@ class ReminderService:
         reminder_id: int,
         session: AsyncSession,
     ) -> dict[str, Any] | None:
-        """Получение дела по ID.
+        """
+        Получение дела по ID.
 
         Args:
             reminder_id: ID напоминания
@@ -193,6 +227,7 @@ class ReminderService:
 
         Note:
             Не проверяет права доступа — только получение данных.
+            Используется для детального просмотра дела.
         """
         reminder = await self._repository.get_reminder_by_id(
             session=session,
@@ -205,7 +240,7 @@ class ReminderService:
         return ReminderRepository.format_reminder(reminder)
 
     # ============================================================
-    # ПОИСК ПО КОДОВОМУ СЛОВУ
+    # 1.5. ПОИСК ПО КОДОВОМУ СЛОВУ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -217,14 +252,15 @@ class ReminderService:
         chat_id: int | None = None,
         include_completed: bool = False,
     ) -> list[dict[str, Any]]:
-        """Поиск дел по кодовому слову.
+        """
+        Поиск дел по кодовому слову.
 
         Args:
             user_id: ID пользователя
             code_word: Кодовое слово для поиска
             session: Сессия БД
             chat_id: ID чата для фильтрации (опционально)
-            include_completed: Включать завершенные дела
+            include_completed: Включать завершённые дела
 
         Returns:
             list[dict[str, Any]]: Список найденных напоминаний
@@ -232,6 +268,7 @@ class ReminderService:
         Note:
             Кодовое слово — это уникальный идентификатор,
             который можно использовать для быстрого доступа к делу.
+            Поиск регистронезависимый.
         """
         reminders = await self._repository.find_by_code_word(
             session=session,
@@ -244,7 +281,7 @@ class ReminderService:
         return [ReminderRepository.format_reminder(r) for r in reminders]
 
     # ============================================================
-    # АКТИВНЫЕ НАПОМИНАНИЯ
+    # 1.6. АКТИВНЫЕ НАПОМИНАНИЯ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -255,7 +292,8 @@ class ReminderService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserReminderModel]:
-        """Получение активных напоминаний, время которых наступило.
+        """
+        Получение активных напоминаний, время которых наступило.
 
         Args:
             session: Сессия БД
@@ -268,6 +306,7 @@ class ReminderService:
 
         Note:
             Используется фоновым сервисом для отправки уведомлений.
+            Возвращает напоминания с remind_at <= before_time и is_active=True.
         """
         return await self._repository.get_active_reminders(  # type: ignore[no-any-return]
             session=session,
@@ -277,7 +316,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # ОБНОВЛЕНИЕ СТАТУСА
+    # 1.7. ОБНОВЛЕНИЕ СТАТУСА
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -291,7 +330,8 @@ class ReminderService:
         is_active: bool | None = None,
         remind_at: datetime | None = None,
     ) -> bool:
-        """Обновление статуса напоминания.
+        """
+        Обновление статуса напоминания.
 
         Args:
             reminder_id: ID напоминания
@@ -306,7 +346,7 @@ class ReminderService:
 
         Note:
             Используется после отправки уведомления для обновления
-            счетчика и планирования следующего напоминания.
+            счётчика и планирования следующего напоминания.
         """
         return await self._repository.update_reminder_status(  # type: ignore[no-any-return]
             session=session,
@@ -318,7 +358,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # ДЕАКТИВАЦИЯ
+    # 1.8. ДЕАКТИВАЦИЯ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -327,7 +367,8 @@ class ReminderService:
         reminder_id: int,
         session: AsyncSession,
     ) -> bool:
-        """Деактивация напоминания.
+        """
+        Деактивация напоминания.
 
         Args:
             reminder_id: ID напоминания
@@ -339,6 +380,7 @@ class ReminderService:
         Note:
             Деактивированное напоминание не будет отправлять уведомления.
             Используется при достижении лимита повторений или окончании срока.
+            Отличается от удаления тем, что запись сохраняется.
         """
         return await self._repository.deactivate_reminder(  # type: ignore[no-any-return]
             session=session,
@@ -346,7 +388,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # УДАЛЕНИЕ
+    # 1.9. УДАЛЕНИЕ
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -357,19 +399,21 @@ class ReminderService:
         session: AsyncSession,
         soft: bool = True,
     ) -> bool:
-        """Удаление напоминания.
+        """
+        Удаление напоминания.
 
         Args:
             reminder_id: ID напоминания
             session: Сессия БД
-            soft: Мягкое удаление (пометить как удаленное) или жесткое
+            soft: Мягкое удаление (пометить как удалённое) или жёсткое
 
         Returns:
             bool: Успешно ли удалено
 
         Note:
             При мягком удалении запись сохраняется с флагом FIsDeleted=True.
-            При жестком — запись удаляется из БД полностью.
+            При жёстком — запись удаляется из БД полностью.
+            Мягкое удаление предпочтительно для сохранения истории.
         """
         return await self._repository.delete_reminder(  # type: ignore[no-any-return]
             session=session,
@@ -378,7 +422,7 @@ class ReminderService:
         )
 
     # ============================================================
-    # СТАТИСТИКА
+    # 1.10. СТАТИСТИКА
     # ============================================================
 
     @log_exceptions(app_logger)
@@ -389,7 +433,8 @@ class ReminderService:
         session: AsyncSession,
         period: str = "week",
     ) -> dict[str, Any]:
-        """Получение статистики по делам пользователя.
+        """
+        Получение статистики по делам пользователя.
 
         Args:
             user_id: ID пользователя
@@ -409,6 +454,7 @@ class ReminderService:
         Note:
             Учитывает как личные дела пользователя, так и общие,
             в которых он участвует.
+            Статистика включает только завершённые дела.
         """
         return await self._repository.get_stats(  # type: ignore[no-any-return]
             session=session,
