@@ -4,11 +4,11 @@ from .base import BaseKeyboard
 
 
 class AdminKeyboard:
-    """Клавиатуры для администраторов"""
+    """Клавиатуры для администраторов."""
 
     @staticmethod
     def get_broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура для подтверждения рассылки"""
+        """Клавиатура для подтверждения рассылки."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "✅ Да, отправить", "callback_data": "broadcast_confirm"},
@@ -18,7 +18,7 @@ class AdminKeyboard:
 
     @staticmethod
     def get_delete_confirm_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура для подтверждения удаления"""
+        """Клавиатура для подтверждения удаления."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "✅ Да, удалить", "callback_data": "delete_confirm"},

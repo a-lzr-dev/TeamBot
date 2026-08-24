@@ -9,7 +9,7 @@ from ...logger import api_logger
 
 
 class APILoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware для логирования HTTP запросов и ответов"""
+    """Middleware для логирования HTTP запросов и ответов."""
 
     def __init__(self, app: ASGIApp, component: str = "api") -> None:
         super().__init__(app)

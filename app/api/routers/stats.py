@@ -1,5 +1,4 @@
-"""
-Модуль маршрутов для получения статистики через API.
+"""Модуль маршрутов для получения статистики через API.
 
 Предоставляет API эндпоинты для получения статистики системы:
 - Полная статистика (чаты, пользователи, сообщения, топ-чаты)
@@ -47,8 +46,7 @@ _stats_repo = StatsRepository()
 async def get_full_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение полной статистики системы.
+    """Получение полной статистики системы.
 
     Args:
         session: Асинхронная сессия SQLAlchemy
@@ -96,8 +94,7 @@ async def get_full_stats(
 async def get_chats_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по чатам.
+    """Получение статистики по чатам.
 
     Returns:
         JSONResponse: Статистика по чатам
@@ -142,8 +139,7 @@ async def get_chats_stats(
 async def get_users_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по пользователям.
+    """Получение статистики по пользователям.
 
     Returns:
         JSONResponse: Статистика по пользователям
@@ -188,8 +184,7 @@ async def get_users_stats(
 async def get_messages_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по сообщениям.
+    """Получение статистики по сообщениям.
 
     Returns:
         JSONResponse: Статистика по сообщениям
@@ -234,8 +229,7 @@ async def get_messages_stats(
 async def get_errors_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по ошибкам.
+    """Получение статистики по ошибкам.
 
     Returns:
         JSONResponse: Статистика по ошибкам
@@ -281,8 +275,7 @@ async def get_reminders_stats(
     user_id: int | None = Query(None, description="ID пользователя (опционально, для фильтрации)"),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по напоминаниям.
+    """Получение статистики по напоминаниям.
 
     Args:
         user_id: ID пользователя (опционально, для фильтрации)
@@ -332,8 +325,7 @@ async def get_automation_stats(
     user_id: int | None = Query(None, description="ID пользователя (опционально, для фильтрации)"),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по заявкам на автоматизацию.
+    """Получение статистики по заявкам на автоматизацию.
 
     Args:
         user_id: ID пользователя (опционально, для фильтрации)
@@ -380,8 +372,7 @@ async def get_automation_stats(
 )
 @log_exceptions(api_logger)
 async def get_system_stats() -> JSONResponse:
-    """
-    Получение системной статистики.
+    """Получение системной статистики.
 
     Returns:
         JSONResponse: Системная статистика
@@ -426,8 +417,7 @@ async def get_system_stats() -> JSONResponse:
 async def get_db_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по таблицам БД.
+    """Получение статистики по таблицам БД.
 
     Возвращает количество записей в каждой таблице базы данных main,
     отсортированных по убыванию.
@@ -478,8 +468,7 @@ async def get_db_stats(
 async def get_all_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение всех видов статистики в одном ответе.
+    """Получение всех видов статистики в одном ответе.
 
     Args:
         session: Асинхронная сессия SQLAlchemy

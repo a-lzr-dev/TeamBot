@@ -1,5 +1,4 @@
-"""
-Модуль обработчиков основных команд Telegram бота.
+"""Модуль обработчиков основных команд Telegram бота.
 
 Этот модуль предоставляет обработчики для базовых команд, доступных
 всем пользователям, а также дополнительные утилиты для работы с сообщениями.
@@ -45,8 +44,7 @@ router = Router(name="aiogram_commands")
 @router.message(Command("help"))
 @log_exceptions(bot_logger)
 async def cmd_help(message: Message, state: FSMContext) -> None:
-    """
-    Команда /help — динамическая справка по доступным командам.
+    """Команда /help — динамическая справка по доступным командам.
 
     Анализирует статус пользователя и показывает только те команды,
     которые доступны в текущем контексте.
@@ -153,8 +151,7 @@ async def cmd_help(message: Message, state: FSMContext) -> None:
 @router.message(Command("id"))
 @log_exceptions(bot_logger)
 async def cmd_id(message: Message, state: FSMContext) -> None:
-    """
-    Команда /id — получение ID пользователя и чата.
+    """Команда /id — получение ID пользователя и чата.
 
     Выводит техническую информацию:
         - ID пользователя в Telegram
@@ -204,8 +201,7 @@ async def cmd_id(message: Message, state: FSMContext) -> None:
 @router.message(Command("msg"))
 @log_exceptions(bot_logger)
 async def cmd_msg(message: Message, state: FSMContext) -> None:
-    """
-    Команда /msg — открытие контекстного меню для сообщения по ID.
+    """Команда /msg — открытие контекстного меню для сообщения по ID.
 
     Позволяет выполнять действия с сообщением:
         - Ответить на сообщение

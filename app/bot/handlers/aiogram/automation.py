@@ -1,5 +1,4 @@
-"""
-Модуль обработчиков для автоматизации.
+"""Модуль обработчиков для автоматизации.
 
 Этот модуль предоставляет функциональность автоматизации в Telegram боте:
 - Конвертация DOC/DOCX в PDF
@@ -60,8 +59,7 @@ _temp_data: dict[int, dict[str, Any]] = {}
 
 
 def get_temp_data(user_id: int) -> dict[str, Any]:
-    """
-    Получение временных данных пользователя.
+    """Получение временных данных пользователя.
 
     Args:
         user_id: ID пользователя Telegram
@@ -75,8 +73,7 @@ def get_temp_data(user_id: int) -> dict[str, Any]:
 
 
 def clear_temp_data(user_id: int) -> None:
-    """
-    Очистка временных данных пользователя.
+    """Очистка временных данных пользователя.
 
     Args:
         user_id: ID пользователя Telegram
@@ -90,8 +87,7 @@ def clear_temp_data(user_id: int) -> None:
 @router.message(Command("automation"))
 @log_exceptions(bot_logger)
 async def cmd_automation(message: Message, **_kwargs: Any) -> None:
-    """
-    Команда для вызова меню автоматизации.
+    """Команда для вызова меню автоматизации.
 
     Args:
         message: Сообщение от пользователя
@@ -152,8 +148,7 @@ async def cmd_automation(message: Message, **_kwargs: Any) -> None:
 @router.callback_query(F.data.startswith("automation_"))
 @log_exceptions(bot_logger)
 async def handle_automation_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков автоматизации.
+    """Обработка колбэков автоматизации.
 
     Обрабатывает все колбэки с префиксом "automation_":
     - Навигация по меню
@@ -435,8 +430,7 @@ async def handle_automation_callback(callback: CallbackQuery, state: FSMContext)
 @router.message(AutomationStates.waiting_for_file, F.document)
 @log_exceptions(bot_logger)
 async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
-    """
-    Обработка документа для конвертации.
+    """Обработка документа для конвертации.
 
     Принимает DOC или DOCX файл, проверяет его и сохраняет
     для последующей конвертации.
@@ -582,8 +576,7 @@ async def handle_document_for_convert(message: Message, **_kwargs: Any) -> None:
 @router.message(AutomationStates.waiting_for_file)
 @log_exceptions(bot_logger)
 async def handle_invalid_document(message: Message) -> None:
-    """
-    Обработка невалидного ввода для документа.
+    """Обработка невалидного ввода для документа.
 
     Args:
         message: Сообщение от пользователя
@@ -603,8 +596,7 @@ async def handle_invalid_document(message: Message) -> None:
 @router.message(AutomationStates.waiting_for_request_title)
 @log_exceptions(bot_logger)
 async def handle_request_title(message: Message, state: FSMContext) -> None:
-    """
-    Обработка названия заявки.
+    """Обработка названия заявки.
 
     Args:
         message: Сообщение с названием
@@ -664,8 +656,7 @@ async def handle_request_title(message: Message, state: FSMContext) -> None:
 @router.message(AutomationStates.waiting_for_request_description)
 @log_exceptions(bot_logger)
 async def handle_request_description(message: Message, state: FSMContext) -> None:
-    """
-    Обработка описания заявки.
+    """Обработка описания заявки.
 
     Args:
         message: Сообщение с описанием
@@ -725,8 +716,7 @@ async def handle_request_description(message: Message, state: FSMContext) -> Non
 @router.message(AutomationStates.waiting_for_request_priority)
 @log_exceptions(bot_logger)
 async def handle_request_priority_text(message: Message) -> None:
-    """
-    Обработка текстового ввода приоритета.
+    """Обработка текстового ввода приоритета.
 
     Args:
         message: Сообщение от пользователя
@@ -746,8 +736,7 @@ async def handle_request_priority_text(message: Message) -> None:
 
 
 async def show_automation_menu(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Отображение главного меню автоматизации.
+    """Отображение главного меню автоматизации.
 
     Args:
         callback: CallbackQuery от пользователя

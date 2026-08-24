@@ -4,14 +4,13 @@ from typing import Any
 
 
 class LogHelper:
-    """Помощник для безопасного логирования с минимальным оверхедом"""
+    """Помощник для безопасного логирования с минимальным оверхедом."""
 
     __slots__ = ()
 
     @staticmethod
     def truncate(text: str, max_length: int = 500) -> str:
-        """
-        Обрезание текста до указанной длины с сохранением начала и конца.
+        """Обрезание текста до указанной длины с сохранением начала и конца.
 
         Args:
             text: Текст для обрезания
@@ -22,16 +21,26 @@ class LogHelper:
         """
         if not text:
             return ""
+
         if len(text) <= max_length:
             return text
+
+        # Длина маркера: " [TRUNCATED] ..."
+        marker = " [TRUNCATED] ..."
+        marker_len = len(marker)
+        available_len = max_length - marker_len
+
+        # Если доступной длины нет или она отрицательная, возвращаем просто обрезанный текст
+        if available_len <= 0:
+            return text[:max_length]
+
         # Показываем начало и конец для длинных строк
-        half = max_length // 2
-        return f"{text[:half]}... [TRUNCATED] ...{text[-half:]}"
+        half = available_len // 2
+        return f"{text[:half]}{marker}{text[-half:]}"
 
     @staticmethod
     def truncate_error(error: Exception, max_length: int = 200) -> str:
-        """
-        Обрезание сообщения об ошибке.
+        """Обрезание сообщения об ошибке.
 
         Args:
             error: Ошибка
@@ -44,8 +53,7 @@ class LogHelper:
 
     @staticmethod
     def truncate_json(data: Any, max_length: int = 500, indent: int = 2) -> str:
-        """
-        Преобразование данных в JSON и обрезание до указанной длины.
+        """Преобразование данных в JSON и обрезание до указанной длины.
 
         Args:
             data: Данные для сериализации
@@ -70,8 +78,7 @@ class LogHelper:
         batch_size: int | None = None,
         max_length: int = 2000,
     ) -> None:
-        """
-        Быстрое логирование ошибки пакета (без JSON).
+        """Быстрое логирование ошибки пакета (без JSON).
 
         Args:
             logger: Любой логгер (ExtendedLogger, logging.Logger)
@@ -82,11 +89,15 @@ class LogHelper:
             max_length: Максимальная длина
         """
         error_msg = LogHelper.truncate_error(error, max_length)
-        logger.warning(f"⚠️ {operation} failed for batch: {error_msg}")
+        if hasattr(logger, "warning"):
+            logger.warning(f"⚠️ {operation} failed for table '{table}': {error_msg}")
+        else:
+            logger.warning(f"⚠️ {operation} failed for batch: {error_msg}")
 
         if hasattr(logger, "isEnabledFor") and logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"   Table: {table}")
-            if batch_size is not None:
+            if hasattr(logger, "debug"):
+                logger.debug(f"   Table: {table}")
+            if batch_size is not None and hasattr(logger, "debug"):
                 logger.debug(f"   Batch size: {batch_size}")
 
     @staticmethod
@@ -97,8 +108,7 @@ class LogHelper:
         max_length: int = 500,
         level: str = "debug",
     ) -> None:
-        """
-        Логирование JSON с обрезанием.
+        """Логирование JSON с обрезанием.
 
         Args:
             logger: Любой логгер
@@ -122,8 +132,7 @@ class LogHelper:
         max_length: int = 200,
         level: str = "error",
     ) -> None:
-        """
-        Логирование ошибки с обрезанием сообщения и ошибки.
+        """Логирование ошибки с обрезанием сообщения и ошибки.
 
         Args:
             logger: Любой логгер
@@ -144,8 +153,7 @@ class LogHelper:
         message: str,
         max_length: int = 200,
     ) -> None:
-        """
-        Логирование предупреждения с обрезанием.
+        """Логирование предупреждения с обрезанием.
 
         Args:
             logger: Любой логгер
@@ -153,7 +161,8 @@ class LogHelper:
             max_length: Максимальная длина (по умолчанию 200)
         """
         truncated = LogHelper.truncate(message, max_length)
-        logger.warning(truncated)
+        if hasattr(logger, "warning"):
+            logger.warning(truncated)
 
     @staticmethod
     def log_info(
@@ -161,8 +170,7 @@ class LogHelper:
         message: str,
         max_length: int = 500,
     ) -> None:
-        """
-        Логирование информационного сообщения с обрезанием.
+        """Логирование информационного сообщения с обрезанием.
 
         Args:
             logger: Любой логгер
@@ -170,7 +178,8 @@ class LogHelper:
             max_length: Максимальная длина (по умолчанию 500)
         """
         truncated = LogHelper.truncate(message, max_length)
-        logger.info(truncated)
+        if hasattr(logger, "info"):
+            logger.info(truncated)
 
     @staticmethod
     def log_sql_error(
@@ -181,8 +190,7 @@ class LogHelper:
         error: Exception,
         max_length: int = 1000,
     ) -> None:
-        """
-        Специализированный метод для логирования SQL ошибок с обрезанным SQL.
+        """Специализированный метод для логирования SQL ошибок с обрезанным SQL.
 
         Args:
             logger: Любой логгер
@@ -194,8 +202,11 @@ class LogHelper:
         """
         truncated_sql = LogHelper.truncate(sql, max_length)
         error_msg = LogHelper.truncate_error(error, 200)
-        logger.error(f"❌ {operation} failed for {table}: {error_msg}")
-        logger.error(f"   SQL: {truncated_sql}")
+        if hasattr(logger, "error"):
+            logger.error(f"❌ {operation} failed for {table}: {error_msg}")
+            logger.error(f"   SQL: {truncated_sql}")
+        else:
+            logger.error(f"❌ {operation} failed for {table}: {error_msg}")
 
 
 __all__ = [

@@ -8,7 +8,7 @@ from app.models import ChatMessageModel, ErrorModel
 
 @dataclass
 class ErrorMessageDTO:
-    """DTO для сообщений, связанных с ошибками"""
+    """DTO для сообщений, связанных с ошибками."""
 
     id: int
     chat_id: int
@@ -20,7 +20,7 @@ class ErrorMessageDTO:
 
     @classmethod
     def from_model(cls, message: "ChatMessageModel") -> "ErrorMessageDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=message.FID,
             chat_id=message.FK_Chat,
@@ -34,7 +34,7 @@ class ErrorMessageDTO:
 
 @dataclass
 class ErrorDeleteResult:
-    """Результат удаления сообщений ошибки"""
+    """Результат удаления сообщений ошибки."""
 
     success: bool
     error_id: int
@@ -45,7 +45,7 @@ class ErrorDeleteResult:
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование в словарь."""
         return {
             "success": self.success,
             "error_id": self.error_id,
@@ -59,7 +59,7 @@ class ErrorDeleteResult:
 
 @dataclass
 class ErrorDTO:
-    """DTO для ошибки"""
+    """DTO для ошибки."""
 
     id: int
     error_code: str
@@ -84,7 +84,7 @@ class ErrorDTO:
 
     @classmethod
     def from_model(cls, error: ErrorModel) -> "ErrorDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=error.FID,
             error_code=error.FErrorCode,
@@ -109,7 +109,7 @@ class ErrorDTO:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование в словарь."""
         return {
             "id": self.id,
             "error_code": self.error_code,
@@ -136,7 +136,7 @@ class ErrorDTO:
 
 @dataclass
 class CreateErrorDTO:
-    """DTO для создания ошибки"""
+    """DTO для создания ошибки."""
 
     error_code: str
     error_message: str
@@ -154,7 +154,7 @@ class CreateErrorDTO:
 
 @dataclass
 class ErrorNotificationDTO:
-    """DTO для уведомления об ошибке"""
+    """DTO для уведомления об ошибке."""
 
     id: int
     error_code: str
@@ -170,7 +170,7 @@ class ErrorNotificationDTO:
 
     @classmethod
     def from_model(cls, error: ErrorModel) -> "ErrorNotificationDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=error.FID,
             error_code=error.FErrorCode,
@@ -188,7 +188,7 @@ class ErrorNotificationDTO:
         )
 
     def format_message(self) -> str:
-        """Форматирование сообщения для отправки"""
+        """Форматирование сообщения для отправки."""
         severity_emoji = {
             "critical": "🚨",
             "error": "❌",

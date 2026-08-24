@@ -4,11 +4,11 @@ from .base import BaseKeyboard
 
 
 class AutomationKeyboard:
-    """Клавиатуры для автоматизации"""
+    """Клавиатуры для автоматизации."""
 
     @staticmethod
     def get_main_menu_keyboard() -> InlineKeyboardMarkup:
-        """Главное меню автоматизации"""
+        """Главное меню автоматизации."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "📄 Преобразовать DOC в PDF", "callback_data": "automation_convert"},
@@ -21,7 +21,7 @@ class AutomationKeyboard:
 
     @staticmethod
     def get_priority_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура выбора приоритета"""
+        """Клавиатура выбора приоритета."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "🟢 Низкий", "callback_data": "automation_priority_low"},
@@ -35,7 +35,7 @@ class AutomationKeyboard:
 
     @staticmethod
     def get_convert_confirm_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура подтверждения конвертации"""
+        """Клавиатура подтверждения конвертации."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "✅ Да, конвертировать", "callback_data": "automation_convert_confirm"},
@@ -45,7 +45,7 @@ class AutomationKeyboard:
 
     @staticmethod
     def get_request_confirm_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура подтверждения заявки"""
+        """Клавиатура подтверждения заявки."""
         return BaseKeyboard.get_inline_keyboard(
             [
                 {"text": "✅ Отправить заявку", "callback_data": "automation_request_confirm"},
@@ -56,7 +56,7 @@ class AutomationKeyboard:
 
     @staticmethod
     async def get_back_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура возврата"""
+        """Клавиатура возврата."""
         return BaseKeyboard.get_inline_keyboard(
             [{"text": "🔙 В меню автоматизации", "callback_data": "automation_menu"}]
         )

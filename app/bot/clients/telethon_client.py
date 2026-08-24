@@ -1,5 +1,4 @@
-"""
-Реализация клиента Telegram на основе Telethon.
+"""Реализация клиента Telegram на основе Telethon.
 
 Этот модуль предоставляет обертку над библиотекой Telethon,
 реализующую интерфейс BaseBotClient.
@@ -32,20 +31,15 @@ from .base import BaseBotClient
 
 
 class TelethonClient(BaseBotClient):
-    """
-    Обертка для Telethon клиента.
+    """Обертка для Telethon клиента.
 
-    Реализует интерфейс BaseBotClient для работы с Telegram через
-    библиотеку Telethon. Поддерживает как бот-аккаунты, так и
-    пользовательские аккаунты.
+    Реализует интерфейс BaseBotClient для работы с Telegram через библиотеку Telethon. Поддерживает как бот-аккаунты,
+    так и пользовательские аккаунты.
 
-    Атрибуты:
-        _client (TelegramClient | None): Экземпляр Telethon клиента
-        _is_running (bool): Флаг запуска
-        _initialized (bool): Флаг инициализации
-        _event_handlers (list): Список зарегистрированных обработчиков
-        _reconnect_delay (int): Задержка переподключения в секундах
-        _max_reconnect_delay (int): Максимальная задержка переподключения
+    Атрибуты:     _client (TelegramClient | None): Экземпляр Telethon клиента     _is_running (bool): Флаг запуска
+    _initialized (bool): Флаг инициализации     _event_handlers (list): Список зарегистрированных обработчиков
+    _reconnect_delay (int): Задержка переподключения в секундах     _max_reconnect_delay (int): Максимальная задержка
+    переподключения
     """
 
     def __init__(self) -> None:
@@ -58,8 +52,7 @@ class TelethonClient(BaseBotClient):
         self._max_reconnect_delay = 300
 
     async def initialize(self, is_bot: bool = True) -> None:
-        """
-        Инициализация Telethon клиента.
+        """Инициализация Telethon клиента.
 
         Создает экземпляр TelegramClient с параметрами из настроек.
 
@@ -85,11 +78,9 @@ class TelethonClient(BaseBotClient):
             raise
 
     async def start(self) -> None:
-        """
-        Запуск клиента с автоматическим переподключением.
+        """Запуск клиента с автоматическим переподключением.
 
-        Выполняет подключение к Telegram с обработкой ошибок
-        и автоматическим восстановлением соединения.
+        Выполняет подключение к Telegram с обработкой ошибок и автоматическим восстановлением соединения.
         """
         if not self._client:
             raise RuntimeError("Client not initialized. Call initialize() first.")
@@ -148,8 +139,7 @@ class TelethonClient(BaseBotClient):
         self._event_handlers.clear()
 
     async def is_connected(self) -> bool:
-        """
-        Проверка подключения к Telegram.
+        """Проверка подключения к Telegram.
 
         Returns:
             bool: True если клиент подключен
@@ -162,8 +152,7 @@ class TelethonClient(BaseBotClient):
             return False
 
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса клиента.
+        """Получение статуса клиента.
 
         Returns:
             dict: Информация о состоянии клиента
@@ -198,8 +187,7 @@ class TelethonClient(BaseBotClient):
         }
 
     async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
-        """
-        Отправка сообщения через Telethon.
+        """Отправка сообщения через Telethon.
 
         Поддерживает все параметры Telethon: parse_mode, silent, reply_to, schedule.
 
@@ -280,8 +268,7 @@ class TelethonClient(BaseBotClient):
             }
 
     async def get_me(self) -> dict[str, Any]:
-        """
-        Получение информации о текущем пользователе.
+        """Получение информации о текущем пользователе.
 
         Returns:
             dict: Информация о пользователе
@@ -317,8 +304,7 @@ class TelethonClient(BaseBotClient):
             raise
 
     async def add_event_handler(self, handler_func: Callable, event_type: EventBuilder | None = None) -> None:
-        """
-        Добавление обработчика событий.
+        """Добавление обработчика событий.
 
         Args:
             handler_func: Функция-обработчик
@@ -343,8 +329,7 @@ class TelethonClient(BaseBotClient):
             raise
 
     async def remove_event_handler(self, handler_func: Callable) -> bool:
-        """
-        Удаление обработчика событий.
+        """Удаление обработчика событий.
 
         Args:
             handler_func: Функция-обработчик для удаления
@@ -365,8 +350,7 @@ class TelethonClient(BaseBotClient):
             return False
 
     async def get_dialogs(self, limit: int = 100) -> list[dict[str, Any]]:
-        """
-        Получение списка диалогов.
+        """Получение списка диалогов.
 
         Args:
             limit: Максимальное количество диалогов
@@ -401,8 +385,7 @@ class TelethonClient(BaseBotClient):
         return dialogs
 
     async def health_check(self) -> bool:
-        """
-        Проверка здоровья клиента.
+        """Проверка здоровья клиента.
 
         Returns:
             bool: True если клиент здоров и подключен

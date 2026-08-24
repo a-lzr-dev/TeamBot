@@ -1,5 +1,4 @@
-"""
-Обработчик колбэков для авторизации пользователей.
+"""Обработчик колбэков для авторизации пользователей.
 
 Этот модуль предоставляет обработчики для колбэков, связанных
 с процессом авторизации пользователей в системе.
@@ -22,8 +21,7 @@ from .base import BaseCallbackHandler, CallbackHandler
 
 
 class AuthCallbackHandler(BaseCallbackHandler):
-    """
-    Обработчик колбэков для авторизации пользователей.
+    """Обработчик колбэков для авторизации пользователей.
 
     Обрабатывает:
         - Запрос на авторизацию (кнопка "Авторизоваться")
@@ -40,8 +38,7 @@ class AuthCallbackHandler(BaseCallbackHandler):
         super().__init__(self.PREFIX_AUTH_NEEDED)
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> None:
-        """
-        Основной метод обработки колбэка авторизации.
+        """Основной метод обработки колбэка авторизации.
 
         Определяет тип колбэка и вызывает соответствующий обработчик.
 
@@ -64,8 +61,7 @@ class AuthCallbackHandler(BaseCallbackHandler):
 
     @staticmethod
     async def _handle_auth_needed(callback: CallbackQuery, state: FSMContext, **_kwargs: Any) -> None:
-        """
-        Обработка кнопки 'Авторизоваться'.
+        """Обработка кнопки 'Авторизоваться'.
 
         Перенаправляет пользователя на процесс авторизации,
         вызывая команду /start.

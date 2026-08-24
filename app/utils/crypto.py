@@ -8,7 +8,7 @@ from ..config import settings
 
 
 def get_encryption_key() -> bytes:
-    """Получение ключа шифрования"""
+    """Получение ключа шифрования."""
     secret = getattr(settings, "ENCRYPTION_SECRET", "change_me_in_production_use_strong_key_here")
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -21,7 +21,7 @@ def get_encryption_key() -> bytes:
 
 
 def encrypt_data(data: str) -> str:
-    """Шифрование данных"""
+    """Шифрование данных."""
     if not data:
         return data
 
@@ -35,7 +35,7 @@ def encrypt_data(data: str) -> str:
 
 
 def decrypt_data(encrypted_data: str) -> str:
-    """Дешифрование данных"""
+    """Дешифрование данных."""
     if not encrypted_data:
         return encrypted_data
 

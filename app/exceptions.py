@@ -4,49 +4,49 @@ R = TypeVar("R")
 
 
 class AppError(Exception):
-    """Базовое исключение приложения"""
+    """Базовое исключение приложения."""
 
     pass
 
 
 class DatabaseError(AppError):
-    """Ошибка базы данных"""
+    """Ошибка базы данных."""
 
     pass
 
 
 class TelegramError(AppError):
-    """Ошибка Telegram API"""
+    """Ошибка Telegram API."""
 
     pass
 
 
 class ConfigurationError(AppError):
-    """Ошибка конфигурации"""
+    """Ошибка конфигурации."""
 
     pass
 
 
 class ValidationError(AppError):
-    """Ошибка валидации данных"""
+    """Ошибка валидации данных."""
 
     pass
 
 
 class NotFoundError(AppError):
-    """Объект не найден"""
+    """Объект не найден."""
 
     pass
 
 
 class AutomationError(AppError):
-    """Ошибка автоматизации"""
+    """Ошибка автоматизации."""
 
     pass
 
 
 class ConversionError(AutomationError):
-    """Ошибка конвертации документа"""
+    """Ошибка конвертации документа."""
 
     pass
 

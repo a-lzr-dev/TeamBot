@@ -1,5 +1,4 @@
-"""
-Обработчик списка заказов перевозчика (FK_Type=11).
+"""Обработчик списка заказов перевозчика (FK_Type=11).
 
 Поддерживает:
 - Пагинацию
@@ -33,8 +32,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class CarrierOrdersListHandler(BaseListHandler):
-    """
-    Обработчик списка заказов перевозчика (FK_Type=11).
+    """Обработчик списка заказов перевозчика (FK_Type=11).
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -50,8 +48,7 @@ class CarrierOrdersListHandler(BaseListHandler):
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация обработчика списка заказов перевозчика.
+        """Инициализация обработчика списка заказов перевозчика.
 
         Устанавливает:
         - Префикс callback_data: "carrier_orders"
@@ -70,8 +67,7 @@ class CarrierOrdersListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных заказов перевозчика из БД.
+        """Загрузка данных заказов перевозчика из БД.
 
         Args:
             session: Сессия БД
@@ -145,8 +141,7 @@ class CarrierOrdersListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка заказов перевозчика.
+        """Отображение списка заказов перевозчика.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -343,10 +338,14 @@ class CarrierOrdersListHandler(BaseListHandler):
         # Получение данных из состояния
         state_data = await state.get_data()
         avanpost_user_id = state_data.get("avanpost_user_id") or kwargs.get("avanpost_user_id")
-        parent_item_id = state_data.get("parent_item_id")
+        # parent_item_id = state_data.get("parent_item_id")
         group_id = state_data.get("group_id")
         selected_user_id = state_data.get("selected_user_id")
         selected_user_name = state_data.get("selected_user_name")
+
+        # ВАЖНО: Сохраняем parent_item_id для правильной навигации назад
+        # Если есть parent_item_id - передаем его дальше
+        current_parent_item_id = state_data.get("parent_item_id")
 
         if not avanpost_user_id:
             await bot_manager.send_toast(text="❌ Не удалось определить пользователя.", event=callback)
@@ -358,7 +357,7 @@ class CarrierOrdersListHandler(BaseListHandler):
             selected_user_id=selected_user_id,
             selected_user_name=selected_user_name,
             group_id=group_id,
-            parent_item_id=parent_item_id,
+            parent_item_id=current_parent_item_id,  # Сохраняем родительский ID для навигации
         )
 
         # Переключение состояния на просмотр маршрута
@@ -368,11 +367,13 @@ class CarrierOrdersListHandler(BaseListHandler):
         await state.update_data(
             route_points_page=0,
             route_points_search_query=None,
-            parent_item_id=parent_item_id,
+            parent_item_id=current_parent_item_id,  # Передаем для кнопки "Назад"
             avanpost_user_id=avanpost_user_id,
             group_id=group_id,
             selected_user_id=selected_user_id,
             selected_user_name=selected_user_name,
+            # Сохраняем ID заказа перевозчика для возврата
+            selected_carrier_order_id=item_id,
         )
 
         # Отображение точек маршрута
@@ -385,8 +386,7 @@ class CarrierOrdersListHandler(BaseListHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния:
@@ -411,8 +411,7 @@ class CarrierOrdersListHandler(BaseListHandler):
         state: FSMContext,
         extra_buttons: list[tuple[str, str]] | None = None,
     ) -> Any:
-        """
-        Создание клавиатуры с кнопкой "Назад".
+        """Создание клавиатуры с кнопкой "Назад".
 
         Args:
             state: Состояние FSM (не используется, но сохраняется для единообразия)
@@ -439,8 +438,7 @@ class CarrierOrdersListHandler(BaseListHandler):
 
     @staticmethod
     def _format_order_item(item: dict[str, Any]) -> str:
-        """
-        Форматирование элемента заказа перевозчика с дополнительной информацией.
+        """Форматирование элемента заказа перевозчика с дополнительной информацией.
 
         Отображает:
         - Название заказа
@@ -479,8 +477,7 @@ async def show_carrier_orders_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения списка заказов перевозчика.
+    """Внешняя функция для отображения списка заказов перевозчика.
 
     Используется для вызова из других модулей (например, из actions.py
     при FK_Type=11 или из orders.py при переходе из заказов заказчика).
@@ -544,8 +541,7 @@ async def handle_carrier_orders_back(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(lambda c: c.data.startswith("carrier_orders_"))
 async def handle_carrier_orders_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик всех callback-запросов, начинающихся с "carrier_orders_".
+    """Обработчик всех callback-запросов, начинающихся с "carrier_orders_".
 
     Поддерживает:
     - Навигацию по страницам
@@ -563,8 +559,7 @@ async def handle_carrier_orders_callback(callback: CallbackQuery, state: FSMCont
 # Регистрация обработчика поисковых запросов
 @router.message(CarrierOrderStates.searching_orders)
 async def handle_carrier_orders_search(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме поиска заказов перевозчика.
+    """Обработчик текстовых сообщений в режиме поиска заказов перевозчика.
 
     Args:
         message: Сообщение от пользователя

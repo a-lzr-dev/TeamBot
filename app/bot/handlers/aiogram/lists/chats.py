@@ -1,5 +1,4 @@
-"""
-Обработчик списка чатов пользователя (FK_Type=9).
+"""Обработчик списка чатов пользователя (FK_Type=9).
 
 Поддерживает:
 - Пагинацию
@@ -33,8 +32,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class ChatsListHandler(BaseListHandler):
-    """
-    Обработчик списка чатов пользователя (FK_Type=9).
+    """Обработчик списка чатов пользователя (FK_Type=9).
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -49,8 +47,7 @@ class ChatsListHandler(BaseListHandler):
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация обработчика списка чатов.
+        """Инициализация обработчика списка чатов.
 
         Устанавливает:
         - Префикс callback_data: "chats"
@@ -69,8 +66,7 @@ class ChatsListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных чатов из БД.
+        """Загрузка данных чатов из БД.
 
         Args:
             session: Сессия БД
@@ -142,8 +138,7 @@ class ChatsListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка чатов пользователя.
+        """Отображение списка чатов пользователя.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -353,8 +348,7 @@ class ChatsListHandler(BaseListHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния:
@@ -376,8 +370,7 @@ class ChatsListHandler(BaseListHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:
-        """
-        Создание клавиатуры с кнопкой "Назад".
+        """Создание клавиатуры с кнопкой "Назад".
 
         Args:
             state: Состояние FSM
@@ -408,8 +401,7 @@ class ChatsListHandler(BaseListHandler):
 
     @staticmethod
     def _format_chat_item(item: dict[str, Any]) -> str:
-        """
-        Форматирование элемента чата для отображения.
+        """Форматирование элемента чата для отображения.
 
         Args:
             item: Словарь с данными чата
@@ -436,8 +428,7 @@ async def show_chats_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения списка чатов.
+    """Внешняя функция для отображения списка чатов.
 
     Используется для вызова из других модулей (например, из actions.py
     при FK_Type=9 - Открытие списка чатов).
@@ -455,8 +446,7 @@ async def show_chats_list(
 # Регистрация обработчиков колбэков для чатов
 @router.callback_query(lambda c: c.data.startswith("chats_"))
 async def handle_chats_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик всех callback-запросов, начинающихся с "chats_".
+    """Обработчик всех callback-запросов, начинающихся с "chats_".
 
     Поддерживает:
     - Навигацию по страницам
@@ -474,8 +464,7 @@ async def handle_chats_callback(callback: CallbackQuery, state: FSMContext) -> N
 # Регистрация обработчика поисковых запросов
 @router.message(SubMenuStates.searching_chats)
 async def handle_chats_search(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме поиска чатов.
+    """Обработчик текстовых сообщений в режиме поиска чатов.
 
     Args:
         message: Сообщение от пользователя

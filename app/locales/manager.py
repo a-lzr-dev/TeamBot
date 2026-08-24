@@ -12,7 +12,7 @@ DEFAULT_LANGUAGE = "RU"
 
 
 class LocaleManager:
-    """Менеджер локализации"""
+    """Менеджер локализации."""
 
     _instance: Optional["LocaleManager"] = None
 
@@ -33,7 +33,7 @@ class LocaleManager:
         app_logger.info(f"✅ LocaleManager initialized with languages: {list(SUPPORTED_LANGUAGES.keys())}")
 
     def _load_translations(self) -> None:
-        """Загрузка всех файлов переводов"""
+        """Загрузка всех файлов переводов."""
         if not self._data_dir.exists():
             app_logger.warning(f"⚠️ Data directory not found: {self._data_dir}")
             self._data_dir.mkdir(parents=True, exist_ok=True)
@@ -55,7 +55,7 @@ class LocaleManager:
                 self._translations[lang_code] = {}
 
     def _create_default_translations(self) -> None:
-        """Создание файлов переводов по умолчанию"""
+        """Создание файлов переводов по умолчанию."""
         for lang_code in SUPPORTED_LANGUAGES:
             lang_file = self._data_dir / f"{lang_code}.json"
             try:
@@ -75,9 +75,7 @@ class LocaleManager:
         return translations.get(key)
 
     def get(self, key: str, lang_code: str | None = None, **kwargs: Any) -> str:
-        """
-        Получение перевода с подстановкой параметров
-        """
+        """Получение перевода с подстановкой параметров."""
         if lang_code is None:
             lang_code = DEFAULT_LANGUAGE
 
@@ -112,16 +110,16 @@ class LocaleManager:
 
     @staticmethod
     def get_language_name(lang_code: str) -> str:
-        """Получение названия языка"""
+        """Получение названия языка."""
         return SUPPORTED_LANGUAGES.get(lang_code, lang_code)
 
     @staticmethod
     def get_supported_languages() -> list[str]:
-        """Получение списка поддерживаемых языков"""
+        """Получение списка поддерживаемых языков."""
         return list(SUPPORTED_LANGUAGES.keys())
 
     def reload(self) -> None:
-        """Перезагрузка переводов"""
+        """Перезагрузка переводов."""
         self._translations.clear()
         self._get_translation.cache_clear()
         self._load_translations()

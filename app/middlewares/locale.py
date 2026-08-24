@@ -8,7 +8,7 @@ from ..locales.manager import DEFAULT_LANGUAGE, locale_manager
 
 
 class LocaleMiddleware(BaseMiddleware):
-    """Middleware для определения языка пользователя"""
+    """Middleware для определения языка пользователя."""
 
     def __init__(self, default_language: str = DEFAULT_LANGUAGE):
         self.default_language = default_language
@@ -20,7 +20,7 @@ class LocaleMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Определение языка пользователя"""
+        """Определение языка пользователя."""
         user_lang = self.default_language
 
         if isinstance(event, Message) and event.from_user or isinstance(event, CallbackQuery) and event.from_user:
@@ -34,7 +34,7 @@ class LocaleMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_user_language(user_id: int) -> str:
-        """Получение языка пользователя из кеша"""
+        """Получение языка пользователя из кеша."""
         from ..utils.locale import get_user_language
 
         return get_user_language(user_id)

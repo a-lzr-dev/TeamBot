@@ -4,14 +4,14 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User
 
 
 def get_user(event: TelegramObject) -> User | None:
-    """Получение объекта пользователя из события"""
+    """Получение объекта пользователя из события."""
     if isinstance(event, Message | CallbackQuery) and event.from_user:
         return event.from_user
     return None
 
 
 def get_user_id(event: TelegramObject) -> int | None:
-    """Получение ID пользователя из события"""
+    """Получение ID пользователя из события."""
     user = get_user(event)
     if user is None:
         return None
@@ -20,7 +20,7 @@ def get_user_id(event: TelegramObject) -> int | None:
 
 
 def get_chat_id(event: TelegramObject) -> int | None:
-    """Получение ID чата из события"""
+    """Получение ID чата из события."""
     if isinstance(event, Message) and event.chat:
         chat_id = getattr(event.chat, "id", None)
         if isinstance(chat_id, int):
@@ -35,7 +35,7 @@ def get_chat_id(event: TelegramObject) -> int | None:
 
 
 def get_message_preview(event: Any, max_length: int = 50) -> str | None:
-    """Получение превью сообщения"""
+    """Получение превью сообщения."""
     if not isinstance(event, Message):
         return None
 

@@ -1,5 +1,4 @@
-"""
-Модуль обработчиков Aiogram для действий и меню.
+"""Модуль обработчиков Aiogram для действий и меню.
 
 Этот модуль предоставляет обработчики команд, колбэков и действий
 для работы с меню действий Avanpost.
@@ -60,8 +59,7 @@ BUTTONS_PER_ROW = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 3)
 
 
 def _get_chat_id(event: Message | CallbackQuery) -> int:
-    """
-    Получение ID чата из события.
+    """Получение ID чата из события.
 
     Args:
         event: Сообщение или CallbackQuery
@@ -84,8 +82,7 @@ def _get_chat_id(event: Message | CallbackQuery) -> int:
 @router.message(Command("actions"))
 @log_exceptions(bot_logger)
 async def cmd_actions(message: Message, state: FSMContext) -> None:
-    """
-    Команда для вызова меню действий.
+    """Команда для вызова меню действий.
 
     Открывает меню действий для текущего пользователя или
     для выбранного через /users пользователя.
@@ -117,8 +114,7 @@ async def _cmd_actions_impl(
     session: Any,
     user_id: int,
 ) -> None:
-    """
-    Реализация команды /actions с переданной сессией.
+    """Реализация команды /actions с переданной сессией.
 
     Args:
         message: Сообщение от пользователя
@@ -242,8 +238,7 @@ async def _cmd_actions_impl(
 )
 @log_exceptions(bot_logger)
 async def handle_action_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков действий через универсальный обработчик.
+    """Обработка колбэков действий через универсальный обработчик.
 
     Обрабатывает все колбэки меню действий:
     - action_<id>: Выбор действия
@@ -310,8 +305,7 @@ async def _get_group_id_for_user(
     selected_user_id: int | None,
     session: Any,
 ) -> int | None:
-    """
-    Получение group_id для пользователя.
+    """Получение group_id для пользователя.
 
     Args:
         telegram_user_id: ID пользователя в Telegram
@@ -345,8 +339,7 @@ async def _get_group_id_for_user(
 
 
 async def execute_action(callback: CallbackQuery, action_id: int, state: FSMContext) -> None:
-    """
-    Выполнение действия при выборе конечного пункта меню.
+    """Выполнение действия при выборе конечного пункта меню.
 
     Определяет тип действия по FK_Type и вызывает соответствующий обработчик.
 
@@ -436,8 +429,7 @@ async def _handle_action_by_type(
     bot_manager: Any,
     state: FSMContext,
 ) -> None:
-    """
-    Обработка действия на основе его типа (FK_Type).
+    """Обработка действия на основе его типа (FK_Type).
 
     Группировка по FK_Type:
         1 - Отправка данных на сервер
@@ -524,8 +516,7 @@ async def _handle_open_chat_messages(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие списка переписки (FK_Type=3).
+    """Обработчик: Открытие списка переписки (FK_Type=3).
 
     Открывает список переписки чата на основе выбранного чата.
     Ожидает, что в состоянии есть выбранный чат (selected_chat_id).
@@ -608,8 +599,7 @@ async def _handle_open_route_points(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие маршрута перевозки (FK_Type=4).
+    """Обработчик: Открытие маршрута перевозки (FK_Type=4).
 
     Открывает список точек маршрута для выбранной миссии.
 
@@ -692,8 +682,7 @@ async def _handle_open_contacts(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие списка контактов (FK_Type=6).
+    """Обработчик: Открытие списка контактов (FK_Type=6).
 
     Загружает список контактов пользователя через репозиторий
     и отображает их в виде списка с пагинацией и поиском.
@@ -750,8 +739,7 @@ async def _handle_open_contact_details(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие контактной информации (FK_Type=7).
+    """Обработчик: Открытие контактной информации (FK_Type=7).
 
     Внимание: Этот обработчик вызывается при выборе пункта меню,
     который является действием типа 7. Однако фактически контактная информация
@@ -780,8 +768,7 @@ async def _handle_open_orders(
     state: FSMContext,
     order_type: str = "customer",
 ) -> None:
-    """
-    Обработчик открытия списка заказов.
+    """Обработчик открытия списка заказов.
 
     Args:
         callback: CallbackQuery от пользователя
@@ -851,8 +838,7 @@ async def _handle_open_chats(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие списка чатов (FK_Type=9).
+    """Обработчик: Открытие списка чатов (FK_Type=9).
 
     Args:
         callback: CallbackQuery от пользователя
@@ -906,8 +892,7 @@ async def _handle_open_vehicles(
     action_id: int,
     state: FSMContext,
 ) -> None:
-    """
-    Обработчик: Открытие списка транспорта (FK_Type=10).
+    """Обработчик: Открытие списка транспорта (FK_Type=10).
 
     Args:
         callback: CallbackQuery от пользователя
@@ -957,8 +942,7 @@ async def _handle_send_data(
     callback: CallbackQuery,
     bot_manager: Any,
 ) -> None:
-    """
-    Обработка действий типа "Отправка данных на сервер" (FK_Type=1).
+    """Обработка действий типа "Отправка данных на сервер" (FK_Type=1).
 
     Args:
         scenario_fid: ID сценария
@@ -1001,8 +985,7 @@ async def _handle_send_data(
 @router.callback_query(F.data.startswith("chat_select_"))
 @log_exceptions(bot_logger)
 async def handle_chat_selection(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка выбора чата для просмотра сообщений.
+    """Обработка выбора чата для просмотра сообщений.
 
     Args:
         callback: CallbackQuery от пользователя

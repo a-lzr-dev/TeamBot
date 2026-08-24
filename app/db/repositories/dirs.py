@@ -20,8 +20,7 @@ class DirLanguageRepository:
         language_id: str,
         show_logs: bool = True,
     ) -> AvanpostDirLanguageModel | None:
-        """
-        Получение языка по ID.
+        """Получение языка по ID.
 
         Args:
             session: Сессия БД,
@@ -54,8 +53,7 @@ class DirLanguageRepository:
         session: AsyncSession,
         only_default: bool = False,
     ) -> list[AvanpostDirLanguageModel]:
-        """
-        Получение всех языков.
+        """Получение всех языков.
 
         Args:
             session: Сессия БД
@@ -86,8 +84,7 @@ class DirLanguageRepository:
     async def get_default_language(
         session: AsyncSession,
     ) -> AvanpostDirLanguageModel | None:
-        """
-        Получение языка по умолчанию.
+        """Получение языка по умолчанию.
 
         Args:
             session: Сессия БД
@@ -117,8 +114,7 @@ class DirLanguageRepository:
         session: AsyncSession,
         language_id: str,
     ) -> bool:
-        """
-        Проверка существования языка.
+        """Проверка существования языка.
 
         Args:
             session: Сессия БД
@@ -146,8 +142,7 @@ class DirLanguageRepository:
         language_id: str,
         is_default: bool = False,
     ) -> AvanpostDirLanguageModel:
-        """
-        Создание нового языка.
+        """Создание нового языка.
 
         Args:
             session: Сессия БД
@@ -177,8 +172,7 @@ class DirLanguageRepository:
         language_id: str,
         is_default: bool = False,
     ) -> AvanpostDirLanguageModel:
-        """
-        Создание или обновление языка (UPSERT).
+        """Создание или обновление языка (UPSERT).
 
         Args:
             session: Сессия БД
@@ -222,8 +216,7 @@ class DirLanguageRepository:
         language_id: str = "RU",
         is_default: bool = True,
     ) -> AvanpostDirLanguageModel:
-        """
-        Проверка существования языка и создание при необходимости.
+        """Проверка существования языка и создание при необходимости.
 
         Args:
             session: Сессия БД
@@ -254,8 +247,7 @@ class DirLanguageRepository:
         session: AsyncSession,
         language_id: str,
     ) -> bool:
-        """
-        Удаление языка.
+        """Удаление языка.
 
         Args:
             session: Сессия БД
@@ -286,8 +278,7 @@ class DirLanguageRepository:
     async def get_language_codes(
         session: AsyncSession,
     ) -> list[str]:
-        """
-        Получение списка всех кодов языков.
+        """Получение списка всех кодов языков.
 
         Args:
             session: Сессия БД
@@ -317,8 +308,7 @@ class DirContactGroupRepository:
         session: AsyncSession,
         group_id: int,
     ) -> AvanpostDirContactGroupModel | None:
-        """
-        Получение группы контактов по ID.
+        """Получение группы контактов по ID.
 
         Args:
             session: Сессия БД
@@ -349,8 +339,7 @@ class DirContactGroupRepository:
         session: AsyncSession,
         only_active: bool = True,
     ) -> list[AvanpostDirContactGroupModel]:
-        """
-        Получение всех групп контактов.
+        """Получение всех групп контактов.
 
         Args:
             session: Сессия БД
@@ -381,8 +370,7 @@ class DirContactGroupRepository:
         session: AsyncSession,
         name: str,
     ) -> AvanpostDirContactGroupModel | None:
-        """
-        Получение группы контактов по имени.
+        """Получение группы контактов по имени.
 
         Args:
             session: Сессия БД
@@ -415,8 +403,7 @@ class DirContactGroupRepository:
         name: str,
         order_by: int | None = None,
     ) -> AvanpostDirContactGroupModel:
-        """
-        Создание новой группы контактов.
+        """Создание новой группы контактов.
 
         Args:
             session: Сессия БД
@@ -449,8 +436,7 @@ class DirContactGroupRepository:
         name: str,
         order_by: int | None = None,
     ) -> AvanpostDirContactGroupModel:
-        """
-        Создание или обновление группы контактов (UPSERT).
+        """Создание или обновление группы контактов (UPSERT).
 
         Args:
             session: Сессия БД
@@ -498,8 +484,7 @@ class DirContactGroupRepository:
         name: str,
         order_by: int | None = None,
     ) -> AvanpostDirContactGroupModel:
-        """
-        Проверка существования группы и создание при необходимости.
+        """Проверка существования группы и создание при необходимости.
 
         Args:
             session: Сессия БД
@@ -533,8 +518,7 @@ class DirContactGroupRepository:
         session: AsyncSession,
         group_id: int,
     ) -> bool:
-        """
-        Удаление группы контактов.
+        """Удаление группы контактов.
 
         Args:
             session: Сессия БД
@@ -565,8 +549,7 @@ class DirContactGroupRepository:
     async def get_group_ids(
         session: AsyncSession,
     ) -> list[int]:
-        """
-        Получение списка всех ID групп контактов.
+        """Получение списка всех ID групп контактов.
 
         Args:
             session: Сессия БД
@@ -592,8 +575,7 @@ class DirContactGroupRepository:
         session: AsyncSession,
         group_id: int,
     ) -> bool:
-        """
-        Проверка существования группы контактов.
+        """Проверка существования группы контактов.
 
         Args:
             session: Сессия БД

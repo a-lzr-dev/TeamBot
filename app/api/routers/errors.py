@@ -1,5 +1,4 @@
-"""
-Модуль роутера для управления ошибками и уведомлениями.
+"""Модуль роутера для управления ошибками и уведомлениями.
 
 Этот модуль предоставляет API эндпоинты для:
 - Регистрации внешних ошибок из других систем
@@ -46,11 +45,10 @@ _settings_repo = NotificationSettingsRepository()
 
 
 class ErrorRequest(BaseModel):
-    """
-    Модель запроса для регистрации внешней ошибки.
+    """Модель запроса для регистрации внешней ошибки.
 
-    Используется для приема ошибок из внешних систем.
-    Автоматически отправляет уведомления в Telegram через LogHandlerService.
+    Используется для приема ошибок из внешних систем. Автоматически отправляет уведомления в Telegram через
+    LogHandlerService.
     """
 
     error_code: str = Field(..., description="Код ошибки", min_length=1, max_length=100)
@@ -67,8 +65,7 @@ class ErrorRequest(BaseModel):
 
 
 class ErrorResolveRequest(BaseModel):
-    """
-    Модель запроса для решения ошибки.
+    """Модель запроса для решения ошибки.
 
     Используется для проверки исчезновения ошибки и ее решения.
     """
@@ -78,8 +75,7 @@ class ErrorResolveRequest(BaseModel):
 
 
 class ErrorFilterRequest(BaseModel):
-    """
-    Модель запроса для создания фильтра ошибок в чате.
+    """Модель запроса для создания фильтра ошибок в чате.
 
     Используется для настройки фильтрации сообщений об ошибках в чатах.
     """
@@ -95,8 +91,7 @@ class ErrorFilterRequest(BaseModel):
 
 
 class ChatNotificationSettingsRequest(BaseModel):
-    """
-    Модель запроса для настройки уведомлений в чате.
+    """Модель запроса для настройки уведомлений в чате.
 
     Управляет поведением уведомлений в конкретном чате.
     """
@@ -133,8 +128,7 @@ async def register_external_error(
     request: ErrorRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Регистрация внешней ошибки в системе.
+    """Регистрация внешней ошибки в системе.
 
     Принимает ошибку из внешней системы, сохраняет в базу данных
     и отправляет уведомление в Telegram через LogHandlerService.
@@ -208,8 +202,7 @@ async def resolve_error(
     request: ErrorResolveRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Решение ошибки с проверкой ее исчезновения.
+    """Решение ошибки с проверкой ее исчезновения.
 
     Выполняет проверку через указанную хранимую процедуру
     и отмечает ошибку как решенную в случае успеха.
@@ -261,8 +254,7 @@ async def reopen_error(
     error_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Переоткрытие ранее решенной ошибки.
+    """Переоткрытие ранее решенной ошибки.
 
     Отменяет статус "решено" и возвращает ошибку в активное состояние.
 
@@ -312,8 +304,7 @@ async def get_error_stats(
     category: ErrorCategory | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по ошибкам.
+    """Получение статистики по ошибкам.
 
     Возвращает агрегированную статистику с группировкой по:
     - Категориям ошибок
@@ -357,8 +348,7 @@ async def get_user_stats(
     user_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики пользователя по решению ошибок.
+    """Получение статистики пользователя по решению ошибок.
 
     Возвращает:
     - Общее количество решенных ошибок
@@ -397,8 +387,7 @@ async def update_notification_settings(
     request: ChatNotificationSettingsRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Обновление настроек уведомлений для конкретного чата.
+    """Обновление настроек уведомлений для конкретного чата.
 
     Позволяет настроить:
     - Режим тишины
@@ -500,8 +489,7 @@ async def get_notification_settings(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение текущих настроек уведомлений для чата.
+    """Получение текущих настроек уведомлений для чата.
 
     Args:
         chat_id: ID чата
@@ -566,8 +554,7 @@ async def generate_report(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Генерация отчета об ошибках для чата.
+    """Генерация отчета об ошибках для чата.
 
     Создает отчет, содержащий:
     - Активные ошибки

@@ -1,5 +1,5 @@
-"""
-Базовый класс для всех обработчиков списков.
+"""Базовый класс для всех обработчиков списков.
+
 Обеспечивает единообразное отображение пагинации.
 """
 
@@ -14,8 +14,7 @@ from .....models import MessageActionType, MessageType
 
 
 class BaseListHandler(GenericListCallbackHandler):
-    """
-    Базовый обработчик списков с унифицированной пагинацией.
+    """Базовый обработчик списков с унифицированной пагинацией.
 
     Все обработчики списков должны наследоваться от этого класса.
     Предоставляет:
@@ -25,8 +24,7 @@ class BaseListHandler(GenericListCallbackHandler):
     """
 
     def __init__(self, prefix: str, list_type: str, page_size: int = 10):
-        """
-        Инициализация базового обработчика.
+        """Инициализация базового обработчика.
 
         Args:
             prefix: Префикс для callback_data
@@ -44,8 +42,7 @@ class BaseListHandler(GenericListCallbackHandler):
         total_pages: int,
         search_query: str | None = None,
     ) -> str:
-        """
-        Унифицированное форматирование заголовка списка.
+        """Унифицированное форматирование заголовка списка.
 
         Args:
             title: Заголовок списка
@@ -73,8 +70,7 @@ class BaseListHandler(GenericListCallbackHandler):
 
     @staticmethod
     def should_show_pagination(total_pages: int) -> bool:
-        """
-        Проверка, нужно ли показывать пагинацию.
+        """Проверка, нужно ли показывать пагинацию.
 
         Args:
             total_pages: Всего страниц
@@ -92,8 +88,7 @@ class BaseListHandler(GenericListCallbackHandler):
         keyboard: Any,
         cleanup: bool = True,
     ) -> None:
-        """
-        Унифицированная отправка сообщения со списком.
+        """Унифицированная отправка сообщения со списком.
 
         Args:
             event: Событие (Message или CallbackQuery)

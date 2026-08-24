@@ -1,5 +1,4 @@
-"""
-Базовый модуль для обработчиков колбэков Telegram.
+"""Базовый модуль для обработчиков колбэков Telegram.
 
 Этот модуль предоставляет базовые классы и утилиты для создания
 обработчиков колбэков в Telegram боте.
@@ -25,19 +24,15 @@ from ...bot.dependencies import get_bot_manager
 
 
 class BaseCallbackHandler(ABC):
-    """
-    Базовый абстрактный класс для обработчиков колбэков.
+    """Базовый абстрактный класс для обработчиков колбэков.
 
-    Предоставляет основную структуру для создания обработчиков
-    с поддержкой префиксов и формированием callback_data.
+    Предоставляет основную структуру для создания обработчиков с поддержкой префиксов и формированием callback_data.
 
-    Атрибуты:
-        prefix (str): Префикс для идентификации колбэков
+    Атрибуты:     prefix (str): Префикс для идентификации колбэков
     """
 
     def __init__(self, prefix: str) -> None:
-        """
-        Инициализация обработчика.
+        """Инициализация обработчика.
 
         Args:
             prefix: Префикс для идентификации колбэков
@@ -46,8 +41,7 @@ class BaseCallbackHandler(ABC):
 
     @abstractmethod
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """
-        Абстрактный метод обработки колбэка.
+        """Абстрактный метод обработки колбэка.
 
         Должен быть реализован в дочерних классах.
 
@@ -62,8 +56,7 @@ class BaseCallbackHandler(ABC):
         pass
 
     def get_callback_data(self, *args: Any, **kwargs: Any) -> str:
-        """
-        Формирование callback_data с префиксом и параметрами.
+        """Формирование callback_data с префиксом и параметрами.
 
         Собирает строку callback_data в формате:
         prefix_arg0_arg1_key1_value1_key2_value2
@@ -88,8 +81,7 @@ class BaseCallbackHandler(ABC):
 
     @staticmethod
     def parse_callback_data(callback_data: str, prefix: str) -> dict[str, Any]:
-        """
-        Парсинг callback_data в словарь.
+        """Парсинг callback_data в словарь.
 
         Извлекает параметры из строки callback_data.
 
@@ -119,8 +111,7 @@ class BaseCallbackHandler(ABC):
 
 
 class CallbackHandler:
-    """
-    Утилитный класс для работы с колбэками.
+    """Утилитный класс для работы с колбэками.
 
     Предоставляет статические методы для:
     - Отправки ответов на колбэки
@@ -130,8 +121,7 @@ class CallbackHandler:
 
     @staticmethod
     async def answer(callback: CallbackQuery, text: str | None = None, show_alert: bool = False) -> None:
-        """
-        Ответ на колбэк через Toast уведомление.
+        """Ответ на колбэк через Toast уведомление.
 
         Отправляет уведомление пользователю о результате обработки колбэка.
 
@@ -145,8 +135,7 @@ class CallbackHandler:
 
     @staticmethod
     def parse_callback(callback_data: str, prefix: str) -> dict[str, Any]:
-        """
-        Парсинг callback_data в словарь.
+        """Парсинг callback_data в словарь.
 
         Альтернативный метод парсинга с упрощенной логикой.
 
@@ -181,8 +170,7 @@ class CallbackHandler:
 
     @staticmethod
     def is_callback_for_prefix(callback_data: str, prefix: str) -> bool:
-        """
-        Проверка, принадлежит ли колбэк указанному префиксу.
+        """Проверка, принадлежит ли колбэк указанному префиксу.
 
         Args:
             callback_data: Строка callback_data

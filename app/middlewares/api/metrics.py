@@ -8,7 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
-    """Middleware для сбора метрик запросов"""
+    """Middleware для сбора метрик запросов."""
 
     def __init__(self, app: Any):
         super().__init__(app)
@@ -49,7 +49,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             raise
 
     def get_metrics(self) -> dict[str, dict[str, int] | dict[str, dict[str, float | int]]]:
-        """Получение собранных метрик"""
+        """Получение собранных метрик."""
         metrics: dict[str, dict[str, int] | dict[str, dict[str, float | int]]] = {
             "requests": dict(self.request_count),
             "errors": dict(self.error_count),
@@ -68,7 +68,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         return metrics
 
     def reset_metrics(self) -> None:
-        """Сброс метрик"""
+        """Сброс метрик."""
         self.request_count.clear()
         self.error_count.clear()
         self.response_times.clear()

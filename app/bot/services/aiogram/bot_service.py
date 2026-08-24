@@ -19,7 +19,7 @@ from ...clients import AiogramClient
 
 
 class AiogramBotService(BaseService):
-    """Сервис для управления ботом"""
+    """Сервис для управления ботом."""
 
     _instance: Optional["AiogramBotService"] = None
     _client: AiogramClient | None
@@ -27,7 +27,7 @@ class AiogramBotService(BaseService):
     _initialized: bool
 
     def __new__(cls, aiogram_client: AiogramClient | None = None) -> "AiogramBotService":
-        """Создание или получение единственного экземпляра сервиса"""
+        """Создание или получение единственного экземпляра сервиса."""
         if cls._instance is None:
             if aiogram_client is None:
                 raise ValueError("AiogramClient required for first initialization")
@@ -39,7 +39,7 @@ class AiogramBotService(BaseService):
         return cls._instance
 
     def __init__(self, aiogram_client: AiogramClient | None = None) -> None:
-        """Инициализация сервиса"""
+        """Инициализация сервиса."""
         # Пропуск если уже инициализирован
         if hasattr(self, "_initialized") and self._initialized:
             return
@@ -70,8 +70,7 @@ class AiogramBotService(BaseService):
 
     @log_exceptions(bot_logger)
     async def set_commands(self, commands: list[dict[str, str]], scope: str | None = None) -> bool:
-        """
-        Установка команд бота.
+        """Установка команд бота.
 
         Args:
             commands: Список команд [{"command": "/start", "description": "Start"}]
@@ -103,7 +102,7 @@ class AiogramBotService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_me(self) -> dict[str, Any]:
-        """Получение информации о боте"""
+        """Получение информации о боте."""
         if not self._initialized:
             await self.initialize()
 
@@ -128,7 +127,7 @@ class AiogramBotService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_chat_member_count(self, chat_id: int) -> int | None:
-        """Получение количества участников чата"""
+        """Получение количества участников чата."""
         if not self._initialized:
             await self.initialize()
 
@@ -144,7 +143,7 @@ class AiogramBotService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_chat_member(self, chat_id: int, user_id: int) -> dict[str, Any]:
-        """Получение информации об участнике чата"""
+        """Получение информации об участнике чата."""
         if not self._initialized:
             await self.initialize()
 
@@ -242,15 +241,15 @@ class AiogramBotService(BaseService):
     # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ДЛЯ ПРОВЕРКИ СТАТУСА ====================
 
     def is_initialized(self) -> bool:
-        """Проверка, инициализирован ли сервис"""
+        """Проверка, инициализирован ли сервис."""
         return self._initialized
 
     def is_available(self) -> bool:
-        """Проверка, доступен ли бот"""
+        """Проверка, доступен ли бот."""
         return self._bot is not None
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса"""
+        """Получение статуса сервиса."""
         return {
             "initialized": self._initialized,
             "bot_available": bool(self._bot),
@@ -259,7 +258,7 @@ class AiogramBotService(BaseService):
         }
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса"""
+        """Проверка здоровья сервиса."""
         if not self._initialized or not self._bot:
             return False
 
@@ -271,11 +270,11 @@ class AiogramBotService(BaseService):
 
     @classmethod
     def reset_instance(cls) -> None:
-        """Сброс синглтон-экземпляра"""
+        """Сброс синглтон-экземпляра."""
         cls._instance = None
 
     def __repr__(self) -> str:
-        """Строковое представление сервиса"""
+        """Строковое представление сервиса."""
         status = "initialized" if self._initialized else "not initialized"
         bot_status = "available" if self._bot else "not available"
         return f"<AiogramBotService status={status}, bot={bot_status}>"

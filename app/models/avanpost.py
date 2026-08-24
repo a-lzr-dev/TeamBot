@@ -1,5 +1,4 @@
-"""
-Модели данных Avanpost для синхронизации с внешней системой.
+"""Модели данных Avanpost для синхронизации с внешней системой.
 
 Отвечают за:
 1. Хранение справочных данных (языки, группы, типы сообщений и т.д.)
@@ -181,7 +180,7 @@ class AvanpostDirUserContactRoleTypeModel(BaseModel):
 
 
 class AvanpostDirUserLinkContactMsgControlProcessTypeModel(BaseModel):
-    """Статусы обработки контрольных сообщений"""
+    """Статусы обработки контрольных сообщений."""
 
     __tablename__ = "TAvanpostDirUsersLinksContactsMsgsControlsProcessTypes"
     __table_args__ = (PrimaryKeyConstraint("FID", name="PK_Avp_UsersLinksContactsMsgsCtrlProcTypes"),)
@@ -234,7 +233,7 @@ class AvanpostDirScenarioActionTypeModel(BaseModel):
 
 
 class AvanpostDirScenarioActionValueTypeModel(BaseModel):
-    """Типы значений элементов сценариев действий"""
+    """Типы значений элементов сценариев действий."""
 
     __tablename__ = "TAvanpostDirScenariosActionsValuesTypes"
     __table_args__ = (PrimaryKeyConstraint("FID", name="PK_AvanpostDirScenariosActionsValuesTypes"),)
@@ -388,7 +387,7 @@ class AvanpostDirScenarioInstructionFileModel(BaseModel):
 
 
 class AvanpostDirScenarioInstructionLangModel(BaseModel):
-    """Переводы файлов инструкций сценариев действий"""
+    """Переводы файлов инструкций сценариев действий."""
 
     __tablename__ = "TAvanpostDirScenariosInstructionsLangs"
     __table_args__ = (
@@ -553,7 +552,7 @@ class AvanpostDirScenarioGroupItemModel(BaseModel):
         return f"<AvanpostDirScenarioGroupItemModel(id={self.FID}, name={self.get_name()})>"
 
     def get_name(self, lang_code: str = "RU") -> str:
-        """Получение названия на указанном языке"""
+        """Получение названия на указанном языке."""
         for lang in self.langs:
             if lang.FK_Lang == lang_code:
                 return lang.FName or f"Item {self.FID}"
@@ -566,16 +565,16 @@ class AvanpostDirScenarioGroupItemModel(BaseModel):
 
     @property
     def has_subitems(self) -> bool:
-        """Есть ли дочерние элементы"""
+        """Есть ли дочерние элементы."""
         return bool(self.child_items)
 
     @property
     def is_folder(self) -> bool:
-        """Является ли папкой"""
+        """Является ли папкой."""
         return bool(self.child_items)
 
     def to_dict(self, include_children: bool = False) -> dict[str, Any]:
-        """Преобразование в словарь с поддержкой вложенности"""
+        """Преобразование в словарь с поддержкой вложенности."""
         data: dict[str, Any] = {
             "id": self.FID,
             "name": self.get_name(),
@@ -592,7 +591,7 @@ class AvanpostDirScenarioGroupItemModel(BaseModel):
         return data
 
     def to_telegram_dict(self) -> dict[str, Any]:
-        """Преобразование для Telegram бота"""
+        """Преобразование для Telegram бота."""
         return {
             "id": self.FID,
             "name": self.get_name(),
@@ -633,7 +632,7 @@ class AvanpostDirScenarioGroupItemLangModel(BaseModel):
 
 
 class AvanpostDirScenarioGroupItemLinkScenarioModel(BaseModel):
-    """Связь меню действий со сценариями действий"""
+    """Связь меню действий со сценариями действий."""
 
     __tablename__ = "TAvanpostDirScenariosGroupsItemsLinksScenarios"
     __table_args__ = (
@@ -666,7 +665,7 @@ class AvanpostDirScenarioGroupItemLinkScenarioModel(BaseModel):
 
 
 class AvanpostDirScenarioGroupItemLinkScenarioGroupModel(BaseModel):
-    """Связь меню действий с группами подменю"""
+    """Связь меню действий с группами подменю."""
 
     __tablename__ = "TAvanpostDirScenariosGroupsItemsLinksScenariosGroups"
     __table_args__ = (
@@ -699,7 +698,7 @@ class AvanpostDirScenarioGroupItemLinkScenarioGroupModel(BaseModel):
 
 
 class AvanpostDirScenarioGroupItemLinkScenarioInstructionModel(BaseModel):
-    """Связь меню действий с инструкцией"""
+    """Связь меню действий с инструкцией."""
 
     __tablename__ = "TAvanpostDirScenariosGroupsItemsLinksScenariosInstructions"
     __table_args__ = (
@@ -856,19 +855,19 @@ class AvanpostUserModel(BaseModel):
 
     @property
     def fk_user(self) -> int | None:
-        """Получение FK_Link из связанной модели"""
+        """Получение FK_Link из связанной модели."""
         return self.user_link.FK_Link if self.user_link else None
 
     @fk_user.setter
     def fk_user(self, value: int | None) -> None:
-        """Установка FK_Link в связанную модель"""
+        """Установка FK_Link в связанную модель."""
         if not self.user_link:
             self.user_link = AvanpostUserLinkModel(FK_Parent=self.FID)
         self.user_link.FK_Link = value
 
 
 class AvanpostUserLinkModel(BaseModel):
-    """Связь пользователя Avanpost с Telegram пользователем"""
+    """Связь пользователя Avanpost с Telegram пользователем."""
 
     __tablename__ = "TAvanpostUsersLinks"
     __table_args__ = (
@@ -1275,7 +1274,7 @@ class AvanpostUserLinkChatContactMsgModel(BaseModel):
 
 
 class AvanpostUserLinkContactMsgControlModel(BaseModel):
-    """Связь пользователей и контрольных сообщений контактов"""
+    """Связь пользователей и контрольных сообщений контактов."""
 
     __tablename__ = "TAvanpostUsersLinksContactsMsgsControls"
     __table_args__ = (

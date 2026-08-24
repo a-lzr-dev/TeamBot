@@ -1,4 +1,4 @@
-# app/services/message_lifetime_service.py
+"""Сервис для управления временем жизни сообщений."""
 
 import asyncio
 import contextlib
@@ -15,7 +15,7 @@ _message_repo = MessageRepository()
 
 
 class MessageLifetimeService:
-    """Сервис для управления временем жизни сообщений"""
+    """Сервис для управления временем жизни сообщений."""
 
     def __init__(self) -> None:
         self._is_running = False

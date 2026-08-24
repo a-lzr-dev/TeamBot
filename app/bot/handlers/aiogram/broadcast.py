@@ -1,5 +1,4 @@
-"""
-Модуль обработчиков для управления массовыми рассылками (Broadcast).
+"""Модуль обработчиков для управления массовыми рассылками (Broadcast).
 
 Этот модуль предоставляет полный функционал для работы с рассылками в Telegram боте:
 
@@ -100,8 +99,7 @@ async def _broadcast_progress(current: int, total: int) -> None:
 
 
 async def _show_no_broadcasts_message(event: Message | CallbackQuery, state: FSMContext) -> None:
-    """
-    Показать сообщение "Нет активных рассылок для отмены" с кнопкой "Отмена".
+    """Показать сообщение "Нет активных рассылок для отмены" с кнопкой "Отмена".
 
     Работает как с Message, так и с CallbackQuery.
     """
@@ -135,8 +133,7 @@ async def _show_no_broadcasts_message(event: Message | CallbackQuery, state: FSM
 
 
 async def show_broadcast_menu(event: Message | CallbackQuery) -> None:
-    """
-    Отображение главного меню управления рассылками.
+    """Отображение главного меню управления рассылками.
 
     Работает как с Message (команда /bc), так и с CallbackQuery (кнопка "Назад").
 
@@ -237,11 +234,10 @@ async def cmd_bc_send(message: Message, state: FSMContext) -> None:
 @router.message(BroadcastStates.waiting_for_text)
 @log_exceptions(bot_logger)
 async def broadcast_get_text(message: Message, state: FSMContext) -> None:
-    """
-    Получение текста для рассылки.
+    """Получение текста для рассылки.
 
-    Ожидает текстовое сообщение от пользователя, проверяет его,
-    подсчитывает количество чатов и переходит к подтверждению.
+    Ожидает текстовое сообщение от пользователя, проверяет его, подсчитывает количество чатов и переходит к
+    подтверждению.
     """
     bot_manager = get_bot_manager()
 
@@ -322,11 +318,9 @@ async def broadcast_get_text(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "bc_confirm")
 @log_exceptions(bot_logger)
 async def bc_confirm_send(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Подтверждение отправки рассылки.
+    """Подтверждение отправки рассылки.
 
-    Создает запись в БД, выполняет рассылку, сохраняет связи
-    и показывает результат.
+    Создает запись в БД, выполняет рассылку, сохраняет связи и показывает результат.
     """
     bot_manager = get_bot_manager()
     await callback.answer()

@@ -1,5 +1,4 @@
-"""
-Сервис синхронизации данных Avanpost.
+"""Сервис синхронизации данных Avanpost.
 
 Отвечает за:
 1. Синхронизацию базовых данных (справочники)
@@ -31,8 +30,7 @@ ModelType = TypeVar("ModelType")
 
 @dataclass
 class SyncStatistics:
-    """
-    Статистика синхронизации.
+    """Статистика синхронизации.
 
     Поля отчета:
         - Recv:         Общее количество записей, полученных от Avanpost
@@ -182,8 +180,7 @@ class SyncStatistics:
     # ==================== ДОБАВЛЕНИЕ СТАТИСТИКИ ====================
 
     def add_received(self, table_name: str, upsert_count: int = 0, delete_count: int = 0) -> None:
-        """
-        Добавление полученных записей.
+        """Добавление полученных записей.
 
         Args:
             table_name: Имя таблицы
@@ -238,8 +235,7 @@ class SyncStatistics:
             self.table_stats[table_name]["unchanged_delete"] += count
 
     def add_error(self, table_name: str, error: str, error_count: int = 1) -> None:
-        """
-        Добавление ошибки для таблицы.
+        """Добавление ошибки для таблицы.
 
         Args:
             table_name: Имя таблицы
@@ -337,8 +333,7 @@ class SyncStatistics:
     # ==================== ВЫВОД ОТЧЕТА ====================
 
     def print_report(self, title: str = "Sync Report", force: bool = False) -> None:
-        """
-        Вывод отчета в консоль.
+        """Вывод отчета в консоль.
 
         Args:
             title: Заголовок отчета
@@ -544,8 +539,7 @@ class SyncStatistics:
 
 
 class AvanpostSyncService:
-    """
-    Сервис синхронизации данных Avanpost.
+    """Сервис синхронизации данных Avanpost.
 
     Группы методов:
     1. Инициализация и настройка
@@ -604,8 +598,7 @@ class AvanpostSyncService:
     # ==================== 1. ИНИЦИАЛИЗАЦИЯ ====================
 
     async def initialize(self, session: AsyncSession | None = None) -> None:
-        """
-        Инициализация сервиса.
+        """Инициализация сервиса.
 
         Загружает кеш типов данных из БД.
 
@@ -628,8 +621,7 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_model_by_data_type(data_type_id: int) -> Any:
-        """
-        Получение модели SQLAlchemy по типу данных.
+        """Получение модели SQLAlchemy по типу данных.
 
         Args:
             data_type_id: ID типа данных
@@ -641,8 +633,7 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_table_name(data_type_id: int) -> str | None:
-        """
-        Получение имени таблицы по типу данных.
+        """Получение имени таблицы по типу данных.
 
         Args:
             data_type_id: ID типа данных
@@ -653,8 +644,7 @@ class AvanpostSyncService:
         return get_avanpost_table_name(data_type_id)
 
     def _get_model_columns(self, model: Any, include_all: bool = True) -> set[str]:
-        """
-        Получение списка колонок модели с кешированием.
+        """Получение списка колонок модели с кешированием.
 
         Args:
             model: Модель SQLAlchemy
@@ -680,8 +670,7 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_pk_columns(model: Any) -> list[str]:
-        """
-        Получение списка колонок первичного ключа.
+        """Получение списка колонок первичного ключа.
 
         Args:
             model: Модель SQLAlchemy
@@ -693,8 +682,7 @@ class AvanpostSyncService:
 
     @staticmethod
     def _get_required_columns(model: Any) -> list[str]:
-        """
-        Получение списка NOT NULL колонок.
+        """Получение списка NOT NULL колонок.
 
         Args:
             model: Модель SQLAlchemy
@@ -710,8 +698,7 @@ class AvanpostSyncService:
         user_id: int | None = None,
         show_logs: bool = True,
     ) -> dict[int, datetime]:
-        """
-        Получение времени синхронизации для списка типов данных.
+        """Получение времени синхронизации для списка типов данных.
 
         Args:
             data_types: Список ID типов данных
@@ -721,6 +708,7 @@ class AvanpostSyncService:
         Returns:
             dict[int, datetime]: Словарь {data_type_id: sync_time}
         """
+
         async with db_manager.get_session(show_logs=show_logs) as session:
             if user_id is None:
                 return await SystemRepository.get_sync_times(session, data_types, show_logs=show_logs)  # type: ignore[no-any-return]
@@ -733,8 +721,7 @@ class AvanpostSyncService:
         user_id: int | None = None,
         show_logs: bool = True,
     ) -> None:
-        """
-        Обновление времени синхронизации для типов данных.
+        """Обновление времени синхронизации для типов данных.
 
         Args:
             sync_times: Словарь {data_type_id: sync_time}
@@ -753,8 +740,7 @@ class AvanpostSyncService:
     # ==================== 3. СИНХРОНИЗАЦИЯ БАЗОВЫХ ДАННЫХ ====================
 
     async def sync_base_data(self, force: bool = False, show_logs: bool = True) -> SyncStatistics:
-        """
-        Синхронизация базовых данных (справочники).
+        """Синхронизация базовых данных (справочники).
 
         Выполняется синхронно, блокирует выполнение до завершения.
 
@@ -864,8 +850,7 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """
-        Обработка полученных данных для базовой синхронизации.
+        """Обработка полученных данных для базовой синхронизации.
 
         Args:
             all_data_items: Список элементов данных
@@ -954,6 +939,7 @@ class AvanpostSyncService:
         show_logs: bool = True,
     ) -> None:
         """Обработка DELETE записей."""
+
         async with db_manager.get_session() as session:
             for table_name in delete_order:
                 records = delete_records_by_table[table_name]
@@ -1021,6 +1007,7 @@ class AvanpostSyncService:
         show_logs: bool = True,
     ) -> None:
         """Обработка UPSERT записей."""
+
         async with db_manager.get_session() as session:
             for table_name in upsert_order:
                 records = upsert_records_by_table[table_name]
@@ -1123,8 +1110,7 @@ class AvanpostSyncService:
         suppress_report: bool = True,
         show_logs: bool = True,
     ) -> SyncStatistics:
-        """
-        Синхронизация данных пользователя.
+        """Синхронизация данных пользователя.
 
         Args:
             user_id: ID пользователя в Avanpost
@@ -1136,7 +1122,6 @@ class AvanpostSyncService:
         Returns:
             SyncStatistics: Статистика синхронизации
         """
-
         stats = SyncStatistics()
         stats.start()
         data_types = self._user_data_types_by_mode.get(mode, self.user_data_base_types)
@@ -1307,8 +1292,7 @@ class AvanpostSyncService:
         stats: SyncStatistics,
         show_logs: bool = True,
     ) -> None:
-        """
-        Обновление времени синхронизации для пользователя.
+        """Обновление времени синхронизации для пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1378,8 +1362,7 @@ class AvanpostSyncService:
         user_ids: list[int] | None = None,
         show_logs: bool = True,
     ) -> dict[str, Any]:
-        """
-        Синхронизация всех пользователей или указанных пользователей.
+        """Синхронизация всех пользователей или указанных пользователей.
 
         Args:
             force: Принудительная синхронизация
@@ -1490,8 +1473,7 @@ class AvanpostSyncService:
     # ==================== 6. ПОЛНАЯ СИНХРОНИЗАЦИЯ ====================
 
     async def sync_all(self, force: bool = False) -> dict[str, Any]:
-        """
-        Полная синхронизация всех данных (базовые + пользовательские).
+        """Полная синхронизация всех данных (базовые + пользовательские).
 
         Args:
             force: Принудительная синхронизация
@@ -1548,8 +1530,7 @@ class AvanpostSyncService:
         app_logger.debug("🧹 FK cache cleared")
 
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса сервиса.
+        """Получение статуса сервиса.
 
         Returns:
             dict: Статус сервиса
@@ -1564,8 +1545,7 @@ class AvanpostSyncService:
         }
 
     async def health_check(self) -> bool:
-        """
-        Проверка здоровья сервиса.
+        """Проверка здоровья сервиса.
 
         Returns:
             bool: True если сервис здоров

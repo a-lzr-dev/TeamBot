@@ -3,6 +3,7 @@
 # ============================================================
 # Запуск: docker-compose up -d
 # Остановка: docker-compose down
+# Выполнение миграций: docker-compose run --rm app-migrate
 # ============================================================
 
 services:
@@ -49,10 +50,15 @@ services:
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:?set ENCRYPTION_SECRET}
       LOG_DIR: /app/logs
       AUTOMATION_TEMP_DIR: /app/temp/automation
+      # Alembic (для миграций)
+      ALEMBIC_CONFIG: /app/alembic.ini
     volumes:
       - ./logs:/app/logs
       - ./temp:/app/temp
       - ./docker/app/config:/app/config:ro
+      # Монтирование миграций для выполнения внутри контейнера
+      - ./migrations:/app/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
     ports:
       - "${API_PORT:-8000}:8000"
     # Для доступа к БД на хосте из контейнера (Windows/Mac/Linux)
@@ -67,6 +73,94 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+    depends_on:
+      - app-migrate
+    # Условный запуск: ждем завершения миграций
+    # (но не блокируем, если миграции уже выполнены)
+
+  # ============ Сервис миграций (однократный запуск) ============
+  app-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: teambot:latest
+    container_name: teambot_migrate
+    restart: "no"  # Запускается один раз и завершается
+    environment:
+      DB_MAIN_NAME: ${DB_MAIN_NAME:-team_bot}
+      DB_MAIN_USER: ${DB_MAIN_USER:?set DB_MAIN_USER}
+      DB_MAIN_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
+      DB_MAIN_HOST: ${DB_MAIN_HOST:-localhost}
+      DB_MAIN_PORT: ${DB_MAIN_PORT:-5432}
+      DB_AVANPOST_NAME: ${DB_AVANPOST_NAME:-avanpost}
+      DB_AVANPOST_USER: ${DB_AVANPOST_USER:?set DB_AVANPOST_USER}
+      DB_AVANPOST_PASSWORD: ${DB_AVANPOST_PASSWORD:?set DB_AVANPOST_PASSWORD}
+      DB_AVANPOST_HOST: ${DB_AVANPOST_HOST:-localhost}
+      DB_AVANPOST_PORT: ${DB_AVANPOST_PORT:-1433}
+      # Telegram (минимально необходимые для инициализации)
+      BOT_TOKEN: ${BOT_TOKEN:-dummy_token_for_migrations}
+      BOT_ID: ${BOT_ID:-0}
+      BOT_HASH: ${BOT_HASH:-dummy_hash}
+      BOT_USERNAME: ${BOT_USERNAME:-dummy_bot}
+      ADMIN_IDS: ${ADMIN_IDS:-[]}
+      SUPPORT_CHAT_ID: ${SUPPORT_CHAT_ID:-0}
+      SUPPORT_CHAT_TOPIC_IDS: ${SUPPORT_CHAT_TOPIC_IDS:-{}}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-dummy_secret_for_migrations}
+      ALEMBIC_CONFIG: /app/alembic.ini
+    volumes:
+      - ./migrations:/app/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - teambot_network
+    # Команда для выполнения миграций
+    entrypoint: ["alembic"]
+    command: ["upgrade", "head"]
+    # Healthcheck для проверки завершения миграций
+    healthcheck:
+      test: ["CMD-SHELL", "alembic current | grep -q head || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # ============ Интерактивный сервис миграций (для ручного запуска) ============
+  app-migrate-interactive:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: teambot:latest
+    container_name: teambot_migrate_interactive
+    restart: "no"
+    environment:
+      DB_MAIN_NAME: ${DB_MAIN_NAME:-team_bot}
+      DB_MAIN_USER: ${DB_MAIN_USER:?set DB_MAIN_USER}
+      DB_MAIN_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
+      DB_MAIN_HOST: ${DB_MAIN_HOST:-localhost}
+      DB_MAIN_PORT: ${DB_MAIN_PORT:-5432}
+      # Telegram (минимально необходимые)
+      BOT_TOKEN: ${BOT_TOKEN:-dummy_token_for_migrations}
+      BOT_ID: ${BOT_ID:-0}
+      BOT_HASH: ${BOT_HASH:-dummy_hash}
+      BOT_USERNAME: ${BOT_USERNAME:-dummy_bot}
+      ADMIN_IDS: ${ADMIN_IDS:-[]}
+      SUPPORT_CHAT_ID: ${SUPPORT_CHAT_ID:-0}
+      SUPPORT_CHAT_TOPIC_IDS: ${SUPPORT_CHAT_TOPIC_IDS:-{}}
+      ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-dummy_secret_for_migrations}
+      ALEMBIC_CONFIG: /app/alembic.ini
+    volumes:
+      - ./migrations:/app/migrations:ro
+      - ./alembic.ini:/app/alembic.ini:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - teambot_network
+    # Интерактивный режим - можно передавать любые команды
+    entrypoint: ["alembic"]
+    command: ["--help"]  # По умолчанию показываем help
+    profiles:
+      - migration  # Запускается только с --profile migration
 
   # ============ Nginx (опционально) ============
   nginx:

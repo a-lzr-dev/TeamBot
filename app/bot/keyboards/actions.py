@@ -9,7 +9,7 @@ BUTTONS_PER_ROW_ACTIONS = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 3)
 
 
 class ActionKeyboard:
-    """Клавиатуры для меню действий"""
+    """Клавиатуры для меню действий."""
 
     @staticmethod
     def get_action_menu_keyboard(
@@ -19,8 +19,7 @@ class ActionKeyboard:
         is_root_menu: bool = False,
         show_back_to_users: bool = False,
     ) -> InlineKeyboardMarkup:
-        """
-        Создание клавиатуры для меню действий через ListKeyboardBuilder.
+        """Создание клавиатуры для меню действий через ListKeyboardBuilder.
 
         Args:
             items: Список пунктов меню с полями 'id', 'name', 'has_subitems'
@@ -32,7 +31,7 @@ class ActionKeyboard:
         builder = ListKeyboardBuilder(
             callback_prefix="action",
             buttons_per_row=BUTTONS_PER_ROW_ACTIONS,
-            item_icon="",  # ▶️
+            item_icon="",
             max_name_length=25,
         )
 
@@ -43,10 +42,12 @@ class ActionKeyboard:
             extra_buttons.append(("🔙 Назад", f"action_back_{parent_id or 0}"))
 
         # Кнопка "В главное меню" для подменю
+        # Исправление: проверяем not is_root_menu, а не только parent_id
+        # Это гарантирует, что кнопка отображается для всех подменю
         if not is_root_menu:
             extra_buttons.append(("🏠 В главное меню", "action_home"))
 
-        # Кнопка "К списку пользователей" (если выбран пользователь через /users или сис.админ)
+        # Кнопка "К списку пользователей"
         if is_admin or show_back_to_users:
             extra_buttons.append(("👥 К пользователям", "back_to_users"))
 
@@ -57,11 +58,13 @@ class ActionKeyboard:
             search_query=None,
             extra_buttons=extra_buttons if extra_buttons else None,
             item_name_formatter=lambda item: _format_item_name(item),
+            # ВАЖНО: для подменю всегда показываем навигацию
+            hide_pagination_if_single=False,
         )
 
 
 def _format_item_name(item: dict[str, Any]) -> str:
-    """Форматирование названия пункта меню"""
+    """Форматирование названия пункта меню."""
     name = item.get("name", "Без названия")
     has_subitems = item.get("has_subitems", False)
     prefix = "▶️ " if has_subitems else "• "

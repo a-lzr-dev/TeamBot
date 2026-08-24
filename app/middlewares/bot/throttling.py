@@ -14,7 +14,7 @@ from .utils import get_user
 
 @dataclass
 class ThrottleEntry:
-    """Запись о последнем обращении пользователя"""
+    """Запись о последнем обращении пользователя."""
 
     last_time: float = field(default_factory=time.time)
     count: int = 0
@@ -53,8 +53,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Throttling обработчиков"""
-
+        """Throttling обработчиков."""
         # Проверка только сообщений и callback от пользователей
         if not isinstance(event, Message | CallbackQuery):
             return await handler(event, data)
@@ -99,11 +98,11 @@ class ThrottlingMiddleware(BaseMiddleware):
         return await handler(event, data)
 
     def _is_throttled(self, entry: ThrottleEntry, current_time: float) -> bool:
-        """Проверка, нужно ли применять throttling"""
+        """Проверка, нужно ли применять throttling."""
         return current_time - entry.last_time < self.default_throttle
 
     def _is_burst_exceeded(self, entry: ThrottleEntry, current_time: float) -> bool:
-        """Проверка, превышен ли burst-лимит"""
+        """Проверка, превышен ли burst-лимит."""
         if self.burst_limit is None:
             return False
 
@@ -116,7 +115,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         return entry.count >= self.burst_limit
 
     async def _handle_throttled(self, event: TelegramObject, user_id: int, is_burst: bool = False) -> None:
-        """Обработка throttled запроса"""
+        """Обработка throttled запроса."""
         bot_logger.debug(f"⏳ Throttling {'burst ' if is_burst else ''}user {user_id}")
 
         # Отправка предупреждения, если включено
@@ -134,7 +133,7 @@ class ThrottlingMiddleware(BaseMiddleware):
                 bot_logger.warning(f"⚠️ Could not send throttling warning: {e}")
 
     def get_stats(self) -> dict[str, Any]:
-        """Получение статистики throttling"""
+        """Получение статистики throttling."""
         current_time = time.time()
         active_users_count = 0
 
@@ -152,7 +151,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         }
 
     def reset_user(self, user_id: int) -> None:
-        """Сброс throttling для пользователя"""
+        """Сброс throttling для пользователя."""
         if user_id in self._last_processed:
             del self._last_processed[user_id]
             bot_logger.info(f"✅ Throttling reset for user {user_id}")

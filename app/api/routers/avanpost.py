@@ -1,5 +1,4 @@
-"""
-Модуль роутера для интеграции с системой Avanpost.
+"""Модуль роутера для интеграции с системой Avanpost.
 
 Этот модуль предоставляет API эндпоинты для работы с данными из системы Avanpost:
 - Проверка пользователей по номеру телефона
@@ -41,11 +40,9 @@ _actions_repo = AvanpostActionRepository()
 
 
 class CheckUserRequest(BaseModel):
-    """
-    Модель запроса для проверки пользователя по номеру телефона.
+    """Модель запроса для проверки пользователя по номеру телефона.
 
-    Используется в эндпоинте /users/check для проверки существования
-    пользователя в системе Avanpost.
+    Используется в эндпоинте /users/check для проверки существования пользователя в системе Avanpost.
     """
 
     phone_number: str = Field(..., description="Номер телефона пользователя", min_length=5, max_length=20)
@@ -53,8 +50,7 @@ class CheckUserRequest(BaseModel):
     @field_validator("phone_number")
     @classmethod
     def validate_phone(cls, v: str) -> str:
-        """
-        Валидация и нормализация номера телефона.
+        """Валидация и нормализация номера телефона.
 
         Удаляет все символы, кроме цифр и знака '+',
         и проверяет длину полученного номера.
@@ -151,8 +147,7 @@ class ErrorResponse(BaseModel):
 
 
 def _validate_group_id(group_id: int) -> None:
-    """
-    Валидация ID группы действий.
+    """Валидация ID группы действий.
 
     Args:
         group_id: Проверяемый ID
@@ -165,8 +160,7 @@ def _validate_group_id(group_id: int) -> None:
 
 
 def _validate_item_id(item_id: int) -> None:
-    """
-    Валидация ID пункта меню.
+    """Валидация ID пункта меню.
 
     Args:
         item_id: Проверяемый ID
@@ -192,8 +186,7 @@ async def check_user_by_phone(
     request: CheckUserRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Проверка существования пользователя в системе Avanpost по номеру телефона.
+    """Проверка существования пользователя в системе Avanpost по номеру телефона.
 
     Вызывает хранимую процедуру в базе данных Avanpost для поиска пользователя.
     Возвращает ID пользователя и ID его группы действий при наличии.
@@ -261,8 +254,7 @@ async def check_user_by_phone(
 async def get_groups(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение списка всех групп действий из Avanpost.
+    """Получение списка всех групп действий из Avanpost.
 
     Группы действий используются для организации доступа и определения
     доступных функций для пользователя.
@@ -329,8 +321,7 @@ async def get_menu_items(
     ),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение иерархического списка действий для группы.
+    """Получение иерархического списка действий для группы.
 
     Позволяет получить как корневое меню (parent_item_id=None),
     так и подменю для конкретного пункта.
@@ -416,8 +407,7 @@ async def check_has_subitems(
     item_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Проверка наличия дочерних элементов у пункта меню.
+    """Проверка наличия дочерних элементов у пункта меню.
 
     Используется для определения необходимости отображать кнопку
     перехода на следующий уровень меню.
@@ -480,8 +470,7 @@ async def check_has_subitems(
 )
 @log_exceptions(api_logger)
 async def health_check_avanpost() -> JSONResponse:
-    """
-    Проверка доступности базы данных Avanpost.
+    """Проверка доступности базы данных Avanpost.
 
     Используется для мониторинга и определения работоспособности
     внешней системы Avanpost.
@@ -546,8 +535,7 @@ async def _build_menu_tree(
     current_depth: int,
     max_depth: int,
 ) -> list[dict[str, Any]]:
-    """
-    Рекурсивное построение дерева меню.
+    """Рекурсивное построение дерева меню.
 
     Используется для построения полной иерархической структуры меню
     в один запрос.

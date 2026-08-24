@@ -1,3 +1,5 @@
+"""Сервис для управления уведомлениями."""
+
 from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +20,7 @@ from ..utils.decorators import log_exceptions
 
 
 class NotificationService:
-    """Сервис для управления уведомлениями"""
+    """Сервис для управления уведомлениями."""
 
     def __init__(self) -> None:
         self._notification_queue: list[dict] = []
@@ -32,8 +34,7 @@ class NotificationService:
         chat_id: int,
         session: AsyncSession,
     ) -> bool:
-        """
-        Проверка, нужно ли отправлять уведомление об ошибке.
+        """Проверка, нужно ли отправлять уведомление об ошибке.
 
         Args:
             error: Ошибка
@@ -82,8 +83,7 @@ class NotificationService:
 
     @staticmethod
     def _is_time_in_range(current: str, start: str, end: str) -> bool:
-        """
-        Проверка, находится ли текущее время в диапазоне.
+        """Проверка, находится ли текущее время в диапазоне.
 
         Args:
             current: Текущее время (HH:MM)
@@ -107,8 +107,7 @@ class NotificationService:
 
     @staticmethod
     def _is_category_enabled(category: ErrorCategory, settings: ChatNotificationSettingsModel) -> bool:
-        """
-        Проверка, включена ли категория ошибок.
+        """Проверка, включена ли категория ошибок.
 
         Args:
             category: Категория ошибки
@@ -129,8 +128,7 @@ class NotificationService:
 
     @staticmethod
     def _get_allowed_severities(settings: ChatNotificationSettingsModel) -> list[str]:
-        """
-        Получение списка разрешенных уровней серьезности.
+        """Получение списка разрешенных уровней серьезности.
 
         Args:
             settings: Настройки уведомлений
@@ -148,8 +146,7 @@ class NotificationService:
 
     @log_exceptions(app_logger)
     async def format_error_message(self, error: ErrorModel, include_details: bool = True) -> str:
-        """
-        Форматирование сообщения об ошибке для отправки.
+        """Форматирование сообщения об ошибке для отправки.
 
         Args:
             error: Ошибка
@@ -203,8 +200,7 @@ class NotificationService:
 
     @log_exceptions(app_logger)
     async def generate_auto_report(self, chat_id: int, session: AsyncSession) -> str:
-        """
-        Генерация автоматического отчета об ошибках.
+        """Генерация автоматического отчета об ошибках.
 
         Args:
             chat_id: ID чата
@@ -269,7 +265,7 @@ class NotificationService:
         return report
 
     async def process_notification_queue(self) -> None:
-        """Обработка очереди уведомлений"""
+        """Обработка очереди уведомлений."""
         while self._notification_queue:
             notification = self._notification_queue.pop(0)
             try:
@@ -286,8 +282,7 @@ class NotificationService:
                 app_logger.error(f"Failed to send notification: {e}")
 
     def add_to_queue(self, chat_id: int, message: str) -> None:
-        """
-        Добавление уведомления в очередь.
+        """Добавление уведомления в очередь.
 
         Args:
             chat_id: ID чата

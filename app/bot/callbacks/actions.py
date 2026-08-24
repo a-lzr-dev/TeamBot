@@ -1,5 +1,4 @@
-"""
-Обработчик колбэков для меню действий.
+"""Обработчик колбэков для меню действий.
 
 Использует GenericListCallbackHandler для универсальной обработки.
 Обеспечивает навигацию по иерархическому меню действий Avanpost:
@@ -23,8 +22,7 @@ from .generic import GenericListCallbackHandler
 
 
 class ActionCallbackHandler(GenericListCallbackHandler):
-    """
-    Обработчик колбэков для меню действий Avanpost.
+    """Обработчик колбэков для меню действий Avanpost.
 
     Расширяет GenericListCallbackHandler для работы с иерархическим меню
     действий. Поддерживает навигацию по дереву действий и выполнение
@@ -50,8 +48,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         self.PAGE_SIZE = 50
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """
-        Основной метод обработки колбэка действия.
+        """Основной метод обработки колбэка действия.
 
         Определяет тип колбэка и вызывает соответствующий обработчик.
 
@@ -106,8 +103,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         session: Any = None,
         group_id: int | None = None,
     ) -> None:
-        """
-        Обработка кнопки 'В главное меню'.
+        """Обработка кнопки 'В главное меню'.
 
         Возвращает пользователя в корневое меню группы действий.
 
@@ -166,8 +162,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         group_id: int | None = None,
         user_display_name: str | None = None,
     ) -> None:
-        """
-        Обработка кнопки 'Назад'.
+        """Обработка кнопки 'Назад'.
 
         Возвращает пользователя на предыдущий уровень меню.
 
@@ -181,7 +176,6 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(event=callback)
 
-        from ...db import db_manager
         from ..handlers.aiogram.actions import show_menu
         from ..handlers.aiogram.auth import get_user_group_id
         from ..handlers.aiogram.states import ChatDetailsStates, SubMenuStates
@@ -316,8 +310,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         group_id: int | None = None,
         user_display_name: str | None = None,
     ) -> None:
-        """
-        Обработка выбора действия.
+        """Обработка выбора действия.
 
         Определяет, является ли действие конечным или имеет подменю.
         Если имеет подменю - показывает его, иначе выполняет действие.
@@ -333,7 +326,6 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         bot_logger.debug(f"🔍 [_handle_action] START: {callback.data}, action_id={action_id}")
         await CallbackHandler.answer(callback)
 
-        from ...db import db_manager
         from ..handlers.aiogram.actions import execute_action
         from ..handlers.aiogram.auth import get_user_group_id
 
@@ -426,8 +418,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
         action_id: int,
         user_display_name: str | None = None,
     ) -> None:
-        """
-        Показать подменю для выбранного действия.
+        """Показать подменю для выбранного действия.
 
         Args:
             callback: CallbackQuery от пользователя
@@ -471,8 +462,7 @@ class ActionCallbackHandler(GenericListCallbackHandler):
     # ============================================================
 
     async def load_data(self, session: Any, page: int, search_query: str | None, **kwargs: Any) -> dict[str, Any]:
-        """
-        Загрузка данных для списка.
+        """Загрузка данных для списка.
 
         Не используется для меню действий, оставлен для совместимости
         с родительским классом.
@@ -485,17 +475,14 @@ class ActionCallbackHandler(GenericListCallbackHandler):
     async def show_list(
         self, event: Any, state: FSMContext, page: int = 0, search_query: str | None = None, **kwargs: Any
     ) -> None:
-        """
-        Отображение списка.
+        """Отображение списка.
 
-        Не используется для меню действий, оставлен для совместимости
-        с родительским классом.
+        Не используется для меню действий, оставлен для совместимости с родительским классом.
         """
         pass
 
     async def on_select(self, callback: CallbackQuery, state: FSMContext, item_id: int, **kwargs: Any) -> None:
-        """
-        Обработка выбора элемента из списка.
+        """Обработка выбора элемента из списка.
 
         Перенаправляет на _handle_action для обработки выбора действия.
 

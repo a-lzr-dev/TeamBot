@@ -30,7 +30,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class ContactDetailsStates(StatesGroup):
-    """Состояния для деталей контакта"""
+    """Состояния для деталей контакта."""
 
     viewing_details = State()
 
@@ -57,8 +57,7 @@ class ContactDetailsHandler(BaseDetailsHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных контактной информации из БД.
+        """Загрузка данных контактной информации из БД.
 
         Args:
             session: Сессия БД
@@ -127,9 +126,7 @@ class ContactDetailsHandler(BaseDetailsHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение контактной информации.
-        """
+        """Отображение контактной информации."""
         # bot_manager = get_bot_manager()
 
         if isinstance(event, CallbackQuery):
@@ -234,9 +231,7 @@ class ContactDetailsHandler(BaseDetailsHandler):
 
     @staticmethod
     def _build_keyboard(parent_item_id: int | None, group_id: int | None) -> InlineKeyboardMarkup:
-        """
-        Построение клавиатуры для деталей контакта.
-        """
+        """Построение клавиатуры для деталей контакта."""
         # Кнопка "Назад к контактам"
         buttons = [
             InlineKeyboardButton(

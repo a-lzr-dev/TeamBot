@@ -1,5 +1,4 @@
-"""
-Модуль административных обработчиков Aiogram.
+"""Модуль административных обработчиков Aiogram.
 
 Этот модуль предоставляет обработчики для административных команд,
 сгруппированные по функциональным областям:
@@ -46,8 +45,7 @@ router = Router(name="aiogram_admin")
 @router.message(Command("cancel"))
 @log_exceptions(bot_logger)
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    """
-    Отмена текущей операции FSM.
+    """Отмена текущей операции FSM.
 
     Args:
         message: Сообщение от пользователя
@@ -82,8 +80,7 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 @router.message(Command("admins"))
 @log_exceptions(bot_logger)
 async def cmd_admins(message: Message) -> None:
-    """
-    Просмотр списка администраторов.
+    """Просмотр списка администраторов.
 
     Args:
         message: Сообщение от пользователя
@@ -119,8 +116,7 @@ async def cmd_admins(message: Message) -> None:
 @router.message(Command("add_admin"))
 @log_exceptions(bot_logger)
 async def cmd_add_admin(message: Message) -> None:
-    """
-    Добавление администратора.
+    """Добавление администратора.
 
     Формат: /add_admin <user_id>
 
@@ -196,8 +192,7 @@ async def cmd_add_admin(message: Message) -> None:
 @router.message(Command("remove_admin"))
 @log_exceptions(bot_logger)
 async def cmd_remove_admin(message: Message) -> None:
-    """
-    Удаление администратора.
+    """Удаление администратора.
 
     Формат: /remove_admin <user_id>
 
@@ -294,8 +289,7 @@ async def cmd_remove_admin(message: Message) -> None:
 @router.callback_query(lambda c: c.data in ["delete_confirm", "delete_cancel"])
 @log_exceptions(bot_logger)
 async def handle_delete_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков для подтверждения/отмены удаления сообщения.
+    """Обработка колбэков для подтверждения/отмены удаления сообщения.
 
     Args:
         callback: CallbackQuery от пользователя

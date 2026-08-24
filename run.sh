@@ -47,7 +47,7 @@ log_header() {
 # ============================================================
 check_environment() {
     log_header "Проверка переменных окружения"
-    
+
     # Обязательные переменные
     required_vars=(
         "BOT_TOKEN"
@@ -61,14 +61,14 @@ check_environment() {
         "SUPPORT_CHAT_TOPIC_IDS"
         "ENCRYPTION_SECRET"
     )
-    
+
     missing_vars=()
     for var in "${required_vars[@]}"; do
         if [ -z "${!var}" ]; then
             missing_vars+=("$var")
         fi
     done
-    
+
     if [ ${#missing_vars[@]} -ne 0 ]; then
         log_error "Отсутствуют обязательные переменные окружения:"
         for var in "${missing_vars[@]}"; do
@@ -78,21 +78,21 @@ check_environment() {
         log_warn "Скопируйте .env.example в .env и заполните значения"
         exit 1
     fi
-    
+
     log_info "Все обязательные переменные установлены"
-    
+
     # Проверка формата ADMIN_IDS
     if ! [[ "$ADMIN_IDS" =~ ^\[.*\]$ ]]; then
         log_error "ADMIN_IDS должен быть в формате JSON массива: [1039799368]"
         exit 1
     fi
-    
+
     # Проверка формата SUPPORT_CHAT_TOPIC_IDS
     if ! [[ "$SUPPORT_CHAT_TOPIC_IDS" =~ ^\{.*\}$ ]]; then
         log_error "SUPPORT_CHAT_TOPIC_IDS должен быть в формате JSON объекта: {\"Globus\":123,\"TeamBot\":456}"
         exit 1
     fi
-    
+
     log_info "Все переменные прошли валидацию"
 }
 
@@ -101,11 +101,11 @@ check_environment() {
 # ============================================================
 check_database() {
     log_header "Проверка подключения к БД"
-    
+
     # Проверка основной БД (PostgreSQL)
     if [ -n "$DB_MAIN_HOST" ] && [ -n "$DB_MAIN_PORT" ]; then
         log_debug "Проверка PostgreSQL: $DB_MAIN_HOST:$DB_MAIN_PORT"
-        
+
         # Использование python для проверки через asyncpg
         python3 -c "
 import asyncio
@@ -130,14 +130,14 @@ async def check_db():
 if not asyncio.run(check_db()):
     sys.exit(1)
 " 2>/dev/null
-        
+
         if [ $? -eq 0 ]; then
             log_info "PostgreSQL подключена успешно"
         else
             log_warn "Не удалось подключиться к PostgreSQL (продолжаем...)"
         fi
     fi
-    
+
     # Проверка Avanpost (MSSQL) - если настроена
     if [ -n "$DB_AVANPOST_HOST" ] && [ -n "$DB_AVANPOST_PORT" ]; then
         log_debug "Проверка MSSQL: $DB_AVANPOST_HOST:$DB_AVANPOST_PORT"
@@ -159,13 +159,13 @@ if not asyncio.run(check_db()):
 # ============================================================
 wait_for_postgres() {
     log_header "Ожидание готовности PostgreSQL"
-    
+
     local max_attempts=30
     local attempt=1
-    
+
     while [ $attempt -le $max_attempts ]; do
         log_debug "Попытка $attempt/$max_attempts..."
-        
+
         python3 -c "
 import asyncio
 import asyncpg
@@ -187,16 +187,16 @@ async def check():
 if not asyncio.run(check()):
     exit(1)
 " 2>/dev/null
-        
+
         if [ $? -eq 0 ]; then
             log_info "PostgreSQL готова к работе"
             return 0
         fi
-        
+
         sleep 2
         attempt=$((attempt + 1))
     done
-    
+
     log_warn "PostgreSQL не ответила за $max_attempts попыток, продолжаем..."
     return 0
 }
@@ -206,12 +206,12 @@ if not asyncio.run(check()):
 # ============================================================
 create_directories() {
     log_header "Создание директорий"
-    
+
     local dirs=(
         "${LOG_DIR:-/app/logs}"
         "${AUTOMATION_TEMP_DIR:-/app/temp/automation}"
     )
-    
+
     for dir in "${dirs[@]}"; do
         if [ ! -d "$dir" ]; then
             mkdir -p "$dir"
@@ -227,7 +227,7 @@ create_directories() {
 # ============================================================
 set_permissions() {
     log_header "Установка прав"
-    
+
     # Если запущены от root
     if [ "$EUID" -eq 0 ]; then
         # Изменение владельца на botuser (если пользователь существует)
@@ -245,11 +245,11 @@ set_permissions() {
 # ============================================================
 check_python() {
     log_header "Проверка Python окружения"
-    
+
     # Проверка версии Python
     python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
     log_info "Python версия: $python_version"
-    
+
     # Проверка наличия основных модулей
     local modules=(
         "aiogram"
@@ -258,7 +258,7 @@ check_python() {
         "asyncpg"
         "telethon"
     )
-    
+
     for module in "${modules[@]}"; do
         if python3 -c "import $module" 2>/dev/null; then
             log_debug "✅ $module установлен"
@@ -303,7 +303,7 @@ print_banner() {
 # ============================================================
 main() {
     log_header "TeamBot Run Script"
-    
+
     # Парсинг аргументов
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -342,7 +342,7 @@ main() {
                 ;;
         esac
     done
-    
+
     # Установка значений по умолчанию
     export APP_MODE="${APP_MODE:-full}"
     export APP_ENV="${APP_ENV:-production}"
@@ -353,27 +353,27 @@ main() {
     export DB_MAIN_NAME="${DB_MAIN_NAME:-team_bot}"
     export LOG_DIR="${LOG_DIR:-/app/logs}"
     export AUTOMATION_TEMP_DIR="${AUTOMATION_TEMP_DIR:-/app/temp/automation}"
-    
+
     # Выполнение проверок
     check_environment
     create_directories
     set_permissions
     check_python
-    
+
     # Ожидание БД (только не в dev режиме)
     if [ "$APP_MODE" != "dev" ] && [ "$APP_ENV" != "development" ]; then
         wait_for_postgres
     fi
-    
+
     check_database
-    
+
     # Вывод баннера
     print_banner
-    
+
     # Запуск приложения
     log_info "Запуск приложения в режиме: $APP_MODE"
     echo ""
-    
+
     exec python run.py --mode "$APP_MODE"
 }
 

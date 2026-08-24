@@ -1,5 +1,4 @@
-"""
-Сервис заполнения системных данных Avanpost.
+"""Сервис заполнения системных данных Avanpost.
 
 Отвечает за:
 1. Создание типов данных в TAvanpostDirSysDataTypes
@@ -51,8 +50,7 @@ DEFAULT_SYNC_DATE = datetime(1900, 1, 1)
 
 
 class AvanpostSeedService:
-    """
-    Сервис для заполнения системных данных Avanpost.
+    """Сервис для заполнения системных данных Avanpost.
 
     Выполняет инициализацию всех системных таблиц, необходимых для работы
     с данными Avanpost: типы данных, пользователи, записи синхронизации.
@@ -68,8 +66,7 @@ class AvanpostSeedService:
 
     @classmethod
     async def seed_all(cls) -> bool:
-        """
-        Точка входа для заполнения всех системных таблиц Avanpost.
+        """Точка входа для заполнения всех системных таблиц Avanpost.
 
         Управляет жизненным циклом соединений с БД и делегирует
         выполнение основному методу seed_system_tables.
@@ -99,8 +96,7 @@ class AvanpostSeedService:
     @staticmethod
     @suppress_debug_logs
     async def seed_system_tables(session: AsyncSession, show_logs: bool = False) -> bool:
-        """
-        Основной метод заполнения системных таблиц Avanpost.
+        """Основной метод заполнения системных таблиц Avanpost.
 
         Выполняет полную инициализацию в правильном порядке с учётом
         зависимостей между таблицами. Обрабатывает ошибки и откатывает
@@ -150,8 +146,7 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _create_data_types(session: AsyncSession) -> None:
-        """
-        Создание недостающих типов данных в TAvanpostDirSysDataTypes.
+        """Создание недостающих типов данных в TAvanpostDirSysDataTypes.
 
         Проверяет существующие типы и добавляет только отсутствующие.
         Для каждого типа определяет флаги:
@@ -192,8 +187,7 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _seed_all_users_if_enabled(session: AsyncSession) -> None:
-        """
-        Загрузка всех пользователей из avanpost, если включено в настройках.
+        """Загрузка всех пользователей из avanpost, если включено в настройках.
 
         Проверяет флаг AVANPOST_AUTO_ADD_USERS_ALL_ON_START и при необходимости
         загружает всех пользователей из Avanpost.
@@ -227,8 +221,7 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _create_global_sync_records(session: AsyncSession, show_logs: bool = True) -> None:
-        """
-        Создание записей глобальной синхронизации в TAvanpostSysUpdates.
+        """Создание записей глобальной синхронизации в TAvanpostSysUpdates.
 
         Для всех базовых типов данных создаются записи с датой DEFAULT_SYNC_DATE,
         означающей, что данные никогда не синхронизировались.
@@ -248,8 +241,7 @@ class AvanpostSeedService:
 
     @staticmethod
     async def _create_user_sync_records(session: AsyncSession) -> None:
-        """
-        Создание записей пользовательской синхронизации в TAvanpostSysUsersUpdates.
+        """Создание записей пользовательской синхронизации в TAvanpostSysUsersUpdates.
 
         Для всех существующих пользователей и всех типов данных, связанных
         с пользователями, создаются записи с датой DEFAULT_SYNC_DATE.
@@ -290,8 +282,7 @@ class AvanpostSeedService:
 
     @staticmethod
     def _log_user_sync_stats(stats: dict[str, Any]) -> None:
-        """
-        Вывод статистики созданных записей пользовательской синхронизации.
+        """Вывод статистики созданных записей пользовательской синхронизации.
 
         Форматирует вывод в виде таблицы для наглядного отображения
         количества записей по каждому типу данных.
@@ -321,8 +312,7 @@ class AvanpostSeedService:
 
     @staticmethod
     async def seed_avanpost_users(session: AsyncSession, show_logs: bool = True) -> dict[int, bool]:
-        """
-        Добавление пользователей Avanpost из настроек.
+        """Добавление пользователей Avanpost из настроек.
 
         Использует список ID из конфигурации (AVANPOST_AUTO_ADD_USERS_IDS_ON_START)
         и добавляет их в TAvanpostUsers, если они ещё не существуют.
@@ -403,8 +393,7 @@ class AvanpostSeedService:
         create_sync_records: bool = False,
         show_logs: bool = True,
     ) -> dict[str, Any]:
-        """
-        Загрузка всех пользователей из Avanpost.
+        """Загрузка всех пользователей из Avanpost.
 
         Загружает пользователей из внешней системы Avanpost
         и добавляет их в локальную БД. Поддерживает массовую вставку для

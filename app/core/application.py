@@ -1,5 +1,4 @@
-"""
-Менеджер жизненного цикла приложения TeamBot.
+"""Менеджер жизненного цикла приложения TeamBot.
 
 Отвечает за:
 1. Запуск и остановку компонентов (БД, API, Бот)
@@ -29,13 +28,9 @@ from ..utils.decorators import log_exceptions, suppress_debug_logs
 
 
 class AppState(StrEnum):
-    """
-    Состояния жизненного цикла приложения.
+    """Состояния жизненного цикла приложения.
 
-    INITIALIZED -> STARTING -> RUNNING -> STOPPING -> STOPPED
-                                    |
-                                    v
-                                  ERROR
+    INITIALIZED -> STARTING -> RUNNING -> STOPPING -> STOPPED                                 | v ERROR
     """
 
     INITIALIZED = "initialized"  # Приложение создано, но не запущено
@@ -47,8 +42,7 @@ class AppState(StrEnum):
 
 
 class ApplicationManager:
-    """
-    Менеджер для управления жизненным циклом всего приложения.
+    """Менеджер для управления жизненным циклом всего приложения.
 
     Реализует синглтон для централизованного управления:
     - Запуск компонентов в правильном порядке
@@ -127,8 +121,7 @@ class ApplicationManager:
     # ==================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ====================
 
     def _validate_components(self, components: list[str] | None) -> list[str]:
-        """
-        Валидация и нормализация списка компонентов.
+        """Валидация и нормализация списка компонентов.
 
         Args:
             components: Список компонентов для запуска/остановки
@@ -156,8 +149,7 @@ class ApplicationManager:
 
     @log_exceptions(app_logger)
     async def start(self, components: list[str] | None = None) -> None:
-        """
-        Запуск приложения с указанными компонентами.
+        """Запуск приложения с указанными компонентами.
 
         Args:
             components: Список компонентов для запуска (db, api, bot)
@@ -192,8 +184,7 @@ class ApplicationManager:
             raise
 
     async def _start_component(self, component: str) -> None:
-        """
-        Запуск конкретного компонента.
+        """Запуск конкретного компонента.
 
         Args:
             component: Имя компонента (db, api, bot)
@@ -210,8 +201,7 @@ class ApplicationManager:
     # ==================== ЗАПУСК: БАЗА ДАННЫХ ====================
 
     async def _start_database(self) -> None:
-        """
-        Запуск базы данных с последовательной синхронизацией:
+        """Запуск базы данных с последовательной синхронизацией:
 
         1. Инициализация БД
         2. Создание таблиц
@@ -247,8 +237,8 @@ class ApplicationManager:
         await self._init_log_handler()
 
     async def _sync_avanpost_base_if_enabled(self) -> None:
-        """
-        Синхронизация базовых данных Avanpost (справочники).
+        """Синхронизация базовых данных Avanpost (справочники).
+
         Выполняется синхронно, блокирует запуск приложения.
         """
         if not getattr(settings, "AVANPOST_AUTO_SYNC_ON_START", True):
@@ -326,8 +316,7 @@ class ApplicationManager:
     @staticmethod
     @suppress_debug_logs
     async def _sync_avanpost_base_data(force: bool = False, show_logs: bool = False) -> None:
-        """
-        Синхронизация базовых данных Avanpost (справочники).
+        """Синхронизация базовых данных Avanpost (справочники).
 
         Args:
             force: Принудительная синхронизация (игнорировать кеш),
@@ -366,8 +355,7 @@ class ApplicationManager:
         user_ids: list[int] | None = None,
         show_logs: bool = False,
     ) -> None:
-        """
-        Синхронизация пользовательских данных Avanpost.
+        """Синхронизация пользовательских данных Avanpost.
 
         Args:
             force: Принудительная синхронизация
@@ -405,8 +393,7 @@ class ApplicationManager:
         user_ids: list[int] | None = None,
         show_logs: bool = False,
     ) -> None:
-        """
-        Фоновая синхронизация пользовательских данных Avanpost.
+        """Фоновая синхронизация пользовательских данных Avanpost.
 
         Args:
             force: Принудительная синхронизация
@@ -549,8 +536,7 @@ class ApplicationManager:
 
     @log_exceptions(app_logger)
     async def stop(self, components: list[str] | None = None, graceful: bool = True) -> None:
-        """
-        Остановка приложения.
+        """Остановка приложения.
 
         Args:
             components: Список компонентов для остановки
@@ -596,8 +582,7 @@ class ApplicationManager:
             raise
 
     async def _stop_component(self, component: str, graceful: bool) -> None:
-        """
-        Остановка конкретного компонента.
+        """Остановка конкретного компонента.
 
         Args:
             component: Имя компонента
@@ -751,8 +736,7 @@ class ApplicationManager:
 
     @log_exceptions(app_logger)
     async def restart(self, components: list[str] | None = None) -> None:
-        """
-        Перезапуск приложения.
+        """Перезапуск приложения.
 
         Args:
             components: Список компонентов для перезапуска
@@ -767,8 +751,7 @@ class ApplicationManager:
 
     @log_exceptions(app_logger)
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение полного статуса приложения.
+        """Получение полного статуса приложения.
 
         Returns:
             dict: Статус всех компонентов
@@ -817,8 +800,7 @@ class ApplicationManager:
 
     @log_exceptions(app_logger)
     async def health_check(self) -> dict[str, Any]:
-        """
-        Проверка здоровья всех компонентов.
+        """Проверка здоровья всех компонентов.
 
         Returns:
             dict: Результаты проверки здоровья
@@ -885,8 +867,7 @@ app_manager = ApplicationManager()
 
 
 def get_app_manager() -> ApplicationManager:
-    """
-    Получение глобального экземпляра ApplicationManager.
+    """Получение глобального экземпляра ApplicationManager.
 
     Returns:
         ApplicationManager: Единственный экземпляр менеджера

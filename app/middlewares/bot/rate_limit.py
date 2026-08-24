@@ -13,7 +13,7 @@ from .utils import get_user_id
 
 
 class RateLimitMiddleware(BaseMiddleware):
-    """Middleware для ограничения частоты запросов Bot"""
+    """Middleware для ограничения частоты запросов Bot."""
 
     def __init__(
         self,
@@ -72,7 +72,7 @@ class RateLimitMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Проверка лимита запросов"""
+        """Проверка лимита запросов."""
         # Проверка только сообщений и callback
         if not isinstance(event, Message | CallbackQuery):
             return await handler(event, data)
@@ -113,7 +113,7 @@ class RateLimitMiddleware(BaseMiddleware):
         return await handler(event, data)
 
     async def _send_warning(self, event: TelegramObject, user_id: int, scope: RateLimitScope, is_command: bool) -> None:
-        """Отправка предупреждения пользователю"""
+        """Отправка предупреждения пользователю."""
         key = f"user_{user_id}"
         remaining = rate_limit_manager.get_remaining(scope, key)
         reset_time = rate_limit_manager.get_reset_time(scope, key)
@@ -162,7 +162,7 @@ class RateLimitMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_chat_id(event: TelegramObject) -> int | None:
-        """Получение ID чата из события"""
+        """Получение ID чата из события."""
         if isinstance(event, Message):
             chat_id = event.chat.id
             return int(chat_id) if chat_id is not None else None
@@ -172,7 +172,7 @@ class RateLimitMiddleware(BaseMiddleware):
         return None
 
     def get_stats(self) -> dict[str, Any]:
-        """Получение статистики ограничителя"""
+        """Получение статистики ограничителя."""
         return {
             "general": rate_limit_manager.get_stats(RateLimitScope.BOT),
             "commands": rate_limit_manager.get_stats(RateLimitScope.COMMAND),
@@ -180,7 +180,7 @@ class RateLimitMiddleware(BaseMiddleware):
         }
 
     def reset_user(self, user_id: int) -> None:
-        """Сброс ограничений для пользователя"""
+        """Сброс ограничений для пользователя."""
         key = f"user_{user_id}"
         rate_limit_manager.reset_key(RateLimitScope.BOT, key)
         rate_limit_manager.reset_key(RateLimitScope.COMMAND, key)

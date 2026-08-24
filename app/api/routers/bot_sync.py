@@ -1,5 +1,4 @@
-"""
-Модуль роутера для синхронизации чатов и участников с Telegram.
+"""Модуль роутера для синхронизации чатов и участников с Telegram.
 
 Этот модуль предоставляет API эндпоинты для синхронизации данных
 между Telegram и локальной базой данных:
@@ -39,8 +38,7 @@ router = APIRouter(prefix="/bot/sync", tags=["Bot Sync"])
 
 
 class SyncChatRequest(BaseModel):
-    """
-    Модель запроса для синхронизации одного чата.
+    """Модель запроса для синхронизации одного чата.
 
     Используется в эндпоинте /chat для указания чата и параметров синхронизации.
     """
@@ -64,8 +62,7 @@ class SyncChatResponse(BaseModel):
 
 
 class SyncAllChatsRequest(BaseModel):
-    """
-    Модель запроса для синхронизации всех чатов.
+    """Модель запроса для синхронизации всех чатов.
 
     Используется в эндпоинте /all для управления массовой синхронизацией.
     """
@@ -119,8 +116,7 @@ class ClearCacheResponse(BaseModel):
 
 
 async def _get_bot_manager_with_check() -> BotManager:
-    """
-    Получение экземпляра BotManager с проверкой статуса.
+    """Получение экземпляра BotManager с проверкой статуса.
 
     Проверяет, что бот запущен и доступен для операций синхронизации.
 
@@ -144,8 +140,7 @@ async def _get_bot_manager_with_check() -> BotManager:
 
 
 async def _check_telethon_availability(bot_manager: BotManager) -> None:
-    """
-    Проверка доступности Telethon клиента.
+    """Проверка доступности Telethon клиента.
 
     Telethon требуется для синхронизации участников чатов.
 
@@ -163,8 +158,7 @@ async def _check_telethon_availability(bot_manager: BotManager) -> None:
 
 
 async def _check_account_type(bot_manager: BotManager) -> str:
-    """
-    Проверка типа аккаунта для синхронизации всех чатов.
+    """Проверка типа аккаунта для синхронизации всех чатов.
 
     Синхронизация всех чатов доступна только для пользовательских аккаунтов.
 
@@ -203,8 +197,7 @@ async def sync_chat(
     request: SyncChatRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Синхронизация участников конкретного чата.
+    """Синхронизация участников конкретного чата.
 
     Получает список участников чата через Telegram API и обновляет
     базу данных, добавляя новых участников и деактивируя отсутствующих.
@@ -307,8 +300,7 @@ async def sync_chat(
 async def sync_all_chats(
     request: SyncAllChatsRequest,
 ) -> JSONResponse:
-    """
-    Синхронизация всех чатов, в которых участвует аккаунт.
+    """Синхронизация всех чатов, в которых участвует аккаунт.
 
     Доступно только для пользовательских аккаунтов (не ботов).
     Проходит по всем диалогам и синхронизирует участников каждого.
@@ -424,8 +416,7 @@ async def sync_all_chats(
 )
 @log_exceptions(api_logger)
 async def get_sync_status() -> JSONResponse:
-    """
-    Получение статуса и метрик синхронизации.
+    """Получение статуса и метрик синхронизации.
 
     Возвращает информацию о:
     - Времени последней синхронизации
@@ -475,8 +466,7 @@ async def get_sync_status() -> JSONResponse:
 )
 @log_exceptions(api_logger)
 async def clear_sync_cache(chat_id: int | None = None) -> JSONResponse:
-    """
-    Очистка кеша синхронизации.
+    """Очистка кеша синхронизации.
 
     Кеш хранит информацию об участниках чатов для ускорения повторных
     синхронизаций. Очистка кеша полезна при смене данных в Telegram.

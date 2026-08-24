@@ -1,5 +1,4 @@
-"""
-Сервис для управления напоминаниями и делами.
+"""Сервис для управления напоминаниями и делами.
 
 Отвечает за:
 1. Создание напоминаний (личных и общих)
@@ -22,11 +21,9 @@ from ..utils.decorators import log_exceptions
 
 
 class ReminderService:
-    """
-    Сервис для управления напоминаниями и делами.
+    """Сервис для управления напоминаниями и делами.
 
-    Предоставляет методы для CRUD операций с напоминаниями,
-    а также для получения статистики и поиска.
+    Предоставляет методы для CRUD операций с напоминаниями, а также для получения статистики и поиска.
     """
 
     def __init__(self) -> None:
@@ -55,8 +52,7 @@ class ReminderService:
         shared_with: list[int] | None = None,
         encrypt: bool = False,
     ) -> UserReminderModel:
-        """
-        Создание нового напоминания.
+        """Создание нового напоминания.
 
         Args:
             user_id: ID пользователя-владельца
@@ -109,8 +105,7 @@ class ReminderService:
         session: AsyncSession,
         successful: bool = True,
     ) -> tuple[bool, str | None]:
-        """
-        Завершение дела.
+        """Завершение дела.
 
         Args:
             reminder_id: ID напоминания
@@ -146,8 +141,7 @@ class ReminderService:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка дел пользователя.
+        """Получение списка дел пользователя.
 
         Args:
             user_id: ID пользователя
@@ -188,8 +182,7 @@ class ReminderService:
         reminder_id: int,
         session: AsyncSession,
     ) -> dict[str, Any] | None:
-        """
-        Получение дела по ID.
+        """Получение дела по ID.
 
         Args:
             reminder_id: ID напоминания
@@ -224,8 +217,7 @@ class ReminderService:
         chat_id: int | None = None,
         include_completed: bool = False,
     ) -> list[dict[str, Any]]:
-        """
-        Поиск дел по кодовому слову.
+        """Поиск дел по кодовому слову.
 
         Args:
             user_id: ID пользователя
@@ -263,8 +255,7 @@ class ReminderService:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserReminderModel]:
-        """
-        Получение активных напоминаний, время которых наступило.
+        """Получение активных напоминаний, время которых наступило.
 
         Args:
             session: Сессия БД
@@ -300,8 +291,7 @@ class ReminderService:
         is_active: bool | None = None,
         remind_at: datetime | None = None,
     ) -> bool:
-        """
-        Обновление статуса напоминания.
+        """Обновление статуса напоминания.
 
         Args:
             reminder_id: ID напоминания
@@ -337,8 +327,7 @@ class ReminderService:
         reminder_id: int,
         session: AsyncSession,
     ) -> bool:
-        """
-        Деактивация напоминания.
+        """Деактивация напоминания.
 
         Args:
             reminder_id: ID напоминания
@@ -368,8 +357,7 @@ class ReminderService:
         session: AsyncSession,
         soft: bool = True,
     ) -> bool:
-        """
-        Удаление напоминания.
+        """Удаление напоминания.
 
         Args:
             reminder_id: ID напоминания
@@ -401,8 +389,7 @@ class ReminderService:
         session: AsyncSession,
         period: str = "week",
     ) -> dict[str, Any]:
-        """
-        Получение статистики по делам пользователя.
+        """Получение статистики по делам пользователя.
 
         Args:
             user_id: ID пользователя

@@ -9,7 +9,7 @@ from .messages import handle_deleted_message, handle_edited_message, handle_new_
 
 
 def setup_telethon_handlers(client: TelegramClient) -> list[Callable]:
-    """Настройка всех telethon обработчиков"""
+    """Настройка всех telethon обработчиков."""
     handlers: list[Callable] = []
 
     @client.on(events.NewMessage(incoming=True))

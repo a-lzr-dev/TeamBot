@@ -35,7 +35,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class ChatDetailsStates(StatesGroup):
-    """Состояния для деталей чата"""
+    """Состояния для деталей чата."""
 
     viewing_messages = State()
 
@@ -143,9 +143,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение сообщений чата с гибридной навигацией.
-        """
+        """Отображение сообщений чата с гибридной навигацией."""
         bot_manager = get_bot_manager()
 
         if isinstance(event, CallbackQuery):
@@ -385,8 +383,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
         group_id: int | None,
         state: FSMContext,
     ) -> InlineKeyboardMarkup:
-        """
-        Построение гибридной клавиатуры навигации.
+        """Построение гибридной клавиатуры навигации.
 
         Включает:
         - Компактную пагинацию (для быстрого перехода)
@@ -469,8 +466,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
         return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
     def _build_pagination_row(self, current_page: int, total_pages: int) -> list[InlineKeyboardButton] | None:
-        """
-        Построение компактной строки пагинации.
+        """Построение компактной строки пагинации.
 
         Показывает:
         - Назад/Вперед
@@ -526,8 +522,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
 
     @staticmethod
     def _get_page_numbers(current: int, total: int) -> list[int | None]:
-        """
-        Получение списка номеров страниц для отображения.
+        """Получение списка номеров страниц для отображения.
 
         Args:
             current: Текущая страница (0-based)
@@ -558,8 +553,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """
-        Обработка выбора действия с сообщением.
+        """Обработка выбора действия с сообщением.
 
         Поддерживает:
         - Ответ на сообщение (reply)
@@ -604,8 +598,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
             )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния
@@ -621,8 +614,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
 
     @staticmethod
     def _get_chat_id(event: Message | CallbackQuery) -> int | None:
-        """
-        Извлечение ID чата из события.
+        """Извлечение ID чата из события.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -640,8 +632,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> InlineKeyboardMarkup:
-        """
-        Создание клавиатуры с кнопкой "Назад к чатам".
+        """Создание клавиатуры с кнопкой "Назад к чатам".
 
         Args:
             state: Состояние FSM
@@ -683,8 +674,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
 
     @staticmethod
     def format_single_message(item: dict[str, Any]) -> str:
-        """
-        Форматирование одного сообщения для отображения (без разделителя).
+        """Форматирование одного сообщения для отображения (без разделителя).
 
         Используется для deep linking и других случаев,
         когда нужно показать одно сообщение без лишних элементов.
@@ -739,8 +729,7 @@ class ChatDetailsHandler(GenericListCallbackHandler):
 
     @staticmethod
     def _format_message(item: dict[str, Any]) -> str:
-        """
-        Форматирование сообщения с визуализацией направления (входящее/исходящее).
+        """Форматирование сообщения с визуализацией направления (входящее/исходящее).
 
         Отображает:
         - Автора сообщения
@@ -821,8 +810,7 @@ async def show_chat_details(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения сообщений чата.
+    """Внешняя функция для отображения сообщений чата.
 
     Используется для вызова из других модулей (например, из chats.py
     при выборе чата из списка).
@@ -948,8 +936,7 @@ async def handle_attachments_callback(callback: CallbackQuery) -> None:
 # Регистрация обработчика текстовых сообщений в режиме просмотра чата
 @router.message(ChatDetailsStates.viewing_messages)
 async def handle_chat_details_message(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме просмотра чата.
+    """Обработчик текстовых сообщений в режиме просмотра чата.
 
     Может использоваться для:
     - Ввода текста ответа на сообщение

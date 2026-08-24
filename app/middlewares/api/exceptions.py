@@ -11,7 +11,7 @@ from ...utils.decorators import handle_exception
 
 
 class ExceptionHandlerMiddleware(BaseHTTPMiddleware):
-    """Middleware для глобальной обработки исключений"""
+    """Middleware для глобальной обработки исключений."""
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         try:

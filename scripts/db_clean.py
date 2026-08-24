@@ -1,7 +1,9 @@
-"""
-Очистка базы данных main.
+"""Очистка базы данных main.
 
-Режимы работы:
+Использование:
+    python scripts/db_clean.py [options]
+
+Опции:
     --users         Удалить только данные пользователей (сохранить структуру)
     --all-data      Удалить все данные из всех таблиц (сохранить структуру)
     --drop-all      Удалить все таблицы (структура + данные)
@@ -22,7 +24,7 @@ from sqlalchemy import text
 from app.db.manager import db_manager
 from app.logger import app_logger
 
-# Добавление корня проекта в PYTHONPATH ПЕРВЫМ
+# Добавление корня проекта в PYTHONPATH
 project_root = Path(__file__).parent.parent
 
 if str(project_root) in sys.path:
@@ -142,7 +144,7 @@ USER_TABLES = [
 
 
 async def get_existing_tables(session) -> set[str]:
-    """Получение списка существующих таблиц в БД main"""
+    """Получение списка существующих таблиц в БД main."""
     try:
         result = await session.execute(
             text("""
@@ -159,7 +161,7 @@ async def get_existing_tables(session) -> set[str]:
 
 
 async def get_table_count(session, table_name: str) -> int:
-    """Получение количества строк в таблице"""
+    """Получение количества строк в таблице."""
     try:
         result = await session.execute(text(f'SELECT COUNT(*) FROM "{table_name}"'))
         return result.scalar() or 0
@@ -168,7 +170,7 @@ async def get_table_count(session, table_name: str) -> int:
 
 
 async def truncate_table(session, table_name: str) -> tuple[bool, str]:
-    """TRUNCATE таблицы"""
+    """TRUNCATE таблицы."""
     try:
         await session.execute(text(f'TRUNCATE TABLE "{table_name}" CASCADE'))
         return True, f"TRUNCATE {table_name}"
@@ -177,7 +179,7 @@ async def truncate_table(session, table_name: str) -> tuple[bool, str]:
 
 
 async def delete_table_data(session, table_name: str) -> tuple[bool, str]:
-    """DELETE FROM таблицы"""
+    """DELETE FROM таблицы."""
     try:
         await session.execute(text(f'DELETE FROM "{table_name}"'))
         return True, f"DELETE {table_name}"
@@ -186,7 +188,7 @@ async def delete_table_data(session, table_name: str) -> tuple[bool, str]:
 
 
 async def drop_table(session, table_name: str) -> tuple[bool, str]:
-    """DROP TABLE"""
+    """DROP TABLE."""
     try:
         await session.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
         return True, f"DROP {table_name}"
@@ -195,7 +197,7 @@ async def drop_table(session, table_name: str) -> tuple[bool, str]:
 
 
 async def clean_table(session, table_name: str, dry_run: bool = False, drop: bool = False) -> tuple[bool, str]:
-    """Очистка одной таблицы"""
+    """Очистка одной таблицы."""
     if dry_run:
         action = "DROP" if drop else "TRUNCATE/DELETE"
         return True, f"[DRY-RUN] Would {action} {table_name}"
@@ -219,7 +221,7 @@ async def clean_table(session, table_name: str, dry_run: bool = False, drop: boo
 
 
 async def show_statistics(session, tables: list[str]) -> dict[str, int]:
-    """Показ статистики по таблицам"""
+    """Показ статистики по таблицам."""
     stats = {}
     print("\n📊 Checking table statistics...")
     print("-" * 70)
@@ -251,7 +253,7 @@ async def show_statistics(session, tables: list[str]) -> dict[str, int]:
 
 
 def get_mode_description(mode: str, tables: list[str] | None = None) -> str:
-    """Получение описания режима"""
+    """Получение описания режима."""
     descriptions = {
         "show": "Просмотр статистики",
         "users": "Удаление данных пользователей (структура сохраняется)",
@@ -264,16 +266,7 @@ def get_mode_description(mode: str, tables: list[str] | None = None) -> str:
 
 
 def prompt_confirmation(message: str, force: bool = False) -> bool:
-    """
-    Запрос подтверждения с возможностью принудительного пропуска.
-
-    Args:
-        message: Сообщение для подтверждения
-        force: Пропустить подтверждение
-
-    Returns:
-        bool: True если подтверждено, False если отменено
-    """
+    """Запрос подтверждения с возможностью принудительного пропуска."""
     if force:
         return True
 
@@ -291,26 +284,7 @@ async def main():
     parser = argparse.ArgumentParser(
         description="Clean TeamBot database (main)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Примеры использования:
-  # Показать статистику
-  python scripts/db_clean.py --show
-
-  # Удалить только данные пользователей
-  python scripts/db_clean.py --users
-
-  # Удалить все данные (структура сохраняется)
-  python scripts/db_clean.py --all-data
-
-  # Удалить все таблицы (структура + данные)
-  python scripts/db_clean.py --drop-all
-
-  # Показать, что будет удалено без выполнения
-  python scripts/db_clean.py --users --dry-run
-
-  # Очистить только указанные таблицы
-  python scripts/db_clean.py --tables TUsers TChats
-        """,
+        epilog=__doc__,
     )
 
     parser.add_argument("--users", action="store_true", help="Delete only user data (preserve structure)")
@@ -431,7 +405,6 @@ async def main():
 
             # Для DROP ALL таблицы нужно удалять в обратном порядке (сначала дочерние)
             if mode == "drop_all":
-                # Сортируем по индексу в ALL_TABLES (обратный порядок)
                 tables_to_process = sorted(
                     tables_to_process, key=lambda x: ALL_TABLES.index(x) if x in ALL_TABLES else 999, reverse=True
                 )

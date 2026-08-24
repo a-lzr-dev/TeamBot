@@ -11,7 +11,7 @@ INIT_FLAG_FILE = PROJECT_ROOT / ".project_initialized"
 
 
 def parse_arguments() -> argparse.Namespace:
-    """Парсинг аргументов командной строки"""
+    """Парсинг аргументов командной строки."""
     parser = argparse.ArgumentParser(
         description="Запуск приложения TeamBot",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -65,7 +65,7 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def get_components_for_mode(mode: str) -> list[str]:
-    """Определение списка компонентов для запуска в зависимости от режима"""
+    """Определение списка компонентов для запуска в зависимости от режима."""
     components_map = {
         "full": ["db", "api", "bot"],
         "api": ["db", "api"],
@@ -77,13 +77,12 @@ def get_components_for_mode(mode: str) -> list[str]:
 
 
 def is_dev_mode(mode: str) -> bool:
-    """Проверка, является ли режим режимом разработки"""
+    """Проверка, является ли режим режимом разработки."""
     return mode == "dev"
 
 
 async def check_and_init_project(force: bool = False, skip: bool = False) -> None:
-    """
-    Проверка инициализации проекта и запуск seed при необходимости.
+    """Проверка инициализации проекта и запуск seed при необходимости.
 
     Args:
         force: Принудительно запустить инициализацию
@@ -144,7 +143,7 @@ async def check_and_init_project(force: bool = False, skip: bool = False) -> Non
 
 
 async def run_application(mode: str, components: list[str]) -> None:
-    """Запуск приложения в указанном режиме"""
+    """Запуск приложения в указанном режиме."""
     app_logger.debug(f"🚀 Starting application in {mode} mode...")
 
     from app.config import settings
@@ -191,7 +190,7 @@ async def run_application(mode: str, components: list[str]) -> None:
 
 
 async def run_dev_mode(host: str | None = None, port: int | None = None) -> None:
-    """Запуск API в режиме разработки с автоперезагрузкой"""
+    """Запуск API в режиме разработки с автоперезагрузкой."""
     try:
         import uvicorn
 
@@ -246,7 +245,7 @@ async def run_dev_mode(host: str | None = None, port: int | None = None) -> None
 
 
 async def main() -> None:
-    """Основная асинхронная функция"""
+    """Основная асинхронная функция."""
     args = parse_arguments()
 
     # Проверка инициализации проекта
@@ -279,7 +278,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    """Точка входа в приложение"""
+    """Точка входа в приложение."""
     app_logger.debug("🚀 Application starting...")
 
     try:

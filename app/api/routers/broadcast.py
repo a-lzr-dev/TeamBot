@@ -1,5 +1,4 @@
-"""
-Модуль маршрутов для управления массовыми рассылками (Broadcast).
+"""Модуль маршрутов для управления массовыми рассылками (Broadcast).
 
 Этот модуль предоставляет API эндпоинты для работы с рассылками в Telegram боте:
 - Создание новой рассылки
@@ -46,11 +45,10 @@ _chat_repo = ChatRepository()
 
 
 class CreateBroadcastRequest(BaseModel):
-    """
-    Модель запроса для создания новой рассылки.
+    """Модель запроса для создания новой рассылки.
 
-    Поддерживает все параметры отправки сообщений в Telegram,
-    а также фильтрацию чатов по типам и исключение указанных чатов.
+    Поддерживает все параметры отправки сообщений в Telegram, а также фильтрацию чатов по типам и исключение указанных
+    чатов.
     """
 
     text: str = Field(..., description="Текст сообщения для рассылки", min_length=1, max_length=4096)
@@ -67,8 +65,7 @@ class CreateBroadcastRequest(BaseModel):
     @field_validator("parse_mode")
     @classmethod
     def validate_parse_mode(cls, v: str | None) -> str | None:
-        """
-        Валидация режима парсинга.
+        """Валидация режима парсинга.
 
         Args:
             v: Режим парсинга
@@ -148,8 +145,7 @@ class ErrorResponse(BaseModel):
 
 
 async def _get_bot_manager() -> BotManager:
-    """
-    Получение экземпляра BotManager с проверкой статуса.
+    """Получение экземпляра BotManager с проверкой статуса.
 
     Returns:
         BotManager: Экземпляр менеджера бота
@@ -170,8 +166,7 @@ def _is_admin(user_id: int) -> bool:
 
 
 async def _get_sender_info(user_id: int) -> dict:
-    """
-    Получение информации об отправителе.
+    """Получение информации об отправителе.
 
     Args:
         user_id: ID пользователя
@@ -222,8 +217,7 @@ async def create_broadcast(
     user_id: int = Query(..., description="ID пользователя, создающего рассылку", gt=0),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Создание и выполнение массовой рассылки.
+    """Создание и выполнение массовой рассылки.
 
     Args:
         request: Данные для создания рассылки
@@ -360,8 +354,7 @@ async def cancel_broadcast(
     user_id: int = Query(..., description="ID пользователя, отменяющего рассылку", gt=0),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Отмена рассылки с удалением всех сообщений.
+    """Отмена рассылки с удалением всех сообщений.
 
     Args:
         broadcast_id: ID рассылки для отмены
@@ -474,8 +467,7 @@ async def get_broadcasts(
     status: str | None = Query(None, description="Фильтр по статусу: pending, sent, cancelled, failed"),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение списка рассылок с пагинацией и фильтрацией.
+    """Получение списка рассылок с пагинацией и фильтрацией.
 
     Args:
         limit: Количество записей на странице
@@ -546,8 +538,7 @@ async def get_broadcast(
     broadcast_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение детальной информации о рассылке.
+    """Получение детальной информации о рассылке.
 
     Args:
         broadcast_id: ID рассылки
@@ -622,8 +613,7 @@ async def get_broadcast(
 async def get_broadcast_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по рассылкам.
+    """Получение статистики по рассылкам.
 
     Args:
         session: Асинхронная сессия SQLAlchemy

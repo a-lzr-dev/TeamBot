@@ -10,7 +10,7 @@ from ...utils.decorators import log_exceptions
 
 
 class ErrorFilterRepository:
-    """Репозиторий для работы с фильтрами ошибок"""
+    """Репозиторий для работы с фильтрами ошибок."""
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -19,8 +19,7 @@ class ErrorFilterRepository:
         chat_id: int,
         active_only: bool = True,
     ) -> list[ErrorFilterModel]:
-        """
-        Получение фильтров для чата.
+        """Получение фильтров для чата.
 
         Args:
             session: Сессия БД
@@ -52,8 +51,7 @@ class ErrorFilterRepository:
         chat_id: int,
         error: ErrorModel,
     ) -> bool:
-        """
-        Проверка, фильтруется ли ошибка.
+        """Проверка, фильтруется ли ошибка.
 
         Args:
             session: Сессия БД
@@ -121,8 +119,7 @@ class ErrorFilterRepository:
         is_regex: bool = False,
         description: str | None = None,
     ) -> ErrorFilterModel:
-        """
-        Создание фильтра ошибок.
+        """Создание фильтра ошибок.
 
         Args:
             session: Сессия БД
@@ -164,8 +161,7 @@ class ErrorFilterRepository:
         filter_id: int,
         **kwargs: Any,
     ) -> ErrorFilterModel | None:
-        """
-        Обновление фильтра.
+        """Обновление фильтра.
 
         Args:
             session: Сессия БД
@@ -203,8 +199,7 @@ class ErrorFilterRepository:
         session: AsyncSession,
         filter_id: int,
     ) -> bool:
-        """
-        Удаление фильтра (мягкое удаление).
+        """Удаление фильтра (мягкое удаление).
 
         Args:
             session: Сессия БД
@@ -238,8 +233,7 @@ class ErrorFilterRepository:
         session: AsyncSession,
         filter_id: int,
     ) -> bool:
-        """
-        Активация фильтра.
+        """Активация фильтра.
 
         Args:
             session: Сессия БД

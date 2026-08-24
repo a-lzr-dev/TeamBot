@@ -1,5 +1,4 @@
-"""
-Репозиторий для работы с меню действий Avanpost.
+"""Репозиторий для работы с меню действий Avanpost.
 
 Поддерживает:
 - Получение списка групп действий
@@ -27,9 +26,7 @@ from ...utils.decorators import log_exceptions
 
 
 class AvanpostActionRepository:
-    """
-    Репозиторий для работы с меню действий Avanpost.
-    """
+    """Репозиторий для работы с меню действий Avanpost."""
 
     # ==================== ГРУППЫ ДЕЙСТВИЙ ====================
 
@@ -39,8 +36,7 @@ class AvanpostActionRepository:
         session: AsyncSession,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка всех групп действий с учетом языка.
+        """Получение списка всех групп действий с учетом языка.
 
         Args:
             session: Сессия БД (main)
@@ -88,8 +84,7 @@ class AvanpostActionRepository:
         parent_item_id: int | None = None,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение пунктов меню для указанной группы с учетом языка.
+        """Получение пунктов меню для указанной группы с учетом языка.
 
         Использует SQLAlchemy ORM с предзагрузкой переводов.
 
@@ -198,8 +193,7 @@ class AvanpostActionRepository:
         parent_item_id: int | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение пунктов меню с информацией о родителе.
+        """Получение пунктов меню с информацией о родителе.
 
         Args:
             session: Сессия БД (main)
@@ -253,8 +247,7 @@ class AvanpostActionRepository:
         item_id: int,
         lang_code: str = "RU",
     ) -> dict[str, Any] | None:
-        """
-        Получение конкретного пункта меню по ID.
+        """Получение конкретного пункта меню по ID.
 
         Args:
             session: Сессия БД (main)
@@ -321,8 +314,7 @@ class AvanpostActionRepository:
         group_id: int,
         item_id: int,
     ) -> bool:
-        """
-        Проверка, есть ли у пункта меню дочерние элементы.
+        """Проверка, есть ли у пункта меню дочерние элементы.
 
         Args:
             session: Сессия БД (main)
@@ -367,8 +359,7 @@ class AvanpostActionRepository:
         max_depth: int = 5,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение полного дерева меню (рекурсивно).
+        """Получение полного дерева меню (рекурсивно).
 
         Args:
             session: Сессия БД (main)
@@ -424,8 +415,7 @@ class AvanpostActionRepository:
         parent_item_id: int | None = None,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение пунктов меню через сырой SQL (оптимизированный вариант).
+        """Получение пунктов меню через сырой SQL (оптимизированный вариант).
 
         Используется для случаев, когда нужна максимальная производительность.
 
@@ -513,8 +503,7 @@ class AvanpostActionRepository:
         item_id: int,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение всех предков пункта меню (путь от корня до элемента).
+        """Получение всех предков пункта меню (путь от корня до элемента).
 
         Args:
             session: Сессия БД (main)
@@ -616,8 +605,7 @@ class AvanpostActionRepository:
         action_id: int,
         session: AsyncSession,
     ) -> dict[str, Any] | None:
-        """
-        Получает информацию о действии с названиями типа и сценария.
+        """Получает информацию о действии с названиями типа и сценария.
 
         Args:
             action_id: ID пункта меню
@@ -682,8 +670,7 @@ class AvanpostActionRepository:
         action_id: int,
         session: AsyncSession,
     ) -> dict[str, Any] | None:
-        """
-        Получает детальную информацию о сценарии действия.
+        """Получает детальную информацию о сценарии действия.
 
         Args:
             action_id: ID пункта меню
@@ -758,8 +745,7 @@ class AvanpostActionRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """
-        Получает список действий по типу сценария.
+        """Получает список действий по типу сценария.
 
         Args:
             fk_type: ID типа сценария (TAvanpostDirScenariosTypes.FID)
@@ -832,8 +818,7 @@ class AvanpostActionRepository:
     async def get_scenario_types_dict(
         session: AsyncSession,
     ) -> dict[int, dict[str, Any]]:
-        """
-        Получает словарь типов сценариев для кеширования.
+        """Получает словарь типов сценариев для кеширования.
 
         Returns:
             dict: {type_id: {name, description, ...}}

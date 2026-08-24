@@ -1,5 +1,4 @@
-"""
-Сервис автоматизации задач.
+"""Сервис автоматизации задач.
 
 Отвечает за:
 1. Конвертацию документов DOC/DOCX в PDF с использованием различных методов
@@ -105,8 +104,7 @@ _user_repo = UserRepository()  # Репозиторий для пользова�
 
 
 class AutomationService:
-    """
-    Сервис для автоматизации задач.
+    """Сервис для автоматизации задач.
 
     Предоставляет методы для:
     - Конвертации документов DOC/DOCX в PDF
@@ -116,8 +114,7 @@ class AutomationService:
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация сервиса автоматизации.
+        """Инициализация сервиса автоматизации.
 
         Создает временную директорию и инициализирует статистику.
         """
@@ -141,11 +138,9 @@ class AutomationService:
         return self._initialized
 
     async def initialize(self) -> None:
-        """
-        Инициализация сервиса.
+        """Инициализация сервиса.
 
-        Проверяет доступность всех методов конвертации
-        и выводит информацию о платформе.
+        Проверяет доступность всех методов конвертации и выводит информацию о платформе.
         """
         if self._initialized:
             return
@@ -178,8 +173,7 @@ class AutomationService:
         user_id: int | None = None,
         method: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Конвертация DOC/DOCX в PDF.
+        """Конвертация DOC/DOCX в PDF.
 
         Поддерживает три метода конвертации:
         1. pywin32 (Windows, использует Microsoft Word)
@@ -352,8 +346,7 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_pywin32(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через pywin32 (использует Microsoft Word).
+        """Конвертация через pywin32 (использует Microsoft Word).
 
         Доступен только на Windows. Использует COM-объект Word.Application
         для открытия документа и сохранения в PDF.
@@ -419,8 +412,7 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_comtypes(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через comtypes (альтернатива pywin32).
+        """Конвертация через comtypes (альтернатива pywin32).
 
         Доступен только на Windows. Использует COM-объект Word.Application
         через библиотеку comtypes.
@@ -470,8 +462,7 @@ class AutomationService:
 
     @staticmethod
     async def _convert_with_libreoffice(doc_path: str, pdf_path: str) -> tuple[bool, str | None]:
-        """
-        Конвертация через LibreOffice (для Linux/macOS).
+        """Конвертация через LibreOffice (для Linux/macOS).
 
         Использует утилиту командной строки soffice для конвертации
         документа в PDF без графического интерфейса (headless mode).
@@ -514,8 +505,7 @@ class AutomationService:
 
     @staticmethod
     async def _cleanup_temp_files(doc_path: Path | None, pdf_path: Path | None) -> None:
-        """
-        Очистка временных файлов.
+        """Очистка временных файлов.
 
         Удаляет временные DOC и PDF файлы после завершения конвертации.
 
@@ -546,8 +536,7 @@ class AutomationService:
         chat_id: int | None = None,
         session: AsyncSession,
     ) -> dict[str, Any]:
-        """
-        Создание заявки на автоматизацию в БД.
+        """Создание заявки на автоматизацию в БД.
 
         Args:
             user_id: ID пользователя
@@ -622,8 +611,7 @@ class AutomationService:
         offset: int = 0,
         session: AsyncSession | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка заявок из БД.
+        """Получение списка заявок из БД.
 
         Args:
             user_id: ID пользователя (опционально)
@@ -683,8 +671,7 @@ class AutomationService:
         request_id: int,
         session: AsyncSession | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Получение заявки по ID.
+        """Получение заявки по ID.
 
         Args:
             request_id: ID заявки
@@ -715,8 +702,7 @@ class AutomationService:
         completed_by: int | None = None,
         session: AsyncSession | None = None,
     ) -> dict[str, Any]:
-        """
-        Обновление статуса заявки.
+        """Обновление статуса заявки.
 
         Args:
             request_id: ID заявки
@@ -786,8 +772,7 @@ class AutomationService:
         priority: str,
         session: AsyncSession | None = None,
     ) -> dict[str, Any]:
-        """
-        Обновление приоритета заявки.
+        """Обновление приоритета заявки.
 
         Args:
             request_id: ID заявки
@@ -852,8 +837,7 @@ class AutomationService:
         end_date: str | None = None,
         session: AsyncSession | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение статистики по заявкам.
+        """Получение статистики по заявкам.
 
         Args:
             user_id: ID пользователя (опционально)
@@ -904,8 +888,7 @@ class AutomationService:
         soft: bool = True,
         session: AsyncSession | None = None,
     ) -> dict[str, Any]:
-        """
-        Удаление заявки.
+        """Удаление заявки.
 
         Args:
             request_id: ID заявки
@@ -967,8 +950,7 @@ class AutomationService:
 
     @log_exceptions(app_logger)
     async def get_conversion_stats(self) -> dict[str, Any]:
-        """
-        Получение статистики конвертаций.
+        """Получение статистики конвертаций.
 
         Returns:
             dict[str, Any]: Статистика конвертаций с полями:
@@ -1008,8 +990,7 @@ class AutomationService:
 
     @staticmethod
     async def _send_request_notification(request: Any) -> None:
-        """
-        Отправка уведомления о новой заявке в Telegram.
+        """Отправка уведомления о новой заявке в Telegram.
 
         Уведомление отправляется в топик Jobs для централизованного
         отслеживания заявок на автоматизацию.
@@ -1082,8 +1063,7 @@ class AutomationService:
 
     @staticmethod
     def _format_request(request: Any) -> dict[str, Any]:
-        """
-        Форматирование заявки для вывода.
+        """Форматирование заявки для вывода.
 
         Args:
             request: Модель заявки
@@ -1112,8 +1092,7 @@ class AutomationService:
     # ============================================================
 
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса сервиса.
+        """Получение статуса сервиса.
 
         Returns:
             dict[str, Any]: Статус сервиса с полями:
@@ -1136,8 +1115,7 @@ class AutomationService:
         }
 
     async def health_check(self) -> bool:
-        """
-        Проверка здоровья сервиса.
+        """Проверка здоровья сервиса.
 
         Returns:
             bool: True если сервис инициализирован

@@ -1,5 +1,5 @@
-"""
-Универсальные клавиатуры для типовых операций:
+"""Универсальные клавиатуры для типовых операций:
+
 - Списки с пагинацией
 - Подтверждение действий
 - Навигация
@@ -32,7 +32,7 @@ DEFAULT_BUTTONS_PER_ROW = getattr(settings, "KEYBOARD_BUTTONS_PER_ROW", 3)
 
 
 class ListKeyboardBuilder:
-    """Строитель клавиатур для списков"""
+    """Строитель клавиатур для списков."""
 
     def __init__(
         self,
@@ -41,7 +41,6 @@ class ListKeyboardBuilder:
         item_icon: str = "📌",
         max_name_length: int = 20,
     ):
-        # Убеждаемся, что префикс заканчивается на "_"
         self.callback_prefix = callback_prefix if callback_prefix.endswith("_") else f"{callback_prefix}_"
         self.buttons_per_row = buttons_per_row
         self.item_icon = item_icon
@@ -57,18 +56,7 @@ class ListKeyboardBuilder:
         item_name_formatter: Callable[[dict[str, Any]], str] | None = None,
         hide_pagination_if_single: bool = True,
     ) -> InlineKeyboardMarkup:
-        """
-        Построение клавиатуры.
-
-        Args:
-            items: Список элементов для отображения
-            current_page: Текущая страница (0-based)
-            total_pages: Всего страниц
-            search_query: Текущий поисковый запрос
-            extra_buttons: Дополнительные кнопки (текст, callback_data)
-            item_name_formatter: Функция форматирования имени элемента
-            hide_pagination_if_single: Скрывать пагинацию если всего 1 страница
-        """
+        """Построение клавиатуры."""
         from app.logger import bot_logger
 
         bot_logger.debug(f"🔍 [ListKeyboardBuilder] Building keyboard with {len(items)} items")
@@ -84,7 +72,6 @@ class ListKeyboardBuilder:
             else:
                 name = item.get("name", f"Item #{item.get('id', '?')}")
 
-            # Обрезание длинного имени
             if len(name) > self.max_name_length:
                 name = name[: self.max_name_length - 1] + "…"
 
@@ -101,8 +88,10 @@ class ListKeyboardBuilder:
         if row:
             keyboard.append(row)
 
-        # Отображение строки навигации, тольео есои есть пагинация или поиск
-        if total_pages > 1 or search_query:
+        # Отображение строки навигации
+        should_show_navigation = total_pages > 1 or not hide_pagination_if_single or search_query
+
+        if should_show_navigation:
             nav_row = []
 
             # Кнопка "Назад"
@@ -121,16 +110,8 @@ class ListKeyboardBuilder:
                         )
                     )
 
-            # Кнопка поиска + номер страницы (если страниц > 1)
-            if total_pages > 1 and not hide_pagination_if_single:
-                # Отображение номера страницы + поиск
-                page_text = f"{current_page + 1}/{total_pages}"
-                nav_row.append(
-                    InlineKeyboardButton(text=f"{page_text} 🔍 Поиск...", callback_data=f"{self.callback_prefix}search")
-                )
-            else:
-                # Отображение кнопки поиска (без номера страницы)
-                nav_row.append(InlineKeyboardButton(text="🔍 Поиск...", callback_data=f"{self.callback_prefix}search"))
+            # Кнопка поиска (всегда показываем)
+            nav_row.append(InlineKeyboardButton(text="🔍 Поиск...", callback_data=f"{self.callback_prefix}search"))
 
             # Кнопка "Вперед"
             if current_page < total_pages - 1:
@@ -170,9 +151,9 @@ class ListKeyboardBuilder:
         search_query: str | None = None,
         back_callback: str | None = None,
         back_text: str = "🔙 Назад к действиям",
-        hide_pagination_if_single: bool = True,  # <-- НОВЫЙ ПАРАМЕТР
+        hide_pagination_if_single: bool = True,
     ) -> InlineKeyboardMarkup:
-        """Построение клавиатуры с кнопкой 'Назад'"""
+        """Построение клавиатуры с кнопкой 'Назад'."""
         extra_buttons = []
         if back_callback:
             extra_buttons.append((back_text, back_callback))
@@ -182,7 +163,7 @@ class ListKeyboardBuilder:
             total_pages,
             search_query,
             extra_buttons,
-            hide_pagination_if_single=hide_pagination_if_single,  # <-- ПРОБРАСЫВАЕМ ПАРАМЕТР
+            hide_pagination_if_single=hide_pagination_if_single,
         )
 
 
@@ -198,10 +179,9 @@ def get_confirm_keyboard(
     cancel_callback: str = "cancel",
     prefix: str = "",
 ) -> InlineKeyboardMarkup:
-    """Клавиатура для подтверждения действия"""
+    """Клавиатура для подтверждения действия."""
     from .base import BaseKeyboard
 
-    # Проверка, что префикс заканчивается на "_"
     prefix_with_underscore = prefix if prefix.endswith("_") else f"{prefix}_" if prefix else ""
 
     return BaseKeyboard.get_inline_keyboard(
@@ -217,12 +197,12 @@ def get_confirm_keyboard(
 # ============================================================
 
 
-async def get_back_keyboard(
+def get_back_keyboard(
     back_text: str = "🔙 Назад",
     back_callback: str = "back",
     prefix: str = "",
 ) -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой 'Назад'"""
+    """Клавиатура с кнопкой 'Назад'."""
     from .base import BaseKeyboard
 
     prefix_with_underscore = prefix if prefix.endswith("_") else f"{prefix}_" if prefix else ""
@@ -238,7 +218,7 @@ def get_navigation_keyboard(
     home_text: str = "🏠 В главное меню",
     extra_buttons: list[tuple[str, str]] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура с навигационными кнопками"""
+    """Клавиатура с навигационными кнопками."""
     from .base import BaseKeyboard
 
     buttons = []
@@ -266,7 +246,7 @@ def get_search_keyboard(
     cancel_callback: str = "cancel_search",
     prefix: str = "",
 ) -> InlineKeyboardMarkup:
-    """Клавиатура для отмены поиска"""
+    """Клавиатура для отмены поиска."""
     from .base import BaseKeyboard
 
     prefix_with_underscore = prefix if prefix.endswith("_") else f"{prefix}_" if prefix else ""
@@ -277,10 +257,7 @@ def get_search_keyboard(
 
 
 def get_search_cancel_keyboard() -> InlineKeyboardMarkup:
-    """
-    Клавиатура для отмены поиска (универсальная, без префикса).
-    Используется как отдельная кнопка для отмены поиска в сообщениях.
-    """
+    """Клавиатура для отмены поиска (универсальная, без префикса)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="❌ Отменить поиск", callback_data="cancel_search")]]
     )
@@ -296,10 +273,9 @@ def get_priority_keyboard(
     cancel_callback: str = "cancel",
     buttons_per_row: int = 2,
 ) -> InlineKeyboardMarkup:
-    """Клавиатура для выбора приоритета"""
+    """Клавиатура для выбора приоритета."""
     from .base import BaseKeyboard
 
-    # Проверка, что префикс заканчивается на "_"
     prefix_with_underscore = callback_prefix if callback_prefix.endswith("_") else f"{callback_prefix}_"
 
     priorities = [
@@ -321,20 +297,23 @@ def get_priority_keyboard(
 
 
 def get_back_to_menu_keyboard(parent_item_id: int | None = None) -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой возврата в меню действий"""
+    """Клавиатура с кнопкой возврата в меню действий.
+
+    Все кнопки размещаются в одном ряду.
+    """
     from .base import BaseKeyboard
 
     buttons = []
-    if parent_item_id:
+    # ВАЖНО: проверяем именно на None, а не на falsy
+    if parent_item_id is not None:
         buttons.append({"text": "🔙 Назад к действиям", "callback_data": f"action_back_{parent_item_id}"})
     buttons.append({"text": "❌ Закрыть", "callback_data": "close"})
-    return BaseKeyboard.get_inline_keyboard(buttons, row_width=1)
+    # row_width = len(buttons) чтобы все кнопки были в одном ряду
+    return BaseKeyboard.get_inline_keyboard(buttons, row_width=len(buttons))
 
 
 __all__ = [
-    # Основной класс-строитель
     "ListKeyboardBuilder",
-    # Остальные клавиатуры
     "get_confirm_keyboard",
     "get_back_keyboard",
     "get_navigation_keyboard",
@@ -342,6 +321,5 @@ __all__ = [
     "get_search_cancel_keyboard",
     "get_priority_keyboard",
     "get_back_to_menu_keyboard",
-    # Константы
     "DEFAULT_BUTTONS_PER_ROW",
 ]

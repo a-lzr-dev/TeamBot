@@ -9,7 +9,7 @@ from ...logger import bot_logger
 
 
 class ErrorHandlerMiddleware(BaseMiddleware):
-    """Middleware для обработки ошибок в обработчиках Telegram"""
+    """Middleware для обработки ошибок в обработчиках Telegram."""
 
     async def __call__(
         self,
@@ -17,7 +17,7 @@ class ErrorHandlerMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обработка входящего события с перехватом ошибок"""
+        """Обработка входящего события с перехватом ошибок."""
         try:
             return await handler(event, data)
         except Exception as e:
@@ -60,7 +60,7 @@ class ErrorHandlerMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_event_summary(event: TelegramObject) -> dict[str, Any]:
-        """Получение краткой информации о событии для контекста"""
+        """Получение краткой информации о событии для контекста."""
         summary: dict[str, Any] = {"type": type(event).__name__}
 
         if isinstance(event, Message):
@@ -81,7 +81,7 @@ class ErrorHandlerMiddleware(BaseMiddleware):
 
     @staticmethod
     async def _send_error_response(event: TelegramObject, _: Exception) -> None:
-        """Отправка ответа пользователю об ошибке"""
+        """Отправка ответа пользователю об ошибке."""
         try:
             if isinstance(event, Message):
                 await event.answer("❌ Произошла ошибка при обработке запроса.\nАдминистратор уже уведомлен.")

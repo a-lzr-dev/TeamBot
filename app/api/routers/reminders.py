@@ -1,5 +1,4 @@
-"""
-Модуль роутера для управления напоминаниями и делами.
+"""Модуль роутера для управления напоминаниями и делами.
 
 Этот модуль предоставляет API эндпоинты для работы с напоминаниями:
 - Создание напоминаний (личных и групповых)
@@ -48,8 +47,7 @@ _reminder_repo = ReminderRepository()
 
 
 class CreateReminderRequest(BaseModel):
-    """
-    Модель запроса для создания напоминания.
+    """Модель запроса для создания напоминания.
 
     Поддерживает создание как личных, так и групповых дел.
     """
@@ -70,8 +68,7 @@ class CreateReminderRequest(BaseModel):
 
 
 class CompleteReminderRequest(BaseModel):
-    """
-    Модель запроса для завершения дела.
+    """Модель запроса для завершения дела.
 
     Используется для отметки дела как выполненного или невыполненного.
     """
@@ -81,8 +78,7 @@ class CompleteReminderRequest(BaseModel):
 
 
 class ReminderResponse(BaseModel):
-    """
-    Модель ответа с информацией о напоминании.
+    """Модель ответа с информацией о напоминании.
 
     Содержит все поля дела в удобном для отображения формате.
     """
@@ -108,8 +104,7 @@ class ReminderResponse(BaseModel):
 
     @classmethod
     def from_reminder_dict(cls, data: dict[str, Any]) -> "ReminderResponse":
-        """
-        Создание объекта ответа из словаря репозитория.
+        """Создание объекта ответа из словаря репозитория.
 
         Args:
             data: Словарь с данными напоминания
@@ -169,8 +164,7 @@ async def create_reminder(
     request: CreateReminderRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Создание нового напоминания.
+    """Создание нового напоминания.
 
     Поддерживает:
     - Личные дела
@@ -236,8 +230,7 @@ async def complete_reminder(
     request: CompleteReminderRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Завершение дела с указанием успешности выполнения.
+    """Завершение дела с указанием успешности выполнения.
 
     Args:
         reminder_id: ID дела для завершения
@@ -284,8 +277,7 @@ async def get_user_reminders(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
-    """
-    Получение списка дел пользователя.
+    """Получение списка дел пользователя.
 
     Поддерживает фильтрацию по:
     - Дате (дела на конкретную дату)
@@ -342,8 +334,7 @@ async def get_reminder_by_id(
     reminder_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение дела по его ID.
+    """Получение дела по его ID.
 
     Args:
         reminder_id: ID дела
@@ -398,8 +389,7 @@ async def delete_reminder(
     session: AsyncSession = Depends(get_session),
     soft: bool = True,
 ) -> JSONResponse:
-    """
-    Удаление дела.
+    """Удаление дела.
 
     Args:
         reminder_id: ID дела для удаления
@@ -451,8 +441,7 @@ async def get_reminder_stats(
     session: AsyncSession = Depends(get_session),
     period: str = Query("week", description="Период: day, week, month, year"),
 ) -> JSONResponse:
-    """
-    Получение статистики по делам пользователя.
+    """Получение статистики по делам пользователя.
 
     Возвращает:
     - Количество созданных дел
@@ -496,8 +485,7 @@ async def find_reminders_by_code_word(
     chat_id: int | None = None,
     include_completed: bool = False,
 ) -> JSONResponse:
-    """
-    Поиск дел по кодовому слову.
+    """Поиск дел по кодовому слову.
 
     Используется для быстрого доступа к делам без необходимости
     знать их ID или точное название.
@@ -548,8 +536,7 @@ async def deactivate_reminder(
     reminder_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Деактивация напоминания.
+    """Деактивация напоминания.
 
     Отключает отправку уведомлений по делу без его удаления.
 
@@ -600,8 +587,7 @@ async def bulk_deactivate_reminders(
     reminder_ids: list[int],
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Массовая деактивация напоминаний.
+    """Массовая деактивация напоминаний.
 
     Args:
         reminder_ids: Список ID дел для деактивации
@@ -641,8 +627,7 @@ async def bulk_delete_reminders(
     session: AsyncSession = Depends(get_session),
     soft: bool = True,
 ) -> JSONResponse:
-    """
-    Массовое удаление напоминаний.
+    """Массовое удаление напоминаний.
 
     Args:
         reminder_ids: Список ID дел для удаления

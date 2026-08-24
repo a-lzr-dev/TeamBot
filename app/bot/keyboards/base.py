@@ -6,12 +6,11 @@ from ...logger import bot_logger
 
 
 class BaseKeyboard:
-    """Базовый класс для клавиатур"""
+    """Базовый класс для клавиатур."""
 
     @staticmethod
     def get_inline_keyboard(buttons: list[dict[str, str]], row_width: int = 3) -> InlineKeyboardMarkup:
-        """
-        Создание инлайн-клавиатуры из списка кнопок.
+        """Создание инлайн-клавиатуры из списка кнопок.
 
         Args:
             buttons: Список словарей с ключами 'text' и 'callback_data'
@@ -49,8 +48,7 @@ class BaseKeyboard:
         one_time_keyboard: bool = True,
         row_width: int = 2,
     ) -> ReplyKeyboardMarkup:
-        """
-        Создание reply-клавиатуры.
+        """Создание reply-клавиатуры.
 
         Args:
             buttons: Список строк или словарей с ключами 'text' и 'request_contact'
@@ -85,12 +83,12 @@ class BaseKeyboard:
 
     @staticmethod
     def get_back_button(text: str = "🔙 Назад", callback_data: str = "back") -> InlineKeyboardMarkup:
-        """Создание клавиатуры с одной кнопкой 'Назад'"""
+        """Создание клавиатуры с одной кнопкой 'Назад'."""
         return BaseKeyboard.get_inline_keyboard([{"text": text, "callback_data": callback_data}])
 
     @staticmethod
     def get_home_button(text: str = "🏠 В главное меню", callback_data: str = "home") -> InlineKeyboardMarkup:
-        """Создание клавиатуры с одной кнопкой 'В главное меню'"""
+        """Создание клавиатуры с одной кнопкой 'В главное меню'."""
         return BaseKeyboard.get_inline_keyboard([{"text": text, "callback_data": callback_data}])
 
     @staticmethod
@@ -99,7 +97,7 @@ class BaseKeyboard:
         home_callback: str = "action_home",
         extra_buttons: list[dict[str, str]] | None = None,
     ) -> InlineKeyboardMarkup:
-        """Создание навигационной клавиатуры"""
+        """Создание навигационной клавиатуры."""
         buttons = []
 
         if back_callback:
@@ -114,7 +112,7 @@ class BaseKeyboard:
 
     @staticmethod
     def get_cancel_button(text: str = "❌ Отмена", callback_data: str = "cancel") -> InlineKeyboardMarkup:
-        """Создание клавиатуры с кнопкой 'Отмена'"""
+        """Создание клавиатуры с кнопкой 'Отмена'."""
         return BaseKeyboard.get_inline_keyboard([{"text": text, "callback_data": callback_data}])
 
 

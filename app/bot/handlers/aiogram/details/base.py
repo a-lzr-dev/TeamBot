@@ -1,7 +1,5 @@
-"""
-Базовый класс для обработчиков деталей (контакты, чаты и т.д.)
-Обеспечивает единообразную навигацию без тяжелой пагинации.
-"""
+"""Базовый класс для обработчиков деталей (контакты, чаты и т.д.) Обеспечивает единообразную навигацию без тяжелой
+пагинации."""
 
 from typing import Any
 
@@ -14,8 +12,7 @@ from .....models import MessageActionType, MessageType
 
 
 class BaseDetailsHandler(GenericListCallbackHandler):
-    """
-    Базовый обработчик для деталей с простой навигацией.
+    """Базовый обработчик для деталей с простой навигацией.
 
     Особенности:
     - Не использует пагинацию (детали обычно не требуют множества страниц)
@@ -29,8 +26,7 @@ class BaseDetailsHandler(GenericListCallbackHandler):
     """
 
     def __init__(self, prefix: str, list_type: str, page_size: int = 20):
-        """
-        Инициализация базового обработчика деталей.
+        """Инициализация базового обработчика деталей.
 
         Args:
             prefix: Префикс для callback_data
@@ -48,8 +44,9 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных. Должен быть переопределен в наследнике.
+        """Загрузка данных.
+
+        Должен быть переопределен в наследнике.
         """
         raise NotImplementedError("load_data must be implemented")
 
@@ -61,8 +58,9 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение деталей. Должен быть переопределен в наследнике.
+        """Отображение деталей.
+
+        Должен быть переопределен в наследнике.
         """
         raise NotImplementedError("show_list must be implemented")
 
@@ -73,9 +71,7 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """
-        Обработка выбора элемента.
-        """
+        """Обработка выбора элемента."""
         bot_manager = get_bot_manager()
         await bot_manager.send_toast(
             text=f"ℹ️ Выбран элемент #{item_id}",
@@ -83,9 +79,7 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для состояния.
-        """
+        """Получение ключей для состояния."""
         return {
             "page": f"{self.list_type}_page",
             "search_query": f"{self.list_type}_search_query",
@@ -101,8 +95,7 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         keyboard: Any,
         cleanup: bool = True,
     ) -> None:
-        """
-        Унифицированная отправка сообщения с деталями.
+        """Унифицированная отправка сообщения с деталями.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -157,8 +150,7 @@ class BaseDetailsHandler(GenericListCallbackHandler):
         close_callback: str = "close",
         extra_buttons: list[tuple[str, str]] | None = None,
     ) -> Any:
-        """
-        Построение навигационной клавиатуры.
+        """Построение навигационной клавиатуры.
 
         Args:
             back_callback: Callback для кнопки "Назад"

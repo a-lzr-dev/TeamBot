@@ -1,5 +1,4 @@
-"""
-Модуль обработчика команды /stats для бота.
+"""Модуль обработчика команды /stats для бота.
 
 Предоставляет интерактивное меню статистики с подкомандами:
 
@@ -63,8 +62,7 @@ class StatsStates(StatesGroup):
 
 
 def _format_uptime(seconds: float | None) -> str:
-    """
-    Форматирование времени работы (uptime).
+    """Форматирование времени работы (uptime).
 
     Args:
         seconds: Время в секундах
@@ -95,8 +93,7 @@ def _format_uptime(seconds: float | None) -> str:
 @router.message(Command("stats"))
 @log_exceptions(bot_logger)
 async def cmd_stats_menu(message: Message, state: FSMContext) -> None:
-    """
-    Команда /stats — открытие интерактивного меню статистики.
+    """Команда /stats — открытие интерактивного меню статистики.
 
     Отображает меню с доступными видами статистики.
     Для администраторов доступны дополнительные пункты.
@@ -145,8 +142,7 @@ async def show_stats_menu(
     state: FSMContext,
     bot_manager: BotManager,
 ) -> None:
-    """
-    Показ меню статистики.
+    """Показ меню статистики.
 
     Args:
         event: Сообщение или CallbackQuery
@@ -224,12 +220,10 @@ async def show_stats_menu(
 @router.callback_query(StatsStates.menu)
 @log_exceptions(bot_logger)
 async def handle_stats_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков меню статистики.
+    """Обработка колбэков меню статистики.
 
-    Определяет выбранный вид статистики и вызывает соответствующий обработчик.
-    ВАЖНО: Этот обработчик перехватывает ВСЕ callback-запросы в состоянии StatsStates.menu,
-    поэтому здесь нужно обрабатывать ВСЕ возможные callback_data.
+    Определяет выбранный вид статистики и вызывает соответствующий обработчик. ВАЖНО: Этот обработчик перехватывает ВСЕ
+    callback-запросы в состоянии StatsStates.menu, поэтому здесь нужно обрабатывать ВСЕ возможные callback_data.
     """
     bot_logger.debug("🔍 [handle_stats_callback] CALLED")
     bot_logger.debug(f"🔍 [handle_stats_callback] callback.data = {callback.data}")
@@ -428,8 +422,7 @@ async def _show_system_stats(callback: CallbackQuery, state: FSMContext, bot_man
 
 
 async def _show_db_stats(callback: CallbackQuery, state: FSMContext, bot_manager: BotManager) -> None:
-    """
-    Показ статистики таблиц БД (только для администраторов).
+    """Показ статистики таблиц БД (только для администраторов).
 
     Отображает количество записей во всех таблицах базы данных main.
     """
@@ -456,11 +449,9 @@ async def _show_db_stats(callback: CallbackQuery, state: FSMContext, bot_manager
 
 
 async def _send_stats_response(callback: CallbackQuery, response: str, bot_manager: BotManager) -> None:
-    """
-    Отправка ответа со статистикой.
+    """Отправка ответа со статистикой.
 
-    Редактирует текущее сообщение, заменяя меню на статистику.
-    Добавляет кнопку "Назад к меню" для возврата.
+    Редактирует текущее сообщение, заменяя меню на статистику. Добавляет кнопку "Назад к меню" для возврата.
     """
     # Кнопка возврата в меню
     keyboard = InlineKeyboardMarkup(
@@ -814,8 +805,7 @@ def _format_system_stats(stats: dict[str, Any]) -> str:
 
 
 def _format_db_stats(table_stats: dict[str, int], db_info: dict[str, Any]) -> str:
-    """
-    Форматирование статистики таблиц БД.
+    """Форматирование статистики таблиц БД.
 
     Отображает количество записей во всех таблицах базы данных main,
     отсортированных по убыванию, с общей статистикой.

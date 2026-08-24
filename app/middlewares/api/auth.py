@@ -9,7 +9,7 @@ from ...logger import api_logger
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Middleware для аутентификации запросов"""
+    """Middleware для аутентификации запросов."""
 
     # Пути, которые не требуют аутентификации
     PUBLIC_PATHS = [
@@ -47,7 +47,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not self._is_valid_api_key(api_key):
             api_logger.warning(f"⚠️ Invalid API key for {request.url.path}")
             return JSONResponse(
-                status_code=403, content={"error": "Forbidden", "message": "Invalid API key.", "path": request.url.path}
+                status_code=403,
+                content={
+                    "error": "Forbidden",
+                    "message": "Invalid API key.",
+                    "path": request.url.path,
+                },
             )
 
         # Добавление информации о пользователе в request
@@ -56,12 +61,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
     def _is_public_path(self, path: str) -> bool:
-        """Проверка, является ли путь публичным"""
+        """Проверка, является ли путь публичным."""
         return any(path.startswith(public_path) for public_path in self.PUBLIC_PATHS)
 
     @staticmethod
     def _is_valid_api_key(api_key: str) -> bool:
-        """Проверка валидности API ключа"""
+        """Проверка валидности API ключа."""
         valid_keys = getattr(settings, "API_KEYS", [])
         if not valid_keys:
             # Если ключи не настроены, разрешаем все (только для разработки)

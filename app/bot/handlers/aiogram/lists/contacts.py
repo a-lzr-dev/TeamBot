@@ -1,5 +1,4 @@
-"""
-Обработчик списка контактов пользователя (FK_Type=6).
+"""Обработчик списка контактов пользователя (FK_Type=6).
 
 Поддерживает:
 - Пагинацию
@@ -32,8 +31,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class ContactsListHandler(BaseListHandler):
-    """
-    Обработчик списка контактов пользователя (FK_Type=6).
+    """Обработчик списка контактов пользователя (FK_Type=6).
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -48,8 +46,7 @@ class ContactsListHandler(BaseListHandler):
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация обработчика списка контактов.
+        """Инициализация обработчика списка контактов.
 
         Устанавливает:
         - Префикс callback_data: "contacts"
@@ -68,8 +65,7 @@ class ContactsListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных контактов из БД.
+        """Загрузка данных контактов из БД.
 
         Args:
             session: Сессия БД
@@ -141,8 +137,7 @@ class ContactsListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка контактов пользователя.
+        """Отображение списка контактов пользователя.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -349,8 +344,7 @@ class ContactsListHandler(BaseListHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния:
@@ -372,8 +366,7 @@ class ContactsListHandler(BaseListHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:
-        """
-        Создание клавиатуры с кнопкой "Назад".
+        """Создание клавиатуры с кнопкой "Назад".
 
         Args:
             state: Состояние FSM
@@ -404,8 +397,7 @@ class ContactsListHandler(BaseListHandler):
 
     @staticmethod
     def _format_contact_item(item: dict[str, Any]) -> str:
-        """
-        Форматирование элемента контакта для отображения.
+        """Форматирование элемента контакта для отображения.
 
         Args:
             item: Словарь с данными контакта
@@ -432,8 +424,7 @@ async def show_contacts_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения списка контактов.
+    """Внешняя функция для отображения списка контактов.
 
     Используется для вызова из других модулей (например, из actions.py
     при FK_Type=6 - Открытие списка контактов).
@@ -451,8 +442,7 @@ async def show_contacts_list(
 # Регистрация обработчиков колбэков для контактов
 @router.callback_query(lambda c: c.data.startswith("contacts_"))
 async def handle_contacts_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик всех callback-запросов, начинающихся с "contacts_".
+    """Обработчик всех callback-запросов, начинающихся с "contacts_".
 
     Поддерживает:
     - Навигацию по страницам
@@ -470,8 +460,7 @@ async def handle_contacts_callback(callback: CallbackQuery, state: FSMContext) -
 # Регистрация обработчика поисковых запросов
 @router.message(SubMenuStates.searching_contacts)
 async def handle_contacts_search(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме поиска контактов.
+    """Обработчик текстовых сообщений в режиме поиска контактов.
 
     Args:
         message: Сообщение от пользователя

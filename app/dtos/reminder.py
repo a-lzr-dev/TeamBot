@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class ReminderNotificationDTO:
-    """DTO для отправки уведомления о напоминании"""
+    """DTO для отправки уведомления о напоминании."""
 
     id: int
     user_id: int
@@ -27,7 +27,7 @@ class ReminderNotificationDTO:
 
     @classmethod
     def from_model(cls, reminder: "UserReminderModel") -> "ReminderNotificationDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=reminder.FID,
             user_id=reminder.FK_User,

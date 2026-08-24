@@ -1,13 +1,18 @@
-"""
-Скрипт для управления миграциями базы данных TeamBot
+"""Скрипт для управления миграциями базы данных TeamBot.
 
 Использование:
-    python scripts/db_migrate.py --create    # Создать таблицы
-    python scripts/db_migrate.py --drop      # Удалить все таблицы
-    python scripts/db_migrate.py --reset     # Пересоздать таблицы
-    python scripts/db_migrate.py --show      # Показать все таблицы
-    python scripts/db_migrate.py --init      # Инициализировать все БД
-    python scripts/db_migrate.py --seed      # Заполнить системные данные Avanpost
+    python scripts/db_migrate.py [options]
+
+Опции:
+    --create        Создать таблицы
+    --drop          Удалить все таблицы
+    --reset         Пересоздать таблицы
+    --show          Показать все таблицы
+    --init          Инициализировать все БД
+    --seed          Заполнить системные данные Avanpost
+    --stats         Показать статистику БД
+    --close         Закрыть все соединения
+    --db NAME       Указать конкретную БД
 """
 
 import argparse
@@ -27,7 +32,7 @@ from app.models import BaseModel  # noqa: E402
 
 
 async def create_tables(db_name: str | None = None):
-    """Создание всех таблиц в указанной БД"""
+    """Создание всех таблиц в указанной БД."""
     print(f"🔄 Creating tables for database: {db_name or 'main'}...")
     try:
         await db_manager.init_tables(db_name=db_name, drop_first=False)
@@ -62,7 +67,7 @@ async def drop_tables(db_name: str | None = None):
 
 
 async def reset_tables(db_name: str | None = None):
-    """Пересоздание всех таблиц"""
+    """Пересоздание всех таблиц."""
     print(f"🔄 Resetting database: {db_name or 'main'}...")
     await drop_tables(db_name)
     await create_tables(db_name)
@@ -70,7 +75,7 @@ async def reset_tables(db_name: str | None = None):
 
 
 async def show_tables(db_name: str | None = None):
-    """Отображение всех таблиц в БД"""
+    """Отображение всех таблиц в БД."""
     print(f"📋 Listing all tables in {db_name or 'main'}...")
     try:
         engine_instance = db_manager.get_engine(db_name) if db_name else db_manager.primary
@@ -102,7 +107,7 @@ async def show_tables(db_name: str | None = None):
 
 
 async def show_stats():
-    """Отображение статистики по всем БД"""
+    """Отображение статистики по всем БД."""
     print("📊 Database Statistics")
     print("=" * 50)
 
@@ -122,7 +127,7 @@ async def show_stats():
 
 
 async def initialize_all():
-    """Инициализация всех зарегистрированных БД"""
+    """Инициализация всех зарегистрированных БД."""
     print("🔄 Initializing all databases...")
     try:
         await db_manager.initialize_all()
@@ -137,7 +142,7 @@ async def initialize_all():
 
 
 async def seed_avanpost_data():
-    """Заполнение системных данных Avanpost"""
+    """Заполнение системных данных Avanpost."""
     print("🌱 Seeding Avanpost system data types...")
 
     try:
@@ -156,7 +161,7 @@ async def seed_avanpost_data():
 
 
 async def close_all():
-    """Закрытие всех соединений"""
+    """Закрытие всех соединений."""
     print("🔄 Closing all database connections...")
     try:
         await db_manager.close_all()
@@ -167,8 +172,12 @@ async def close_all():
 
 
 async def main():
-    """Главная функция"""
-    parser = argparse.ArgumentParser(description="TeamBot Database Migration Tool")
+    """Главная функция."""
+    parser = argparse.ArgumentParser(
+        description="TeamBot Database Migration Tool",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
     parser.add_argument("--create", action="store_true", help="Create all tables")
     parser.add_argument("--drop", action="store_true", help="Drop all tables")
     parser.add_argument("--reset", action="store_true", help="Reset all tables (drop + create)")

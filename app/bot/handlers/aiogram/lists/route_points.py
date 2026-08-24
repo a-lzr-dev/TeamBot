@@ -1,5 +1,4 @@
-"""
-Обработчик списка точек маршрута (FK_Type=4).
+"""Обработчик списка точек маршрута (FK_Type=4).
 
 Поддерживает:
 - Пагинацию
@@ -41,8 +40,7 @@ class RoutePointsStates(StatesGroup):
 
 
 class RoutePointsListHandler(BaseListHandler):
-    """
-    Обработчик списка точек маршрута (FK_Type=4).
+    """Обработчик списка точек маршрута (FK_Type=4).
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -52,8 +50,7 @@ class RoutePointsListHandler(BaseListHandler):
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация обработчика списка точек маршрута.
+        """Инициализация обработчика списка точек маршрута.
 
         Устанавливает:
         - Префикс callback_data: "route_points"
@@ -72,8 +69,7 @@ class RoutePointsListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных точек маршрута из БД.
+        """Загрузка данных точек маршрута из БД.
 
         Args:
             session: Сессия БД
@@ -150,8 +146,7 @@ class RoutePointsListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка точек маршрута.
+        """Отображение списка точек маршрута.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -253,11 +248,8 @@ class RoutePointsListHandler(BaseListHandler):
                 max_name_length=30,
             )
 
-            # Добавление кнопок навигации
-            extra_buttons = []
-
             # Кнопка "Назад к заказам"
-            extra_buttons.append(("🔙 Назад к заказам", "carrier_orders_back"))
+            extra_buttons = [("🔙 Назад к заказам", "carrier_orders_back")]
 
             # Кнопка "В главное меню"
             if group_id:
@@ -313,8 +305,7 @@ class RoutePointsListHandler(BaseListHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """
-        Обработка выбора точки маршрута.
+        """Обработка выбора точки маршрута.
 
         При выборе точки показывается детальная информация о точке.
 
@@ -333,8 +324,7 @@ class RoutePointsListHandler(BaseListHandler):
         # TODO: Добавить отображение детальной информации о точке маршрута
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния
@@ -350,24 +340,31 @@ class RoutePointsListHandler(BaseListHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:
-        """
-        Создание клавиатуры с кнопкой "Назад".
-
-        Args:
-            state: Состояние FSM
-
-        Returns:
-            InlineKeyboardMarkup: Клавиатура с кнопкой назад
-        """
+        """Создание клавиатуры с кнопкой "Назад"."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         state_data = await state.get_data()
         group_id = state_data.get("group_id")
-        # parent_item_id = state_data.get("parent_item_id")
+        parent_item_id = state_data.get("parent_item_id")
 
-        buttons = [
-            InlineKeyboardButton(text="🔙 Назад к заказам", callback_data="carrier_orders_back"),
-        ]
+        buttons = []
+
+        # Кнопка "Назад к заказам" - используем parent_item_id
+        if parent_item_id is not None:
+            buttons.append(
+                InlineKeyboardButton(
+                    text="🔙 Назад к заказам",
+                    callback_data=f"action_back_{parent_item_id}",
+                )
+            )
+        else:
+            # Если parent_item_id нет, используем стандартный возврат
+            buttons.append(
+                InlineKeyboardButton(
+                    text="🔙 Назад к заказам",
+                    callback_data="carrier_orders_back",
+                )
+            )
 
         if group_id:
             buttons.append(InlineKeyboardButton(text="🏠 В главное меню", callback_data="action_home"))
@@ -379,8 +376,7 @@ class RoutePointsListHandler(BaseListHandler):
 
     @staticmethod
     def _format_route_point_item(item: dict[str, Any]) -> str:
-        """
-        Форматирование элемента точки маршрута для отображения.
+        """Форматирование элемента точки маршрута для отображения.
 
         Args:
             item: Словарь с данными точки
@@ -411,8 +407,7 @@ async def show_route_points_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения списка точек маршрута.
+    """Внешняя функция для отображения списка точек маршрута.
 
     Используется для вызова из других модулей.
 
@@ -429,8 +424,7 @@ async def show_route_points_list(
 # Регистрация обработчиков в роутере
 @router.callback_query(lambda c: c.data.startswith("route_points_"))
 async def handle_route_points_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик всех callback-запросов, начинающихся с "route_points_".
+    """Обработчик всех callback-запросов, начинающихся с "route_points_".
 
     Поддерживает:
     - Навигацию по страницам
@@ -448,8 +442,7 @@ async def handle_route_points_callback(callback: CallbackQuery, state: FSMContex
 # Регистрация обработчика поисковых запросов
 @router.message(RoutePointsStates.searching_route_points)
 async def handle_route_points_search(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме поиска точек маршрута.
+    """Обработчик текстовых сообщений в режиме поиска точек маршрута.
 
     Args:
         message: Сообщение от пользователя

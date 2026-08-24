@@ -1,5 +1,4 @@
-"""
-Централизованный модуль для всех декораторов приложения.
+"""Централизованный модуль для всех декораторов приложения.
 
 Содержит:
 1. Контекстные переменные для управления логами
@@ -24,11 +23,10 @@ from typing import Any, Protocol
 
 
 class LoggerProtocol(Protocol):
-    """
-    Протокол для объектов, поддерживающих методы логирования.
+    """Протокол для объектов, поддерживающих методы логирования.
 
-    Используется для того, чтобы декораторы могли принимать как
-    стандартный logging.Logger, так и ExtendedLogger из проекта.
+    Используется для того, чтобы декораторы могли принимать как стандартный logging.Logger, так и ExtendedLogger из
+    проекта.
     """
 
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None: ...
@@ -55,8 +53,7 @@ _timer_start = contextvars.ContextVar("timer_start", default=None)
 
 
 def is_debug_suppressed() -> bool:
-    """
-    Проверка, подавлены ли debug-логи в текущем контексте.
+    """Проверка, подавлены ли debug-логи в текущем контексте.
 
     Returns:
         bool: True если debug-логи подавлены
@@ -65,8 +62,7 @@ def is_debug_suppressed() -> bool:
 
 
 def is_all_logs_suppressed() -> bool:
-    """
-    Проверка, подавлены ли все логи в текущем контексте.
+    """Проверка, подавлены ли все логи в текущем контексте.
 
     Returns:
         bool: True если все логи подавлены
@@ -80,8 +76,8 @@ def is_all_logs_suppressed() -> bool:
 
 
 def suppress_debug_logs(func: Callable) -> Callable:
-    """
-    Декоратор, который отключает debug-логи в текущем контексте выполнения.
+    """Декоратор, который отключает debug-логи в текущем контексте выполнения.
+
     Другие параллельные задачи не затрагиваются.
 
     Использование:
@@ -126,8 +122,7 @@ def suppress_debug_logs(func: Callable) -> Callable:
 
 
 def suppress_all_logs(func: Callable) -> Callable:
-    """
-    Декоратор, который отключает ВСЕ логи (кроме critical) в текущем контексте.
+    """Декоратор, который отключает ВСЕ логи (кроме critical) в текущем контексте.
 
     Использование:
         @suppress_all_logs
@@ -166,8 +161,7 @@ def log_execution_time(
     level: int = logging.DEBUG,
     message: str = "Executed {func_name} in {duration:.2f}ms",
 ) -> Callable:
-    """
-    Декоратор для замера времени выполнения функции.
+    """Декоратор для замера времени выполнения функции.
 
     Args:
         logger: Логгер для вывода (принимает logging.Logger, ExtendedLogger или любой объект с методами логирования)
@@ -244,8 +238,7 @@ def log_exceptions(
     log_level: str = "error",
     reraise: bool = True,
 ) -> Callable:
-    """
-    Декоратор для логирования исключений в асинхронных/синхронных функциях.
+    """Декоратор для логирования исключений в асинхронных/синхронных функциях.
 
     Поддерживает:
     - Стандартный logging.Logger
@@ -256,25 +249,6 @@ def log_exceptions(
         logger: Логгер для вывода (по умолчанию app_logger)
         log_level: Уровень логирования (debug, info, warning, error, critical)
         reraise: Пробрасывать исключение дальше после логирования (по умолчанию True)
-
-    Использование:
-        @log_exceptions()
-        async def my_function():
-            raise ValueError("Something went wrong")
-        # → Логирует ошибку и пробрасывает её дальше
-
-        @log_exceptions(reraise=False)
-        async def safe_function():
-            raise ValueError("Something went wrong")
-        # → Логирует ошибку, но не пробрасывает (возвращает None)
-
-        @log_exceptions(api_logger)  # ExtendedLogger
-        async def api_handler():
-            ...
-
-        @log_exceptions(logging.getLogger("custom"))  # logging.Logger
-        async def custom_handler():
-            ...
 
     Особенности:
         - asyncio.CancelledError логируется на уровне DEBUG и пробрасывается
@@ -328,9 +302,7 @@ def log_exceptions(
 
 
 def _get_log_method(logger: Any, log_level: str) -> Callable[..., None]:
-    """
-    Безопасное получение метода логирования из объекта.
-    """
+    """Безопасное получение метода логирования из объекта."""
     # Пробуем получить метод с указанным уровнем
     if hasattr(logger, log_level):
         method = getattr(logger, log_level)
@@ -352,8 +324,7 @@ async def handle_exception(
     logger: logging.Logger | LoggerProtocol | Any | None = None,
     component: str = "app",
 ) -> None:
-    """
-    Глобальный обработчик исключений с категоризацией.
+    """Глобальный обработчик исключений с категоризацией.
 
     Args:
         exception: Исключение для обработки
@@ -397,8 +368,7 @@ def retry_on_failure(
     exceptions: tuple = (Exception,),
     logger: logging.Logger | LoggerProtocol | Any | None = None,
 ) -> Callable:
-    """
-    Декоратор для повторных попыток при ошибках.
+    """Декоратор для повторных попыток при ошибках.
 
     Args:
         attempts: Количество попыток
@@ -480,7 +450,7 @@ def retry_on_failure(
 # ============================================================
 
 
-def cached_result(ttl: int | None = None) -> Callable:
+def cached_result(ttl: float | None = None) -> Callable:
     """
     Простой декоратор для кеширования результата функции.
 
@@ -535,8 +505,8 @@ def cached_result(ttl: int | None = None) -> Callable:
 
 
 def silent_operation(log_level: str = "debug") -> Callable:
-    """
-    Комбинированный декоратор для "тихих" операций:
+    """Комбинированный декоратор для "тихих" операций:
+
     - Подавляет debug-логи
     - Измеряет время выполнения
 
@@ -578,8 +548,7 @@ def with_retry_and_log(
     logger: logging.Logger | LoggerProtocol | Any | None = None,
     log_level: str = "error",
 ) -> Callable:
-    """
-    Комбинированный декоратор: повторяет попытки и логирует финальную ошибку.
+    """Комбинированный декоратор: повторяет попытки и логирует финальную ошибку.
 
     Порядок: retry (внутри) → log_exceptions (снаружи)
 
@@ -613,8 +582,7 @@ def silent_retry(
     exceptions: tuple = (Exception,),
     log_level: str = "warning",
 ) -> Callable:
-    """
-    "Тихий" повтор: подавляет debug-логи, логирует только финальную ошибку.
+    """ "Тихий" повтор: подавляет debug-логи, логирует только финальную ошибку.
 
     Комбинация: suppress_debug_logs + with_retry_and_log
 
@@ -646,12 +614,11 @@ def robust_operation(
     log_level: str = "error",
     measure_time: bool = True,
 ) -> Callable:
-    """
-    Полный комбинированный декоратор для надежных операций.
+    """Полный комбинированный декоратор для надежных операций.
 
     Комбинация:
         - retry_on_failure: повторные попытки при ошибках
-        - log_exceptions: логирование финальной ошибки
+        - log_exceptions: логирование финальной ошибки (без проброса)
         - log_execution_time: измерение времени выполнения
         - suppress_debug_logs: подавление debug-логов
 
@@ -669,8 +636,11 @@ def robust_operation(
     """
 
     def decorator(func: Callable) -> Callable:
-        decorated = with_retry_and_log(attempts, delay, backoff, exceptions, log_level=log_level)(func)
-
+        # 1. Сначала применяем retry
+        decorated = retry_on_failure(attempts, delay, backoff, exceptions)(func)
+        # 2. Затем log_exceptions с reraise=False, чтобы подавить исключение
+        decorated = log_exceptions(logger=None, log_level=log_level, reraise=False)(decorated)
+        # 3. Можно добавить логирование времени
         if measure_time:
             level_map = {
                 "debug": logging.DEBUG,
@@ -679,7 +649,7 @@ def robust_operation(
                 "error": logging.ERROR,
             }
             decorated = log_execution_time(level=level_map.get(log_level, logging.INFO))(decorated)
-
+        # 4. Подавление debug логов
         decorated = suppress_debug_logs(decorated)
         return decorated  # type: ignore[no-any-return]
 
@@ -692,9 +662,7 @@ def robust_operation(
 
 
 def reset_all_contexts() -> None:
-    """
-    Сброс всех контекстных переменных (для тестов).
-    """
+    """Сброс всех контекстных переменных (для тестов)."""
     _suppress_debug.set(False)
     _suppress_all_logs.set(False)
     _timer_start.set(None)

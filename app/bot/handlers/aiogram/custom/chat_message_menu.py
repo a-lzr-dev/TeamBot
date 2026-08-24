@@ -1,5 +1,4 @@
-"""
-Модуль для контекстного меню сообщений.
+"""Модуль для контекстного меню сообщений.
 
 Позволяет выполнять действия с сообщениями:
 - Ответить на сообщение
@@ -47,8 +46,7 @@ async def show_message_context_menu(
     edit_original: bool = True,
     show_back_to_chat: bool = False,
 ) -> None:
-    """
-    Отображение контекстного меню для сообщения.
+    """Отображение контекстного меню для сообщения.
 
     Args:
         event: Событие (Message или CallbackQuery)
@@ -353,9 +351,7 @@ async def handle_msg_confirm_delete(callback: CallbackQuery, state: FSMContext) 
 @router.callback_query(F.data.startswith("msg_back_to_chat_"))
 @log_exceptions(bot_logger)
 async def handle_back_to_chat(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Возврат к детализации чата на ту же страницу.
-    """
+    """Возврат к детализации чата на ту же страницу."""
     bot_manager = get_bot_manager()
     await bot_manager.send_toast(text="🔙 Возврат к чату...", event=callback)
 
@@ -460,8 +456,7 @@ async def handle_msg_cancel_reply(callback: CallbackQuery, state: FSMContext) ->
 @router.message(ReplyStates.waiting_for_reply_text)
 @log_exceptions(bot_logger)
 async def handle_reply_text(message: Message, state: FSMContext) -> None:
-    """
-    Обработка текста ответа на сообщение.
+    """Обработка текста ответа на сообщение.
 
     Args:
         message: Сообщение с текстом ответа
@@ -557,9 +552,7 @@ async def handle_reply_text(message: Message, state: FSMContext) -> None:
 @router.message(lambda msg: msg.text and msg.text.startswith("/msg"))
 @log_exceptions(bot_logger)
 async def cmd_msg(message: Message, state: FSMContext) -> None:
-    """
-    Команда для открытия контекстного меню сообщения по ID.
-    """
+    """Команда для открытия контекстного меню сообщения по ID."""
     bot_manager = get_bot_manager()
 
     # Проверка существования пользователя

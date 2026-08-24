@@ -12,7 +12,7 @@ from ...logger import api_logger
 
 
 class APIRateLimitMiddleware(BaseHTTPMiddleware):
-    """Middleware для ограничения частоты запросов к API"""
+    """Middleware для ограничения частоты запросов к API."""
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class APIRateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _ensure_int(value: Any, default: int) -> int:
-        """Безопасное приведение значения к int"""
+        """Безопасное приведение значения к int."""
         if value is None:
             return default
         try:
@@ -113,7 +113,7 @@ class APIRateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _is_excluded(path: str) -> bool:
-        """Проверка, исключен ли путь из rate limiting"""
+        """Проверка, исключен ли путь из rate limiting."""
         config = rate_limit_manager.get_config(RateLimitScope.API)
         if not config:
             return False
@@ -121,19 +121,19 @@ class APIRateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _get_limit() -> int:
-        """Получение текущего лимита"""
+        """Получение текущего лимита."""
         config = rate_limit_manager.get_config(RateLimitScope.API)
         return config.limit if config else 100
 
     @staticmethod
     def _get_period() -> int:
-        """Получение текущего периода"""
+        """Получение текущего периода."""
         config = rate_limit_manager.get_config(RateLimitScope.API)
         return config.period if config else 60
 
     @staticmethod
     def _get_timestamp() -> str:
-        """Получение текущего timestamp"""
+        """Получение текущего timestamp."""
         from datetime import datetime
 
         return datetime.now().isoformat() + "Z"

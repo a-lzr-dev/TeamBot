@@ -1,5 +1,4 @@
-"""
-Сервис унифицированной отправки сообщений.
+"""Сервис унифицированной отправки сообщений.
 
 Отвечает за:
 1. Отправку сообщений через Aiogram и Telethon клиенты
@@ -38,16 +37,13 @@ from ..utils.decorators import log_exceptions
 
 
 class UnifiedMessageService(BaseService):
-    """
-    Сервис для отправки сообщений через Aiogram и Telethon.
+    """Сервис для отправки сообщений через Aiogram и Telethon.
 
-    Предоставляет унифицированный интерфейс для отправки сообщений
-    с автоматическим выбором клиента и сохранением в БД.
+    Предоставляет унифицированный интерфейс для отправки сообщений с автоматическим выбором клиента и сохранением в БД.
     """
 
     def __init__(self, aiogram_client: AiogramClient, telethon_client: TelethonClient) -> None:
-        """
-        Инициализация сервиса сообщений.
+        """Инициализация сервиса сообщений.
 
         Args:
             aiogram_client: Клиент Aiogram для работы с Bot API
@@ -66,11 +62,9 @@ class UnifiedMessageService(BaseService):
         self._user_repo = UserRepository()  # Репозиторий пользователей
 
     async def initialize(self) -> None:
-        """
-        Инициализация сервиса.
+        """Инициализация сервиса.
 
-        Инициализирует клиенты Aiogram и Telethon,
-        если они еще не были инициализированы.
+        Инициализирует клиенты Aiogram и Telethon, если они еще не были инициализированы.
         """
         if self._initialized:
             return
@@ -120,8 +114,7 @@ class UnifiedMessageService(BaseService):
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Отправка сообщения через оптимальный клиент с поддержкой топиков.
+        """Отправка сообщения через оптимальный клиент с поддержкой топиков.
 
         Args:
             chat_id: ID чата в Telegram
@@ -282,8 +275,7 @@ class UnifiedMessageService(BaseService):
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Универсальный ответ на событие (сообщение или callback).
+        """Универсальный ответ на событие (сообщение или callback).
 
         Автоматически определяет тип события и выбирает правильный способ отправки.
 
@@ -418,8 +410,7 @@ class UnifiedMessageService(BaseService):
         phone: str | None = None,
         group_id: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Подготовка данных пользователя для отправки.
+        """Подготовка данных пользователя для отправки.
 
         Args:
             user_id: ID пользователя
@@ -444,8 +435,7 @@ class UnifiedMessageService(BaseService):
         }
 
     async def _send_via_aiogram(self, **kwargs: Any) -> dict[str, Any]:
-        """
-        Отправка через Aiogram с поддержкой топиков.
+        """Отправка через Aiogram с поддержкой топиков.
 
         Args:
             **kwargs: Параметры отправки
@@ -499,8 +489,7 @@ class UnifiedMessageService(BaseService):
             return {"success": False, "error": str(e), "chat_id": kwargs["chat_id"]}
 
     async def _send_via_telethon(self, **kwargs: Any) -> dict[str, Any]:
-        """
-        Отправка через Telethon.
+        """Отправка через Telethon.
 
         Args:
             **kwargs: Параметры отправки
@@ -541,8 +530,7 @@ class UnifiedMessageService(BaseService):
             return {"success": False, "error": str(e), "chat_id": kwargs["chat_id"]}
 
     async def _save_message(self, **kwargs: Any) -> ChatMessageModel | None:
-        """
-        Сохранение сообщения в БД через репозиторий.
+        """Сохранение сообщения в БД через репозиторий.
 
         Автоматически создает чат и пользователя при необходимости.
 
@@ -622,8 +610,7 @@ class UnifiedMessageService(BaseService):
             return None
 
     async def _ensure_chat_exists(self, session: AsyncSession, chat_id: int) -> ChatModel | None:
-        """
-        Проверка и создание чата при его отсутствии через ChatRepository.
+        """Проверка и создание чата при его отсутствии через ChatRepository.
 
         Args:
             session: Сессия БД
@@ -687,8 +674,7 @@ class UnifiedMessageService(BaseService):
             return None
 
     async def _ensure_user_exists(self, session: AsyncSession, **kwargs: Any) -> UserModel | None:
-        """
-        Проверка и создание/обновление пользователя через UserRepository.
+        """Проверка и создание/обновление пользователя через UserRepository.
 
         Args:
             session: Сессия БД
@@ -752,8 +738,7 @@ class UnifiedMessageService(BaseService):
 
     @staticmethod
     def _normalize_parse_mode(parse_mode: str | ParseMode | None) -> ParseMode | None:
-        """
-        Нормализация режима парсинга.
+        """Нормализация режима парсинга.
 
         Args:
             parse_mode: Режим парсинга
@@ -779,8 +764,7 @@ class UnifiedMessageService(BaseService):
         return None
 
     async def _mark_message_deleted(self, chat_id: int, message_id: int, deleted_by_type: str) -> None:
-        """
-        Отметка сообщения как удаленного в БД через ChatRepository.
+        """Отметка сообщения как удаленного в БД через ChatRepository.
 
         Args:
             chat_id: ID чата
@@ -812,8 +796,7 @@ class UnifiedMessageService(BaseService):
         reply_markup: Any = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Редактирование сообщения.
+        """Редактирование сообщения.
 
         Важно: message_thread_id не передается в edit_message_text,
         так как сообщение уже находится в топике и его ID уникален в рамках чата.
@@ -882,8 +865,7 @@ class UnifiedMessageService(BaseService):
         caption: str | None = None,
         edit_date: Any = None,
     ) -> None:
-        """
-        Обновление сообщения в БД через MessageRepository.
+        """Обновление сообщения в БД через MessageRepository.
 
         Args:
             message_id: ID сообщения
@@ -912,8 +894,7 @@ class UnifiedMessageService(BaseService):
         reply_markup: Any = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Редактирование сообщения из callback.
+        """Редактирование сообщения из callback.
 
         Args:
             callback: CallbackQuery
@@ -954,8 +935,7 @@ class UnifiedMessageService(BaseService):
 
     @log_exceptions(bot_logger)
     async def delete_message_by_id(self, chat_id: int, message_id: int) -> dict[str, Any]:
-        """
-        Удаление сообщения.
+        """Удаление сообщения.
 
         Args:
             chat_id: ID чата
@@ -1003,8 +983,7 @@ class UnifiedMessageService(BaseService):
         exclude_message_types: list[MessageType] | None = None,
         delete_by_type: str = "cleanup",
     ) -> dict[str, int]:
-        """
-        Очистка старых сообщений.
+        """Очистка старых сообщений.
 
         Args:
             chat_id: ID чата (если None - все чаты)
@@ -1122,8 +1101,7 @@ class UnifiedMessageService(BaseService):
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Отправка фото с поддержкой топиков.
+        """Отправка фото с поддержкой топиков.
 
         Args:
             chat_id: ID чата
@@ -1196,8 +1174,7 @@ class UnifiedMessageService(BaseService):
     # ============================================================
 
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса сервиса.
+        """Получение статуса сервиса.
 
         Returns:
             dict[str, Any]: Статус сервиса
@@ -1210,8 +1187,7 @@ class UnifiedMessageService(BaseService):
         }
 
     async def health_check(self) -> bool:
-        """
-        Проверка здоровья сервиса.
+        """Проверка здоровья сервиса.
 
         Returns:
             bool: True если сервис здоров

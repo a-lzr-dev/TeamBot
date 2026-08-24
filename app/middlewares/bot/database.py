@@ -9,7 +9,7 @@ from ...logger import db_logger
 
 
 class DatabaseMiddleware(BaseMiddleware):
-    """Добавление сессии БД в обработчики"""
+    """Добавление сессии БД в обработчики."""
 
     def __init__(self, auto_commit: bool = True) -> None:
         self.auto_commit = auto_commit

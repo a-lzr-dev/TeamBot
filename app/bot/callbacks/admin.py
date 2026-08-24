@@ -1,5 +1,4 @@
-"""
-Обработчик колбэков для административных действий.
+"""Обработчик колбэков для административных действий.
 
 Этот модуль предоставляет обработчики для административных колбэков:
 - Подтверждение/отмена массовой рассылки (broadcast)
@@ -23,8 +22,7 @@ from .base import BaseCallbackHandler, CallbackHandler
 
 
 class AdminCallbackHandler(BaseCallbackHandler):
-    """
-    Обработчик колбэков для административных действий.
+    """Обработчик колбэков для административных действий.
 
     Обрабатывает:
         - Подтверждение и отмену массовой рассылки
@@ -49,8 +47,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
         self._message_repo = MessageRepository()
 
     async def handle(self, callback: CallbackQuery, state: FSMContext, **kwargs: Any) -> Any:
-        """
-        Основной метод обработки административного колбэка.
+        """Основной метод обработки административного колбэка.
 
         Определяет тип колбэка и вызывает соответствующий обработчик.
 
@@ -79,8 +76,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
     @staticmethod
     async def _handle_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> None:
-        """
-        Подтверждение массовой рассылки.
+        """Подтверждение массовой рассылки.
 
         Выполняет рассылку сообщения во все активные чаты,
         формирует отчет и отображает результат.
@@ -159,8 +155,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
     @staticmethod
     async def _handle_broadcast_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-        """
-        Отмена массовой рассылки.
+        """Отмена массовой рассылки.
 
         Очищает состояние FSM и уведомляет пользователя об отмене.
 
@@ -173,8 +168,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
         await bot_manager.send_toast(text="❌ Рассылка отменена.", event=callback)
 
     async def _handle_delete_confirm(self, callback: CallbackQuery, state: FSMContext) -> None:
-        """
-        Подтверждение удаления сообщения.
+        """Подтверждение удаления сообщения.
 
         Удаляет сообщение из Telegram и помечает его как удаленное в БД.
 
@@ -243,8 +237,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
 
     @staticmethod
     async def _handle_delete_cancel(callback: CallbackQuery, state: FSMContext) -> None:
-        """
-        Отмена удаления сообщения.
+        """Отмена удаления сообщения.
 
         Очищает состояние FSM и уведомляет пользователя об отмене.
 
@@ -259,8 +252,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
     # Методы для совместимости с Message
 
     async def handle_broadcast(self, message: Message, state: FSMContext) -> None:
-        """
-        Обработка колбэка для рассылки (для Message).
+        """Обработка колбэка для рассылки (для Message).
 
         Заглушка для совместимости с интерфейсом Message.
 
@@ -271,8 +263,7 @@ class AdminCallbackHandler(BaseCallbackHandler):
         pass
 
     async def handle_delete(self, message: Message, state: FSMContext) -> None:
-        """
-        Обработка колбэка для удаления (для Message).
+        """Обработка колбэка для удаления (для Message).
 
         Заглушка для совместимости с интерфейсом Message.
 

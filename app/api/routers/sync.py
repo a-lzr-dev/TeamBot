@@ -1,5 +1,4 @@
-"""
-Модуль роутера для синхронизации данных с Avanpost.
+"""Модуль роутера для синхронизации данных с Avanpost.
 
 Этот модуль предоставляет API эндпоинты для управления синхронизацией:
 - Синхронизация базовых данных (справочники)
@@ -110,8 +109,7 @@ async def _get_sync_service() -> AvanpostSyncService:
 )
 @log_exceptions(api_logger)
 async def get_sync_status() -> JSONResponse:
-    """
-    Получение статуса синхронизации Avanpost.
+    """Получение статуса синхронизации Avanpost.
 
     Returns:
         JSONResponse: Статус синхронизации
@@ -158,8 +156,7 @@ async def get_sync_status() -> JSONResponse:
 async def sync_base_data(
     request: SyncRequest,
 ) -> JSONResponse:
-    """
-    Синхронизация базовых справочных данных Avanpost.
+    """Синхронизация базовых справочных данных Avanpost.
 
     Args:
         request: Параметры синхронизации
@@ -213,8 +210,7 @@ async def sync_base_data(
 async def sync_contacts(
     request: SyncRequest,
 ) -> JSONResponse:
-    """
-    Синхронизация контактов Avanpost.
+    """Синхронизация контактов Avanpost.
 
     Синхронизирует модели TAvanpostContacts, TAvanpostContactsLangs, TAvanpostContactsLinks.
 
@@ -286,8 +282,7 @@ async def sync_user(
     user_id: int,
     request: SyncRequest,
 ) -> JSONResponse:
-    """
-    Синхронизация данных конкретного пользователя Avanpost.
+    """Синхронизация данных конкретного пользователя Avanpost.
 
     Args:
         user_id: ID пользователя в Avanpost
@@ -353,8 +348,7 @@ async def sync_user(
 async def sync_all_users(
     request: SyncAllUsersRequest,
 ) -> JSONResponse:
-    """
-    Синхронизация данных всех пользователей Avanpost.
+    """Синхронизация данных всех пользователей Avanpost.
 
     Args:
         request: Параметры синхронизации
@@ -412,8 +406,7 @@ async def sync_all_users(
 async def seed_all_users(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Загрузка всех пользователей из Avanpost.
+    """Загрузка всех пользователей из Avanpost.
 
     Вызывает хранимую процедуру ext.PA_avp_RSAppUsers_DefaultAdding_Load
     и добавляет полученных пользователей в TAvanpostUsers.

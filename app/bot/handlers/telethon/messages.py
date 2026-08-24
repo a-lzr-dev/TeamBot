@@ -28,7 +28,7 @@ _message_repo = MessageRepository()
 
 @log_exceptions(bot_logger)
 async def handle_new_message(event: events.NewMessage.Event, client: TelegramClient) -> None:
-    """Обработчик новых сообщений через Telethon"""
+    """Обработчик новых сообщений через Telethon."""
     bot_logger.debug("handle_new_message")
 
     message: TypeMessage | None = event.message
@@ -226,7 +226,7 @@ async def handle_new_message(event: events.NewMessage.Event, client: TelegramCli
 
 @log_exceptions(bot_logger)
 async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramClient) -> None:
-    """Обработчик редактирования сообщения"""
+    """Обработчик редактирования сообщения."""
     bot_logger.debug("handle_edited_message")
 
     message: TypeMessage | None = event.message
@@ -281,7 +281,7 @@ async def handle_edited_message(event: events.MessageEdited.Event, _: TelegramCl
 
 @log_exceptions(bot_logger)
 async def handle_deleted_message(event: events.MessageDeleted.Event) -> None:
-    """Обработчик удаления сообщения"""
+    """Обработчик удаления сообщения."""
     bot_logger.debug("handle_deleted_message")
 
     if not event.deleted_ids:

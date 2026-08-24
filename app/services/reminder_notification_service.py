@@ -11,15 +11,14 @@ from ..utils.decorators import log_exceptions
 
 
 class ReminderNotificationService:
-    """Сервис для отправки уведомлений о напоминаниях"""
+    """Сервис для отправки уведомлений о напоминаниях."""
 
     def __init__(self) -> None:
         self._repository = ReminderRepository()
 
     @log_exceptions(app_logger)
     async def send_notification(self, reminder: ReminderNotificationDTO, session: AsyncSession) -> bool:
-        """
-        Отправка уведомления о напоминании.
+        """Отправка уведомления о напоминании.
 
         Args:
             reminder: DTO напоминания
@@ -86,9 +85,7 @@ class ReminderNotificationService:
 
     @staticmethod
     def _format_message(reminder: ReminderNotificationDTO) -> str:
-        """
-        Форматирование сообщения для напоминания.
-        """
+        """Форматирование сообщения для напоминания."""
         message = "🔔 **Напоминание!**\n\n"
         message += f"📌 **{reminder.title or 'Без названия'}**\n"
 
@@ -118,9 +115,7 @@ class ReminderNotificationService:
 
     @staticmethod
     async def _update_reminder_status(reminder_id: int, session: AsyncSession) -> None:
-        """
-        Обновление статуса напоминания после отправки.
-        """
+        """Обновление статуса напоминания после отправки."""
         now = datetime_now()
 
         # Получение напоминания для определения интервала

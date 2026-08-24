@@ -16,7 +16,7 @@ from ...utils.decorators import log_exceptions
 
 
 class AutomationRequestRepository:
-    """Репозиторий для работы с заявками на автоматизацию"""
+    """Репозиторий для работы с заявками на автоматизацию."""
 
     # ==================== СОЗДАНИЕ ====================
 
@@ -31,8 +31,7 @@ class AutomationRequestRepository:
         chat_id: int | None = None,
         note: str | None = None,
     ) -> UserRequestAutomationModel:
-        """
-        Создание новой заявки на автоматизацию.
+        """Создание новой заявки на автоматизацию.
 
         Args:
             session: Сессия БД
@@ -72,8 +71,7 @@ class AutomationRequestRepository:
         session: AsyncSession,
         request_id: int,
     ) -> UserRequestAutomationModel | None:
-        """
-        Получение заявки по ID.
+        """Получение заявки по ID.
 
         Args:
             session: Сессия БД
@@ -106,8 +104,7 @@ class AutomationRequestRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserRequestAutomationModel]:
-        """
-        Получение заявок пользователя.
+        """Получение заявок пользователя.
 
         Args:
             session: Сессия БД
@@ -148,8 +145,7 @@ class AutomationRequestRepository:
         offset: int = 0,
         load_user: bool = True,
     ) -> list[UserRequestAutomationModel]:
-        """
-        Получение всех заявок с фильтрацией.
+        """Получение всех заявок с фильтрацией.
 
         Args:
             session: Сессия БД
@@ -200,8 +196,7 @@ class AutomationRequestRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserRequestAutomationModel]:
-        """
-        Получение заявок по статусу.
+        """Получение заявок по статусу.
 
         Args:
             session: Сессия БД
@@ -237,8 +232,7 @@ class AutomationRequestRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserRequestAutomationModel]:
-        """
-        Получение заявок, ожидающих обработки (NEW и IN_PROGRESS).
+        """Получение заявок, ожидающих обработки (NEW и IN_PROGRESS).
 
         Args:
             session: Сессия БД
@@ -284,8 +278,7 @@ class AutomationRequestRepository:
         note: str | None = None,
         completed_by: int | None = None,
     ) -> tuple[bool, UserRequestAutomationModel | None]:
-        """
-        Обновление статуса заявки.
+        """Обновление статуса заявки.
 
         Args:
             session: Сессия БД
@@ -332,8 +325,7 @@ class AutomationRequestRepository:
         request_id: int,
         priority: UserRequestAutomationPriority,
     ) -> tuple[bool, UserRequestAutomationModel | None]:
-        """
-        Обновление приоритета заявки.
+        """Обновление приоритета заявки.
 
         Args:
             session: Сессия БД
@@ -370,8 +362,7 @@ class AutomationRequestRepository:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение статистики по заявкам.
+        """Получение статистики по заявкам.
 
         Args:
             session: Сессия БД
@@ -479,8 +470,7 @@ class AutomationRequestRepository:
         request_id: int,
         soft: bool = True,
     ) -> bool:
-        """
-        Удаление заявки (мягкое или жесткое).
+        """Удаление заявки (мягкое или жесткое).
 
         Args:
             session: Сессия БД

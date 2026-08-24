@@ -1,5 +1,4 @@
-"""
-Репозиторий для получения статистики системы.
+"""Репозиторий для получения статистики системы.
 
 Содержит методы для получения статистики по всем компонентам системы:
 - Полная статистика
@@ -33,8 +32,7 @@ from ...utils.decorators import log_exceptions
 
 
 class StatsRepository:
-    """
-    Репозиторий для получения статистики системы.
+    """Репозиторий для получения статистики системы.
 
     Все методы используют SQLAlchemy для выполнения запросов к БД.
     """
@@ -46,8 +44,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_full_stats(session: AsyncSession) -> dict[str, Any]:
-        """
-        Получение полной статистики системы.
+        """Получение полной статистики системы.
 
         Включает:
         - Чаты (всего, активные, неактивные)
@@ -211,8 +208,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_chats_stats(session: AsyncSession) -> dict[str, Any]:
-        """
-        Получение статистики по чатам.
+        """Получение статистики по чатам.
 
         Returns:
             dict: Статистика по чатам (всего, активные, неактивные, по типам)
@@ -241,8 +237,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_users_stats(session: AsyncSession) -> dict[str, Any]:
-        """
-        Получение статистики по пользователям.
+        """Получение статистики по пользователям.
 
         Returns:
             dict: Статистика по пользователям (всего, авторизованные, активные за 24ч)
@@ -283,8 +278,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_messages_stats(session: AsyncSession) -> dict[str, Any]:
-        """
-        Получение статистики по сообщениям.
+        """Получение статистики по сообщениям.
 
         Returns:
             dict: Статистика по сообщениям (всего, по типам, по дням, удаленные, с временем жизни)
@@ -373,8 +367,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_errors_stats(session: AsyncSession) -> dict[str, Any]:
-        """
-        Получение статистики по ошибкам.
+        """Получение статистики по ошибкам.
 
         Returns:
             dict: Статистика по ошибкам (всего, по статусам, по категориям, по серьезности)
@@ -442,8 +435,7 @@ class StatsRepository:
         session: AsyncSession,
         user_id: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение статистики по напоминаниям.
+        """Получение статистики по напоминаниям.
 
         Args:
             session: Сессия БД
@@ -493,8 +485,7 @@ class StatsRepository:
         session: AsyncSession,
         user_id: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение статистики по заявкам на автоматизацию.
+        """Получение статистики по заявкам на автоматизацию.
 
         Args:
             session: Сессия БД
@@ -563,8 +554,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_system_stats() -> dict[str, Any]:
-        """
-        Получение системной статистики (без БД).
+        """Получение системной статистики (без БД).
 
         Returns:
             dict: Системная статистика (версия, Python, платформа, uptime, окружение)
@@ -597,8 +587,7 @@ class StatsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_table_stats(session: AsyncSession) -> dict[str, int]:
-        """
-        Получение количества записей во всех таблицах базы данных main.
+        """Получение количества записей во всех таблицах базы данных main.
 
         Returns:
             dict[str, int]: Словарь {имя_таблицы: количество_записей}
@@ -606,13 +595,15 @@ class StatsRepository:
         db_logger.info("📊 [get_table_stats] Getting table row counts")
 
         # Получение списка всех таблиц в схеме public
-        table_query = text("""
+        table_query = text(
+            """
             SELECT table_name
             FROM information_schema.tables
             WHERE table_schema = 'public'
               AND table_type = 'BASE TABLE'
             ORDER BY table_name
-        """)
+        """
+        )
 
         result = await session.execute(table_query)
         tables = [row[0] for row in result.fetchall()]

@@ -12,7 +12,7 @@ from ..logger import app_logger
 
 
 class RateLimitStrategy(StrEnum):
-    """Стратегии ограничения скорости"""
+    """Стратегии ограничения скорости."""
 
     FIXED_WINDOW = "fixed_window"
     SLIDING_WINDOW = "sliding_window"
@@ -21,7 +21,7 @@ class RateLimitStrategy(StrEnum):
 
 @dataclass
 class RateLimitEntry:
-    """Запись о запросах для rate limiting"""
+    """Запись о запросах для rate limiting."""
 
     requests: list[float] = field(default_factory=list)
     last_reset: float = field(default_factory=time.time)
@@ -31,14 +31,14 @@ class RateLimitEntry:
     last_token_refill: float = field(default_factory=time.time)
 
     def is_blocked(self) -> bool:
-        """Проверка, заблокирован ли пользователь"""
+        """Проверка, заблокирован ли пользователь."""
         if self.blocked_until is None:
             return False
         return time.time() < self.blocked_until
 
 
 class RateLimiter:
-    """Базовый класс для ограничения скорости запросов"""
+    """Базовый класс для ограничения скорости запросов."""
 
     def __init__(
         self,
@@ -66,7 +66,7 @@ class RateLimiter:
         }
 
     def is_allowed(self, key: str) -> bool:
-        """Проверка, разрешен ли запрос для ключа"""
+        """Проверка, разрешен ли запрос для ключа."""
         current_time = time.time()
         entry = self._entries[key]
 
@@ -99,7 +99,7 @@ class RateLimiter:
         return allowed
 
     def _check_fixed_window(self, entry: RateLimitEntry, current_time: float) -> bool:
-        """Проверка в фиксированном окне"""
+        """Проверка в фиксированном окне."""
         if current_time - entry.last_reset >= self.period:
             entry.requests = []
             entry.last_reset = current_time
@@ -111,7 +111,7 @@ class RateLimiter:
         return True
 
     def _check_sliding_window(self, entry: RateLimitEntry, current_time: float) -> bool:
-        """Проверка в скользящем окне"""
+        """Проверка в скользящем окне."""
         window_start = current_time - self.period
         entry.requests = [t for t in entry.requests if t > window_start]
 
@@ -122,7 +122,7 @@ class RateLimiter:
         return True
 
     def _check_token_bucket(self, entry: RateLimitEntry, current_time: float) -> bool:
-        """Проверка в корзине токенов"""
+        """Проверка в корзине токенов."""
         elapsed = current_time - entry.last_token_refill
         tokens_to_add = elapsed * self._token_refill_rate
         entry.tokens = min(entry.tokens + tokens_to_add, self.limit)
@@ -135,7 +135,7 @@ class RateLimiter:
         return True
 
     def get_remaining(self, key: str) -> int:
-        """Получение оставшегося количества разрешенных запросов"""
+        """Получение оставшегося количества разрешенных запросов."""
         if key not in self._entries:
             return self.limit
 
@@ -165,7 +165,7 @@ class RateLimiter:
         return max(0, self.limit - len(entry.requests))
 
     def get_reset_time(self, key: str) -> float | None:
-        """Получение времени сброса ограничений"""
+        """Получение времени сброса ограничений."""
         if key not in self._entries:
             return None
 
@@ -186,13 +186,13 @@ class RateLimiter:
         return None
 
     def reset_key(self, key: str) -> None:
-        """Сброс ограничений для ключа"""
+        """Сброс ограничений для ключа."""
         if key in self._entries:
             del self._entries[key]
             app_logger.debug(f"Rate limit reset for key {key}", component=self.name)
 
     def reset_all(self) -> None:
-        """Сброс всех ограничений"""
+        """Сброс всех ограничений."""
         self._entries.clear()
         self._stats = {
             "total_requests": 0,
@@ -202,7 +202,7 @@ class RateLimiter:
         app_logger.info("All rate limits reset", component=self.name)
 
     def get_stats(self) -> dict[str, Any]:
-        """Получение статистики ограничителя"""
+        """Получение статистики ограничителя."""
         blocked_count = sum(1 for e in self._entries.values() if e.is_blocked())
 
         return {
@@ -218,7 +218,7 @@ class RateLimiter:
         }
 
     def get_entry_info(self, key: str) -> dict[str, Any] | None:
-        """Получение информации о записи"""
+        """Получение информации о записи."""
         if key not in self._entries:
             return None
 
@@ -238,7 +238,7 @@ class RateLimiter:
 def rate_limit(
     limiter: RateLimiter, key_func: Callable | None = None, on_limit_exceeded: Callable | None = None
 ) -> Callable:
-    """Декоратор для ограничения скорости вызовов функций"""
+    """Декоратор для ограничения скорости вызовов функций."""
 
     def decorator(func: Callable) -> Callable:
         @wraps(func)
@@ -278,7 +278,7 @@ def rate_limit(
 
 
 class RateLimitScope(StrEnum):
-    """Сферы применения rate limiting"""
+    """Сферы применения rate limiting."""
 
     API = "api"
     BOT = "bot"
@@ -289,7 +289,7 @@ class RateLimitScope(StrEnum):
 
 @dataclass
 class RateLimitConfig:
-    """Конфигурация для Rate Limiter"""
+    """Конфигурация для Rate Limiter."""
 
     limit: int = 100
     period: int = 60
@@ -304,7 +304,7 @@ class RateLimitConfig:
 
 
 class RateLimitManager:
-    """Централизованный менеджер для управления несколькими RateLimiter"""
+    """Централизованный менеджер для управления несколькими RateLimiter."""
 
     _instance: Optional["RateLimitManager"] = None
 
@@ -327,7 +327,7 @@ class RateLimitManager:
         self._initialized = True
 
     def register_scope(self, scope: RateLimitScope, config: RateLimitConfig) -> None:
-        """Регистрация новой конфигурации для scope"""
+        """Регистрация новой конфигурации для scope."""
         if scope in self._limiters:
             app_logger.warning(f"⚠️ Scope {scope} already registered, updating...")
 
@@ -351,7 +351,7 @@ class RateLimitManager:
         app_logger.info(f"✅ Scope {scope.value} registered with limit={config.limit}/{config.period}s")
 
     def is_allowed(self, scope: RateLimitScope, key: str, context: dict[str, Any] | None = None) -> bool:
-        """Проверка, разрешен ли запрос"""
+        """Проверка, разрешен ли запрос."""
         self._stats["total_checks"] += 1
 
         if scope not in self._limiters:
@@ -388,13 +388,13 @@ class RateLimitManager:
         return allowed
 
     def _register_default_scope(self, scope: RateLimitScope) -> None:
-        """Регистрация дефолтной конфигурации для scope"""
+        """Регистрация дефолтной конфигурации для scope."""
         default_config = RateLimitConfig(limit=100, period=60, strategy=RateLimitStrategy.SLIDING_WINDOW)
         self.register_scope(scope, default_config)
 
     @staticmethod
     def _is_whitelisted(key: str, config: RateLimitConfig) -> bool:
-        """Проверка, находится ли ключ в белом списке"""
+        """Проверка, находится ли ключ в белом списке."""
         if not config.whitelist:
             return False
 
@@ -421,7 +421,7 @@ class RateLimitManager:
 
     @staticmethod
     def _is_excluded_path(context: dict[str, Any] | None, config: RateLimitConfig) -> bool:
-        """Проверка, исключен ли путь из rate limiting"""
+        """Проверка, исключен ли путь из rate limiting."""
         if not context or not config.exclude_paths:
             return False
 
@@ -429,33 +429,33 @@ class RateLimitManager:
         return any(path.startswith(excluded) for excluded in config.exclude_paths)
 
     def get_remaining(self, scope: RateLimitScope, key: str) -> int:
-        """Получение оставшегося количества запросов"""
+        """Получение оставшегося количества запросов."""
         if scope not in self._limiters:
             return 0
 
         return self._limiters[scope].get_remaining(key)
 
     def get_reset_time(self, scope: RateLimitScope, key: str) -> float | None:
-        """Получение времени сброса"""
+        """Получение времени сброса."""
         if scope not in self._limiters:
             return None
 
         return self._limiters[scope].get_reset_time(key)
 
     def reset_scope(self, scope: RateLimitScope) -> None:
-        """Сброс всех лимитов для scope"""
+        """Сброс всех лимитов для scope."""
         if scope in self._limiters:
             self._limiters[scope].reset_all()
             app_logger.info(f"✅ Rate limits reset for scope {scope.value}")
 
     def reset_key(self, scope: RateLimitScope, key: str) -> None:
-        """Сброс лимита для конкретного ключа"""
+        """Сброс лимита для конкретного ключа."""
         if scope in self._limiters:
             self._limiters[scope].reset_key(key)
             app_logger.debug(f"✅ Rate limit reset for {scope.value}:{key}")
 
     def get_stats(self, scope: RateLimitScope | None = None) -> dict[str, Any]:
-        """Получение статистики"""
+        """Получение статистики."""
         if scope:
             if scope in self._limiters:
                 return {
@@ -474,7 +474,7 @@ class RateLimitManager:
         return stats
 
     def update_config(self, scope: RateLimitScope, **kwargs: Any) -> None:
-        """Обновление конфигурации для scope"""
+        """Обновление конфигурации для scope."""
         if scope not in self._configs:
             app_logger.warning(f"⚠️ Scope {scope} not found, registering...")
             self._register_default_scope(scope)
@@ -497,11 +497,11 @@ class RateLimitManager:
         app_logger.info(f"✅ Config updated for scope {scope.value}: {kwargs}")
 
     def get_limiter(self, scope: RateLimitScope) -> RateLimiter | None:
-        """Получение экземпляра RateLimiter для scope"""
+        """Получение экземпляра RateLimiter для scope."""
         return self._limiters.get(scope)
 
     def get_config(self, scope: RateLimitScope) -> RateLimitConfig | None:
-        """Получение конфигурации для scope"""
+        """Получение конфигурации для scope."""
         return self._configs.get(scope)
 
 

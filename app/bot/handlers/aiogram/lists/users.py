@@ -1,5 +1,4 @@
-"""
-Модуль обработчика списка пользователей.
+"""Модуль обработчика списка пользователей.
 
 Использует BaseListHandler для универсальной обработки:
 - Отображение списка с пагинацией
@@ -48,8 +47,7 @@ class UserStates(StatesGroup):
 
 
 class UsersListHandler(BaseListHandler):
-    """
-    Обработчик списка пользователей Avanpost.
+    """Обработчик списка пользователей Avanpost.
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -77,8 +75,7 @@ class UsersListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных пользователей из базы данных.
+        """Загрузка данных пользователей из базы данных.
 
         Args:
             session: Сессия БД
@@ -150,8 +147,7 @@ class UsersListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка пользователей с автоматической очисткой.
+        """Отображение списка пользователей с автоматической очисткой.
 
         Args:
             event: Сообщение или CallbackQuery
@@ -276,8 +272,7 @@ class UsersListHandler(BaseListHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """
-        Обработка выбора пользователя.
+        """Обработка выбора пользователя.
 
         При выборе пользователя:
         1. Проверяет права администратора
@@ -374,8 +369,7 @@ class UsersListHandler(BaseListHandler):
             )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для состояния.
+        """Получение ключей для состояния.
 
         Returns:
             dict: Словарь с ключами состояния
@@ -468,7 +462,10 @@ async def back_to_users(
 @router.message(Command("users"))
 @log_exceptions(bot_logger)
 async def cmd_users(message: Message, state: FSMContext) -> None:
-    """Команда для вызова списка пользователей. Доступна только для администраторов."""
+    """Команда для вызова списка пользователей.
+
+    Доступна только для администраторов.
+    """
     bot_manager = get_bot_manager()
 
     # Проверка прав администратора

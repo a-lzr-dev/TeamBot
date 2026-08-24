@@ -9,13 +9,12 @@ from ...utils.decorators import log_exceptions
 
 
 class NotificationSettingsRepository:
-    """Репозиторий для работы с настройками уведомлений"""
+    """Репозиторий для работы с настройками уведомлений."""
 
     @staticmethod
     @log_exceptions(db_logger)
     async def get_by_chat_id(session: AsyncSession, chat_id: int) -> ChatNotificationSettingsModel | None:
-        """
-        Получение настроек уведомлений для чата.
+        """Получение настроек уведомлений для чата.
 
         Args:
             session: Сессия БД
@@ -60,8 +59,7 @@ class NotificationSettingsRepository:
         auto_report_hour_start: int = 9,
         auto_report_hour_end: int = 18,
     ) -> ChatNotificationSettingsModel:
-        """
-        Создание новых настроек уведомлений для чата.
+        """Создание новых настроек уведомлений для чата.
 
         Args:
             session: Сессия БД
@@ -112,8 +110,7 @@ class NotificationSettingsRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def update(session: AsyncSession, chat_id: int, **kwargs: Any) -> ChatNotificationSettingsModel | None:
-        """
-        Обновление настроек уведомлений для чата.
+        """Обновление настроек уведомлений для чата.
 
         Args:
             session: Сессия БД

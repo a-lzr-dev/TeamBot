@@ -23,7 +23,7 @@ from ...utils.decorators import log_exceptions
 
 
 class ErrorRepository:
-    """Репозиторий для работы с ошибками"""
+    """Репозиторий для работы с ошибками."""
 
     # ==================== СОЗДАНИЕ ОШИБКИ ====================
 
@@ -42,8 +42,7 @@ class ErrorRepository:
         details: str | None = None,
         group_hash: str | None = None,
     ) -> ErrorModel:
-        """
-        Создание новой ошибки.
+        """Создание новой ошибки.
 
         Args:
             session: Сессия БД
@@ -97,8 +96,7 @@ class ErrorRepository:
         session: AsyncSession,
         error_id: int,
     ) -> ErrorModel | None:
-        """
-        Получение ошибки по ID.
+        """Получение ошибки по ID.
 
         Args:
             session: Сессия БД
@@ -130,8 +128,7 @@ class ErrorRepository:
         group_hash: str,
         statuses: list[ErrorStatus] | None = None,
     ) -> ErrorModel | None:
-        """
-        Поиск существующей ошибки по хешу и статусу.
+        """Поиск существующей ошибки по хешу и статусу.
 
         Args:
             session: Сессия БД
@@ -177,8 +174,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение списка ошибок с фильтрацией.
+        """Получение списка ошибок с фильтрацией.
 
         Args:
             session: Сессия БД
@@ -238,8 +234,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение ошибок по статусу.
+        """Получение ошибок по статусу.
 
         Args:
             session: Сессия БД
@@ -277,8 +272,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение ошибок пользователя.
+        """Получение ошибок пользователя.
 
         Args:
             session: Сессия БД
@@ -316,8 +310,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение ошибок по системе-источнику.
+        """Получение ошибок по системе-источнику.
 
         Args:
             session: Сессия БД
@@ -355,8 +348,7 @@ class ErrorRepository:
         error_id: int,
         details: str | None = None,
     ) -> ErrorModel | None:
-        """
-        Увеличение счетчика повторений ошибки.
+        """Увеличение счетчика повторений ошибки.
 
         Args:
             session: Сессия БД
@@ -398,8 +390,7 @@ class ErrorRepository:
         resolved_by: int,
         resolved_note: str | None = None,
     ) -> tuple[bool, str | None]:
-        """
-        Отметка ошибки как решенной.
+        """Отметка ошибки как решенной.
 
         Args:
             session: Сессия БД
@@ -439,8 +430,7 @@ class ErrorRepository:
         session: AsyncSession,
         error_id: int,
     ) -> tuple[bool, str | None]:
-        """
-        Переоткрытие ранее решенной ошибки.
+        """Переоткрытие ранее решенной ошибки.
 
         Args:
             session: Сессия БД
@@ -480,8 +470,7 @@ class ErrorRepository:
         status: ErrorStatus,
         note: str | None = None,
     ) -> ErrorModel | None:
-        """
-        Обновление статуса ошибки.
+        """Обновление статуса ошибки.
 
         Args:
             session: Сессия БД
@@ -518,8 +507,7 @@ class ErrorRepository:
         error_id: int,
         message_id: int,
     ) -> ErrorMessageLinkModel | None:
-        """
-        Связывание ошибки с сообщением.
+        """Связывание ошибки с сообщением.
 
         Args:
             session: Сессия БД
@@ -563,8 +551,7 @@ class ErrorRepository:
         error_id: int,
         message_id: int,
     ) -> bool:
-        """
-        Удаление связи ошибки с сообщением.
+        """Удаление связи ошибки с сообщением.
 
         Args:
             session: Сессия БД
@@ -601,8 +588,7 @@ class ErrorRepository:
         session: AsyncSession,
         error_id: int,
     ) -> int:
-        """
-        Удаление всех связей ошибки с сообщениями.
+        """Удаление всех связей ошибки с сообщениями.
 
         Args:
             session: Сессия БД
@@ -631,8 +617,7 @@ class ErrorRepository:
         session: AsyncSession,
         error_id: int,
     ) -> list[ChatMessageModel]:
-        """
-        Получение всех сообщений, связанных с ошибкой.
+        """Получение всех сообщений, связанных с ошибкой.
 
         Args:
             session: Сессия БД
@@ -663,8 +648,7 @@ class ErrorRepository:
         session: AsyncSession,
         error_id: int,
     ) -> int:
-        """
-        Получение количества сообщений, связанных с ошибкой.
+        """Получение количества сообщений, связанных с ошибкой.
 
         Args:
             session: Сессия БД
@@ -694,8 +678,7 @@ class ErrorRepository:
         error_id: int,
         delete_linked: bool = True,
     ) -> bool:
-        """
-        Удаление ошибки.
+        """Удаление ошибки.
 
         Args:
             session: Сессия БД
@@ -746,8 +729,7 @@ class ErrorRepository:
         error_ids: list[int],
         delete_linked: bool = True,
     ) -> int:
-        """
-        Пакетное удаление ошибок.
+        """Пакетное удаление ошибок.
 
         Args:
             session: Сессия БД
@@ -794,8 +776,7 @@ class ErrorRepository:
         end_date: datetime | None = None,
         category: ErrorCategory | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение статистики по ошибкам.
+        """Получение статистики по ошибкам.
 
         Args:
             session: Сессия БД
@@ -874,8 +855,7 @@ class ErrorRepository:
         session: AsyncSession,
         user_id: int,
     ) -> dict[str, Any]:
-        """
-        Получение статистики пользователя по решению ошибок.
+        """Получение статистики пользователя по решению ошибок.
 
         Args:
             session: Сессия БД
@@ -948,8 +928,7 @@ class ErrorRepository:
         end_date: datetime | None = None,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
-        """
-        Получение топ-пользователей по решению ошибок.
+        """Получение топ-пользователей по решению ошибок.
 
         Args:
             session: Сессия БД
@@ -1007,8 +986,7 @@ class ErrorRepository:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, int]:
-        """
-        Получение статистики по категориям ошибок.
+        """Получение статистики по категориям ошибок.
 
         Args:
             session: Сессия БД
@@ -1055,8 +1033,7 @@ class ErrorRepository:
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> dict[str, int]:
-        """
-        Получение статистики по уровням серьезности.
+        """Получение статистики по уровням серьезности.
 
         Args:
             session: Сессия БД
@@ -1100,8 +1077,7 @@ class ErrorRepository:
 
     @staticmethod
     def create_group_hash(error_code: str, error_message: str, source: str) -> str:
-        """
-        Создание хеша для группировки ошибок.
+        """Создание хеша для группировки ошибок.
 
         Args:
             error_code: Код ошибки
@@ -1120,8 +1096,7 @@ class ErrorRepository:
         session: AsyncSession,
         chat_id: int,
     ) -> bool:
-        """
-        Проверка существования чата в БД.
+        """Проверка существования чата в БД.
 
         Args:
             session: Сессия БД
@@ -1163,8 +1138,7 @@ class ErrorRepository:
         error_id: int | None = None,
         component: str = "app",
     ) -> ChatMessageModel | None:
-        """
-        Сохранение сообщения об ошибке в чат.
+        """Сохранение сообщения об ошибке в чат.
 
         Args:
             session: Сессия БД
@@ -1217,8 +1191,7 @@ class ErrorRepository:
         session: AsyncSession,
         group_hash: str,
     ) -> ErrorModel | None:
-        """
-        Получение ошибки по хешу группы.
+        """Получение ошибки по хешу группы.
 
         Args:
             session: Сессия БД
@@ -1252,8 +1225,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение ошибок за период.
+        """Получение ошибок за период.
 
         Args:
             session: Сессия БД
@@ -1293,8 +1265,7 @@ class ErrorRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ErrorModel]:
-        """
-        Получение нерешенных ошибок.
+        """Получение нерешенных ошибок.
 
         Args:
             session: Сессия БД
@@ -1327,8 +1298,7 @@ class ErrorRepository:
     async def get_errors_count_by_status(
         session: AsyncSession,
     ) -> dict[str, int]:
-        """
-        Получение количества ошибок по статусам.
+        """Получение количества ошибок по статусам.
 
         Args:
             session: Сессия БД

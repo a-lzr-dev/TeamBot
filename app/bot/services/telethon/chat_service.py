@@ -15,16 +15,16 @@ if TYPE_CHECKING:
 
 
 class TelethonChatService(BaseService):
-    """Сервис для работы с чатами через Telethon"""
+    """Сервис для работы с чатами через Telethon."""
 
     def __init__(self, telethon_client: TelethonClient) -> None:
-        """Инициализация сервиса"""
+        """Инициализация сервиса."""
         self._client = telethon_client
         self._telethon: TelegramClient | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Инициализация сервиса"""
+        """Инициализация сервиса."""
         if self._initialized:
             return
 
@@ -37,7 +37,7 @@ class TelethonChatService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_chats(self, session: AsyncSession, is_active: bool | None = None) -> list[ChatModel]:
-        """Получение списка чатов из БД"""
+        """Получение списка чатов из БД."""
         if not self._initialized:
             await self.initialize()
 
@@ -45,7 +45,7 @@ class TelethonChatService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_chat_from_telegram(self, chat_id: int) -> dict[str, Any] | None:
-        """Получение информации о чате из Telegram"""
+        """Получение информации о чате из Telegram."""
         if not self._initialized:
             await self.initialize()
 
@@ -84,17 +84,17 @@ class TelethonChatService(BaseService):
     async def save_chat(
         self, session: AsyncSession, chat_id: int, chat_type: str, title: str | None = None, is_active: bool = True
     ) -> ChatModel:
-        """Сохранение чата в БД"""
+        """Сохранение чата в БД."""
         return await ChatRepository.save_chat(  # type: ignore[no-any-return]
             session=session, chat_id=chat_id, chat_type=chat_type, title=title, is_active=is_active
         )
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса"""
+        """Получение статуса сервиса."""
         return {"initialized": self._initialized, "client_available": bool(self._telethon), "service": "telethon_chat"}
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса"""
+        """Проверка здоровья сервиса."""
         if not self._initialized or not self._telethon:
             return False
 

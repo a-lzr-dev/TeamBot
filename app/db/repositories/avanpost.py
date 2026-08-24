@@ -46,8 +46,7 @@ from ...utils.decorators import log_exceptions
 
 
 class AvanpostRepository:
-    """
-    Репозиторий для работы с Avanpost (MSSQL).
+    """Репозиторий для работы с Avanpost (MSSQL).
 
     Предоставляет методы для:
     - Проверки пользователей по номеру телефона
@@ -65,8 +64,7 @@ class AvanpostRepository:
         session: AsyncSession,
         phone_number: str,
     ) -> tuple[int | None, int | None, int | None]:
-        """
-        Проверка пользователя по номеру телефона через хранимую процедуру.
+        """Проверка пользователя по номеру телефона через хранимую процедуру.
 
         Вызывает ext.PA_avp_RSAppUsersObjectsContacts_Check для проверки
         существования пользователя в системе Avanpost.
@@ -115,8 +113,7 @@ class AvanpostRepository:
         session: AsyncSession,
         show_logs: bool = True,
     ) -> list[int]:
-        """
-        Получение списка ID пользователей для добавления по умолчанию.
+        """Получение списка ID пользователей для добавления по умолчанию.
 
         Вызывает ext.PA_avp_RSAppUsers_DefaultAdding_Load для получения
         списка пользователей, которые должны быть добавлены в систему.
@@ -160,8 +157,7 @@ class AvanpostRepository:
         error_code: str,
         check_procedure: str,
     ) -> bool:
-        """
-        Проверка существования ошибки через хранимую процедуру.
+        """Проверка существования ошибки через хранимую процедуру.
 
         Используется для проверки, устранена ли ошибка во внешней системе
         перед ее автоматическим решением.
@@ -195,8 +191,7 @@ class AvanpostRepository:
         last_sync: datetime | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        """
-        Вызов хранимой процедуры ext.PA_avp_RSAppBaseData_Load.
+        """Вызов хранимой процедуры ext.PA_avp_RSAppBaseData_Load.
 
         Синхронизирует базовые справочные данные из Avanpost.
 
@@ -410,8 +405,7 @@ class AvanpostRepository:
         force: bool = False,
         show_logs: bool = True,
     ) -> dict[str, Any]:
-        """
-        Вызов хранимой процедуры ext.PA_avp_RSAppUserData_Load.
+        """Вызов хранимой процедуры ext.PA_avp_RSAppUserData_Load.
 
         Синхронизирует данные конкретного пользователя из Avanpost.
         Использует ту же универсальную логику обработки JSON,
@@ -591,8 +585,7 @@ class AvanpostRepository:
         session: AsyncSession,
         message_id: int,
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка файлов (вложений) для сообщения.
+        """Получение списка файлов (вложений) для сообщения.
 
         Вызывает ext.PA_avp_RSAppContactsMsgsFiles_Load для получения
         списка файлов, прикрепленных к сообщению.

@@ -19,8 +19,8 @@ class GenericRepository:
 
     @staticmethod
     def _convert_str_to_datetime(value: Any) -> Any:
-        """
-        Конвертирование строки ISO в datetime.datetime.
+        """Конвертирование строки ISO в datetime.datetime.
+
         Поддержка форматов:
         - 2026-06-06T16:30:37.457
         - 2026-06-06T16:30:37.457Z
@@ -43,7 +43,7 @@ class GenericRepository:
 
     @staticmethod
     def _convert_record_types(model: Any, record: dict[str, Any]) -> dict[str, Any]:
-        """Конвертирование значений в соответствии с типами колонок модели"""
+        """Конвертирование значений в соответствии с типами колонок модели."""
         converted = record.copy()
 
         datetime_columns = []
@@ -116,8 +116,7 @@ class GenericRepository:
         raise_on_error: bool = False,
         show_logs: bool = True,
     ) -> tuple[int, int, int]:
-        """
-        Массовое удаление записей по первичному ключу с разбивкой на чанки.
+        """Массовое удаление записей по первичному ключу с разбивкой на чанки.
 
         Returns:
             tuple[int, int, int]: (удалено, без изменений (не найдены), ошибки)
@@ -240,8 +239,7 @@ class GenericRepository:
         raise_on_error: bool = False,
         show_logs: bool = True,
     ) -> dict[str, int]:
-        """
-        Массовое обновление или вставка записей (UPSERT) с корректным подсчётом статистики.
+        """Массовое обновление или вставка записей (UPSERT) с корректным подсчётом статистики.
 
         Returns:
             dict: {
@@ -514,8 +512,7 @@ class GenericRepository:
         commit_chunks: bool = False,
         show_logs: bool = True,
     ) -> dict[str, int]:
-        """
-        Массовое сохранение данных с использованием UPSERT.
+        """Массовое сохранение данных с использованием UPSERT.
 
         Args:
             session: Асинхронная сессия SQLAlchemy

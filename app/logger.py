@@ -1,5 +1,4 @@
-"""
-Модуль логирования TeamBot.
+"""Модуль логирования TeamBot.
 
 Предоставляет:
 1. Настройку логгеров с ротацией файлов
@@ -22,8 +21,8 @@ from .config import settings
 
 @runtime_checkable
 class LoggerProtocol(Protocol):
-    """
-    Протокол для логгера, поддерживающего основные методы логирования.
+    """Протокол для логгера, поддерживающего основные методы логирования.
+
     Совместим как с logging.Logger, так и с ExtendedLogger.
     """
 
@@ -46,8 +45,7 @@ class LoggerProtocol(Protocol):
 
 
 class ConsoleFormatter(logging.Formatter):
-    """
-    Форматтер для консольного вывода логов с цветами и выравниванием.
+    """Форматтер для консольного вывода логов с цветами и выравниванием.
 
     Особенности:
     - Цветовая подсветка уровней логирования
@@ -66,8 +64,7 @@ class ConsoleFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        """
-        Форматирование записи лога с добавлением цветов и выравниванием.
+        """Форматирование записи лога с добавлением цветов и выравниванием.
 
         Args:
             record: Запись лога
@@ -92,8 +89,8 @@ class ConsoleFormatter(logging.Formatter):
 
         # Добавление Extra к основному сообщению
         if extra_parts:
-            extra_str = " │ ".join(extra_parts)
-            result = f"{result} │ {extra_str}"
+            extra_str = " | ".join(extra_parts)
+            result = f"{result} | {extra_str}"
 
         # Восстановление оригинального значения уровня
         record.levelname = original_levelname
@@ -102,8 +99,7 @@ class ConsoleFormatter(logging.Formatter):
 
     @staticmethod
     def _format_extra_fields(record: logging.LogRecord) -> list[str]:
-        """
-        Форматирование дополнительных полей записи.
+        """Форматирование дополнительных полей записи.
 
         Args:
             record: Запись лога
@@ -117,7 +113,7 @@ class ConsoleFormatter(logging.Formatter):
         duration = getattr(record, "duration_ms", None)
         if duration is not None and duration != "N/A":
             formatted = f"{duration:.2f}ms" if isinstance(duration, int | float) else str(duration)[:50]
-            extra_parts.append(f"⏱️ {formatted}")
+            extra_parts.append(f"[TIME] {formatted}")
 
         return extra_parts
 
@@ -126,8 +122,7 @@ class ConsoleFormatter(logging.Formatter):
 
 
 class LoggerSetup:
-    """
-    Настройка логирования для всего приложения.
+    """Настройка логирования для всего приложения.
 
     Реализует синглтон для централизованного управления логгерами.
 
@@ -161,8 +156,7 @@ class LoggerSetup:
     # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
 
     def get_logger(self, name: str, level: str | None = None) -> logging.Logger:
-        """
-        Получение логгера с указанным именем.
+        """Получение логгера с указанным именем.
 
         Args:
             name: Имя логгера (app, api, bot, db, admin)
@@ -179,8 +173,7 @@ class LoggerSetup:
         return logger
 
     def get_all_loggers(self) -> dict[str, logging.Logger]:
-        """
-        Получение всех созданных логгеров.
+        """Получение всех созданных логгеров.
 
         Returns:
             dict[str, logging.Logger]: Словарь {имя: логгер}
@@ -190,8 +183,7 @@ class LoggerSetup:
     # ==================== ПРИВАТНЫЕ МЕТОДЫ ====================
 
     def _create_logger(self, name: str, level: str | None = None) -> logging.Logger:
-        """
-        Создание и настройка нового логгера.
+        """Создание и настройка нового логгера.
 
         Args:
             name: Имя логгера
@@ -214,8 +206,7 @@ class LoggerSetup:
         return logger
 
     def _get_level(self, level: str | None = None) -> int:
-        """
-        Получение числового уровня логирования.
+        """Получение числового уровня логирования.
 
         Args:
             level: Строковое представление уровня
@@ -228,8 +219,7 @@ class LoggerSetup:
         return getattr(logging, level.upper(), logging.INFO)
 
     def _add_handlers(self, logger: logging.Logger, name: str) -> None:
-        """
-        Добавление обработчиков в логгер.
+        """Добавление обработчиков в логгер.
 
         Args:
             logger: Логгер
@@ -248,8 +238,7 @@ class LoggerSetup:
 
     @staticmethod
     def _create_formatters() -> tuple[logging.Formatter, logging.Formatter]:
-        """
-        Создание форматеров для файлового и консольного вывода.
+        """Создание форматеров для файлового и консольного вывода.
 
         Returns:
             tuple[logging.Formatter, logging.Formatter]: (file_formatter, console_formatter)
@@ -267,8 +256,7 @@ class LoggerSetup:
         return file_formatter, console_formatter
 
     def _create_file_handler(self, name: str, formatter: logging.Formatter) -> RotatingFileHandler:
-        """
-        Создание файлового обработчика с ротацией.
+        """Создание файлового обработчика с ротацией.
 
         Args:
             name: Имя логгера (используется для имени файла)
@@ -290,8 +278,7 @@ class LoggerSetup:
 
     @staticmethod
     def _create_console_handler(formatter: logging.Formatter) -> logging.StreamHandler:
-        """
-        Создание консольного обработчика.
+        """Создание консольного обработчика.
 
         Args:
             formatter: Форматтер
@@ -308,8 +295,7 @@ class LoggerSetup:
 
 
 class ExtendedLogger:
-    """
-    Расширенный логгер с дополнительными методами для структурированного логирования.
+    """Расширенный логгер с дополнительными методами для структурированного логирования.
 
     Реализует LoggerProtocol.
 
@@ -321,8 +307,7 @@ class ExtendedLogger:
     """
 
     def __init__(self, logger: logging.Logger, component: str = "app"):
-        """
-        Инициализация расширенного логгера.
+        """Инициализация расширенного логгера.
 
         Args:
             logger: Базовый логгер
@@ -334,8 +319,7 @@ class ExtendedLogger:
     # ==================== БАЗОВЫЕ МЕТОДЫ ЛОГИРОВАНИЯ ====================
 
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование на уровне DEBUG с проверкой подавления.
+        """Логирование на уровне DEBUG с проверкой подавления.
 
         Args:
             msg: Сообщение
@@ -347,8 +331,7 @@ class ExtendedLogger:
         self._logger.debug(msg, *args, **kwargs)
 
     def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование на уровне INFO с проверкой подавления.
+        """Логирование на уровне INFO с проверкой подавления.
 
         Args:
             msg: Сообщение
@@ -360,8 +343,7 @@ class ExtendedLogger:
         self._logger.info(msg, *args, **kwargs)
 
     def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование на уровне WARNING с проверкой подавления.
+        """Логирование на уровне WARNING с проверкой подавления.
 
         Args:
             msg: Сообщение
@@ -373,8 +355,7 @@ class ExtendedLogger:
         self._logger.warning(msg, *args, **kwargs)
 
     def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование на уровне ERROR (всегда выводится).
+        """Логирование на уровне ERROR (всегда выводится).
 
         Args:
             msg: Сообщение
@@ -384,8 +365,7 @@ class ExtendedLogger:
         self._logger.error(msg, *args, **kwargs)
 
     def critical(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование на уровне CRITICAL (всегда выводится).
+        """Логирование на уровне CRITICAL (всегда выводится).
 
         Args:
             msg: Сообщение
@@ -395,8 +375,7 @@ class ExtendedLogger:
         self._logger.critical(msg, *args, **kwargs)
 
     def log(self, level: int, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Общий метод логирования с проверкой подавления.
+        """Общий метод логирования с проверкой подавления.
 
         Args:
             level: Уровень логирования
@@ -409,8 +388,7 @@ class ExtendedLogger:
         self._logger.log(level, msg, *args, **kwargs)
 
     def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """
-        Логирование исключения (всегда выводится с traceback).
+        """Логирование исключения (всегда выводится с traceback).
 
         Args:
             msg: Сообщение
@@ -430,8 +408,7 @@ class ExtendedLogger:
         client_ip: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Логирование HTTP-запроса.
+        """Логирование HTTP-запроса.
 
         Args:
             method: HTTP метод (GET, POST, ...)
@@ -458,8 +435,7 @@ class ExtendedLogger:
         chat_id: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Логирование Telegram-события.
+        """Логирование Telegram-события.
 
         Args:
             event_type: Тип события (command, message, callback, ...)
@@ -481,8 +457,7 @@ class ExtendedLogger:
         message: str = "Error occurred",
         **kwargs: Any,
     ) -> None:
-        """
-        Логирование ошибки с полным контекстом и стеком.
+        """Логирование ошибки с полным контекстом и стеком.
 
         Args:
             error: Исключение
@@ -501,54 +476,49 @@ class ExtendedLogger:
         self._logger.error(f"{message}: {error}", exc_info=True, extra=extra)
 
     def log_startup(self, message: str, **kwargs: Any) -> None:
-        """
-        Логирование события запуска.
+        """Логирование события запуска.
 
         Args:
             message: Сообщение
             **kwargs: Дополнительные параметры
         """
-        self._logger.info(f"🚀 {message}", extra=kwargs)
+        self._logger.info(f"[STARTUP] {message}", extra=kwargs)
 
     def log_shutdown(self, message: str, **kwargs: Any) -> None:
-        """
-        Логирование события остановки.
+        """Логирование события остановки.
 
         Args:
             message: Сообщение
             **kwargs: Дополнительные параметры
         """
-        self._logger.info(f"⛔ {message}", extra=kwargs)
+        self._logger.info(f"[SHUTDOWN] {message}", extra=kwargs)
 
     def log_success(self, message: str, **kwargs: Any) -> None:
-        """
-        Логирование успешной операции.
+        """Логирование успешной операции.
 
         Args:
             message: Сообщение
             **kwargs: Дополнительные параметры
         """
-        self._logger.info(f"✅ {message}", extra=kwargs)
+        self._logger.info(f"[SUCCESS] {message}", extra=kwargs)
 
     def log_warning(self, message: str, **kwargs: Any) -> None:
-        """
-        Логирование предупреждения с эмодзи.
+        """Логирование предупреждения.
 
         Args:
             message: Сообщение
             **kwargs: Дополнительные параметры
         """
-        self._logger.warning(f"⚠️ {message}", extra=kwargs)
+        self._logger.warning(f"[WARNING] {message}", extra=kwargs)
 
     def log_error_emoji(self, message: str, **kwargs: Any) -> None:
-        """
-        Логирование ошибки с эмодзи.
+        """Логирование ошибки.
 
         Args:
             message: Сообщение
             **kwargs: Дополнительные параметры
         """
-        self._logger.error(f"❌ {message}", extra=kwargs)
+        self._logger.error(f"[ERROR] {message}", extra=kwargs)
 
     def log_stat(
         self,
@@ -557,8 +527,7 @@ class ExtendedLogger:
         tags: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Логирование статистической метрики.
+        """Логирование статистической метрики.
 
         Args:
             metric: Название метрики (например, "users_count", "requests_per_second")
@@ -573,7 +542,7 @@ class ExtendedLogger:
         if isinstance(extra, dict):
             extra.update({"metric": metric, "stat_value": value, "stat_tags": tags})
 
-        message = f"📊 STAT: {metric}={value}"
+        message = f"[STAT] {metric}={value}"
         if tags_str:
             message += f" | {tags_str}"
 
@@ -583,8 +552,7 @@ class ExtendedLogger:
 
     @staticmethod
     def _extract_error_context(error: Exception, tb_str: str) -> dict[str, Any]:
-        """
-        Извлечение контекста ошибки.
+        """Извлечение контекста ошибки.
 
         Args:
             error: Исключение
@@ -616,8 +584,7 @@ class ExtendedLogger:
 
     @staticmethod
     def _is_debug_suppressed() -> bool:
-        """
-        Проверка, подавлены ли debug-логи в текущем контексте.
+        """Проверка, подавлены ли debug-логи в текущем контексте.
 
         Returns:
             bool: True если debug-логи подавлены
@@ -631,8 +598,7 @@ class ExtendedLogger:
 
     @staticmethod
     def _is_all_logs_suppressed() -> bool:
-        """
-        Проверка, подавлены ли все логи в текущем контексте.
+        """Проверка, подавлены ли все логи в текущем контексте.
 
         Returns:
             bool: True если все логи подавлены

@@ -7,7 +7,7 @@ from ..models import ChatMemberStatus, ChatType
 
 
 def chat_type_from_aiogram(aiogram_chat: Any | None) -> ChatType:
-    """Преобразование объекта чата из Aiogram в ChatType"""
+    """Преобразование объекта чата из Aiogram в ChatType."""
     if aiogram_chat is None:
         return ChatType.PRIVATE
 
@@ -30,7 +30,7 @@ def chat_type_from_aiogram(aiogram_chat: Any | None) -> ChatType:
 
 
 def chat_type_from_string(value: str) -> ChatType:
-    """Преобразование строкового представления в ChatType"""
+    """Преобразование строкового представления в ChatType."""
     if not value:
         return ChatType.PRIVATE
 
@@ -47,7 +47,7 @@ def chat_type_from_string(value: str) -> ChatType:
 
 
 def chat_type_from_telethon(entity: Any | None) -> ChatType:
-    """Преобразование объекта чата из Telethon в ChatType"""
+    """Преобразование объекта чата из Telethon в ChatType."""
     if entity is None:
         return ChatType.PRIVATE
 
@@ -68,7 +68,7 @@ def chat_type_from_telethon(entity: Any | None) -> ChatType:
 
 
 def chat_type_from_dialog(dialog: Any | None) -> ChatType:
-    """Преобразование объекта диалога из Telethon в ChatType"""
+    """Преобразование объекта диалога из Telethon в ChatType."""
     if dialog is None:
         return ChatType.PRIVATE
 
@@ -91,7 +91,7 @@ def chat_type_from_dialog(dialog: Any | None) -> ChatType:
 
 
 def chat_type_to_str(chat_type: ChatType) -> str:
-    """Обратное преобразование: ChatType -> строка"""
+    """Обратное преобразование: ChatType -> строка."""
     if chat_type is None:
         return "private"
     return chat_type.value if hasattr(chat_type, "value") else str(chat_type)
@@ -101,7 +101,7 @@ def chat_type_to_str(chat_type: ChatType) -> str:
 
 
 def member_status_from_aiogram(aiogram_status: Any | None) -> ChatMemberStatus:
-    """Преобразование статуса участника из Aiogram в ChatMemberStatus"""
+    """Преобразование статуса участника из Aiogram в ChatMemberStatus."""
     if aiogram_status is None:
         return ChatMemberStatus.MEMBER
 
@@ -118,7 +118,7 @@ def member_status_from_aiogram(aiogram_status: Any | None) -> ChatMemberStatus:
 
 
 def member_status_from_string(status_str: str) -> ChatMemberStatus:
-    """Преобразование строкового представления статуса в ChatMemberStatus"""
+    """Преобразование строкового представления статуса в ChatMemberStatus."""
     if not status_str:
         return ChatMemberStatus.MEMBER
 
@@ -134,7 +134,7 @@ def member_status_from_string(status_str: str) -> ChatMemberStatus:
 
 
 def member_status_from_telethon(participant: Any | None) -> ChatMemberStatus:
-    """Преобразование участника из Telethon в ChatMemberStatus"""
+    """Преобразование участника из Telethon в ChatMemberStatus."""
     if participant is None:
         return ChatMemberStatus.MEMBER
 
@@ -152,7 +152,7 @@ def member_status_from_telethon(participant: Any | None) -> ChatMemberStatus:
 
 
 def member_status_to_str(status: ChatMemberStatus) -> str:
-    """Обратное преобразование: ChatMemberStatus -> строка"""
+    """Обратное преобразование: ChatMemberStatus -> строка."""
     if status is None:
         return "member"
     return status.value if hasattr(status, "value") else str(status)
@@ -162,7 +162,7 @@ def member_status_to_str(status: ChatMemberStatus) -> str:
 
 
 def user_info_from_aiogram(aiogram_user: Any | None) -> dict[str, Any]:
-    """Извлечение информации о пользователе из объекта Aiogram"""
+    """Извлечение информации о пользователе из объекта Aiogram."""
     if aiogram_user is None:
         return {
             "user_id": 0,
@@ -182,7 +182,7 @@ def user_info_from_aiogram(aiogram_user: Any | None) -> dict[str, Any]:
 
 
 def user_info_from_telethon(telethon_user: Any | None) -> dict[str, Any]:
-    """Извлечение информации о пользователе из объекта Telethon"""
+    """Извлечение информации о пользователе из объекта Telethon."""
     if telethon_user is None:
         return {
             "user_id": 0,
@@ -217,7 +217,7 @@ def user_info_from_telethon(telethon_user: Any | None) -> dict[str, Any]:
 
 
 def safe_datetime_convert(dt: Any | None) -> datetime | None:
-    """Безопасное преобразование даты с удалением timezone"""
+    """Безопасное преобразование даты с удалением timezone."""
     if dt is None:
         return None
 
@@ -230,7 +230,7 @@ def safe_datetime_convert(dt: Any | None) -> datetime | None:
 
 
 def get_message_text(message: Any | None) -> str | None:
-    """Получение текста сообщения из Aiogram Message"""
+    """Получение текста сообщения из Aiogram Message."""
     if message is None:
         return None
 
@@ -252,7 +252,7 @@ def get_message_text(message: Any | None) -> str | None:
 
 
 def get_content_type(message: Any | None) -> str:
-    """Получение типа содержимого сообщения из Aiogram Message"""
+    """Получение типа содержимого сообщения из Aiogram Message."""
     if message is None:
         return "text"
 
@@ -272,7 +272,7 @@ def get_content_type(message: Any | None) -> str:
 
 
 def get_media_info(message: Any | None) -> dict[str, Any]:
-    """Получение информации о медиа-файле из Aiogram Message"""
+    """Получение информации о медиа-файле из Aiogram Message."""
     if message is None:
         return {}
 
@@ -369,7 +369,7 @@ def get_media_info(message: Any | None) -> dict[str, Any]:
 
 
 def extract_command(message: Any | None) -> str | None:
-    """Извлечение команды из сообщения"""
+    """Извлечение команды из сообщения."""
     if message is None:
         return None
 
@@ -384,7 +384,7 @@ def extract_command(message: Any | None) -> str | None:
 
 
 def extract_command_args(message: Any | None) -> str | None:
-    """Извлечение аргументов команды"""
+    """Извлечение аргументов команды."""
     if message is None:
         return None
 
@@ -402,7 +402,7 @@ def extract_command_args(message: Any | None) -> str | None:
 
 
 def validate_chat_id(chat_id: int | None) -> bool:
-    """Валидация ID чата"""
+    """Валидация ID чата."""
     if chat_id is None:
         return False
     # ID чата может быть отрицательным (супергруппы)
@@ -410,14 +410,14 @@ def validate_chat_id(chat_id: int | None) -> bool:
 
 
 def validate_user_id(user_id: int | None) -> bool:
-    """Валидация ID пользователя"""
+    """Валидация ID пользователя."""
     if user_id is None:
         return False
     return user_id > 0
 
 
 def validate_message_id(message_id: int | None) -> bool:
-    """Валидация ID сообщения"""
+    """Валидация ID сообщения."""
     if message_id is None:
         return False
     return message_id > 0

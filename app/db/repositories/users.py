@@ -1,5 +1,4 @@
-"""
-Репозиторий для работы с пользователями Telegram (TUsers) и их связями с Avanpost.
+"""Репозиторий для работы с пользователями Telegram (TUsers) и их связями с Avanpost.
 
 Содержит методы для:
 1. Базовых операций с пользователями (создание, обновление, поиск)
@@ -27,9 +26,7 @@ from ...utils.decorators import log_exceptions
 
 
 class UserRepository:
-    """
-    Репозиторий для работы с пользователями.
-    """
+    """Репозиторий для работы с пользователями."""
 
     # ==================== 1. БАЗОВЫЕ ОПЕРАЦИИ ====================
 
@@ -45,8 +42,7 @@ class UserRepository:
         is_bot: bool = False,
         phone: str | None = None,
     ) -> UserModel:
-        """
-        Сохранение пользователя (создание или обновление).
+        """Сохранение пользователя (создание или обновление).
 
         Args:
             session: Сессия БД
@@ -66,9 +62,6 @@ class UserRepository:
         """
         if not user_id or user_id <= 0:
             raise ValueError(f"Invalid user_id: {user_id}")
-
-        if not username:
-            username = f"user_{user_id}"
 
         db_logger.debug(f"💾 [save_user] Saving user {user_id}")
 
@@ -108,6 +101,10 @@ class UserRepository:
             else:
                 db_logger.debug(f"ℹ️ [save_user] User {user_id} already exists")
         else:
+            # Создание нового пользователя
+            if username is None:
+                username = f"user_{user_id}"
+
             user = UserModel(
                 FID=user_id,
                 FK_Chat=chat_id,
@@ -129,8 +126,7 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_user_by_id(session: AsyncSession, user_id: int, show_logs: bool = True) -> UserModel | None:
-        """
-        Получение пользователя по ID.
+        """Получение пользователя по ID.
 
         Args:
             session: Сессия БД,
@@ -158,8 +154,7 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_user_by_phone(session: AsyncSession, phone: str) -> UserModel | None:
-        """
-        Получение пользователя по номеру телефона.
+        """Получение пользователя по номеру телефона.
 
         Args:
             session: Сессия БД
@@ -197,8 +192,7 @@ class UserRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[UserModel]:
-        """
-        Получение списка всех пользователей.
+        """Получение списка всех пользователей.
 
         Args:
             session: Сессия БД
@@ -229,8 +223,7 @@ class UserRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[UserModel]:
-        """
-        Получение списка авторизованных пользователей.
+        """Получение списка авторизованных пользователей.
 
         Использует EXISTS для проверки наличия связи с AvanpostUser.
 
@@ -267,8 +260,7 @@ class UserRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_authorized_users_count(session: AsyncSession) -> int:
-        """
-        Получение количества авторизованных пользователей.
+        """Получение количества авторизованных пользователей.
 
         Использует AvanpostUserLinkModel для подсчета связей.
 
@@ -309,8 +301,7 @@ class UserRepository:
         query: str,
         limit: int = 20,
     ) -> list[UserModel]:
-        """
-        Поиск пользователей по имени, фамилии или username.
+        """Поиск пользователей по имени, фамилии или username.
 
         Args:
             session: Сессия БД
@@ -355,8 +346,7 @@ class UserRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[AvanpostUserModel]:
-        """
-        Получение всех пользователей Avanpost (TAvanpostUsers).
+        """Получение всех пользователей Avanpost (TAvanpostUsers).
 
         Args:
             session: Сессия БД
@@ -393,8 +383,7 @@ class UserRepository:
         avanpost_user_id: int,
         show_logs: bool = True,
     ) -> dict[str, Any] | None:
-        """
-        Получение данных пользователя из TAvanpostUsers.
+        """Получение данных пользователя из TAvanpostUsers.
 
         Args:
             session: Сессия БД (main)
@@ -447,8 +436,7 @@ class UserRepository:
         session: AsyncSession,
         telegram_user_id: int,
     ) -> AvanpostUserModel | None:
-        """
-        Получение AvanpostUser по Telegram ID.
+        """Получение AvanpostUser по Telegram ID.
 
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser
 
@@ -511,8 +499,7 @@ class UserRepository:
         fphone: str | None = None,
         telegram_user_id: int | None = None,
     ) -> AvanpostUserModel | None:
-        """
-        Создание нового пользователя в TAvanpostUsers.
+        """Создание нового пользователя в TAvanpostUsers.
 
         Args:
             session: Сессия БД (main)
@@ -571,8 +558,7 @@ class UserRepository:
         fname: str | None = None,
         fphone: str | None = None,
     ) -> tuple[bool, AvanpostUserModel | None]:
-        """
-        Создание или обновление пользователя Avanpost.
+        """Создание или обновление пользователя Avanpost.
 
         Args:
             session: Сессия БД (main)
@@ -678,8 +664,7 @@ class UserRepository:
         fphone: str | None = None,
         show_logs: bool = True,
     ) -> tuple[bool, AvanpostUserModel | None]:
-        """
-        Создание или обновление связи пользователя с Avanpost через UPSERT.
+        """Создание или обновление связи пользователя с Avanpost через UPSERT.
 
         Работает с новой структурой:
         - TAvanpostUsers (данные)
@@ -803,8 +788,7 @@ class UserRepository:
         avanpost_user_id: int,
         telegram_user_id: int,
     ) -> bool:
-        """
-        Обновление связи AvanpostUser с Telegram пользователем.
+        """Обновление связи AvanpostUser с Telegram пользователем.
 
         Args:
             session: Сессия БД (main)
@@ -851,8 +835,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> UserModel | None:
-        """
-        Получение пользователя с предзагруженной связью с Avanpost.
+        """Получение пользователя с предзагруженной связью с Avanpost.
 
         Args:
             session: Сессия БД
@@ -903,8 +886,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> int | None:
-        """
-        Получение ID группы действий пользователя.
+        """Получение ID группы действий пользователя.
 
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser -> FK_MenuGroup
 
@@ -976,8 +958,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> bool:
-        """
-        Проверка авторизации пользователя.
+        """Проверка авторизации пользователя.
 
         Проверяет наличие связи в AvanpostUserLinkModel.
 
@@ -1016,8 +997,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> bool:
-        """
-        Проверка аутентификации пользователя с обновлением времени активности.
+        """Проверка аутентификации пользователя с обновлением времени активности.
 
         Args:
             session: Сессия БД
@@ -1063,8 +1043,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> Optional["UserModel"]:
-        """
-        Получение аутентифицированного пользователя.
+        """Получение аутентифицированного пользователя.
 
         Загружает пользователя с предзагруженной связью Avanpost
         и обновляет время последней активности.
@@ -1123,8 +1102,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> Optional["UserModel"]:
-        """
-        Получение аутентифицированного пользователя с AvanpostUser.
+        """Получение аутентифицированного пользователя с AvanpostUser.
 
         Является синонимом get_authenticated_user для обратной совместимости.
 
@@ -1145,8 +1123,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> bool:
-        """
-        Обновление времени последней активности пользователя.
+        """Обновление времени последней активности пользователя.
 
         Args:
             session: Сессия БД
@@ -1176,8 +1153,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> bool:
-        """
-        Выход пользователя из системы.
+        """Выход пользователя из системы.
 
         Удаляет связь с AvanpostUser и очищает Telegram данные.
 
@@ -1219,8 +1195,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> bool:
-        """
-        Очистка Telegram данных пользователя.
+        """Очистка Telegram данных пользователя.
 
         Удаляет связь с AvanpostUser.
 
@@ -1261,8 +1236,7 @@ class UserRepository:
         session: AsyncSession,
         user_id: int,
     ) -> dict[str, Any]:
-        """
-        Получение статистики пользователя.
+        """Получение статистики пользователя.
 
         Включает:
         - Количество сообщений

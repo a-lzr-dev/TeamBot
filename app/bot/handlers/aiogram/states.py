@@ -2,7 +2,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class ActionStates(StatesGroup):
-    """Состояния для работы с действиями"""
+    """Состояния для работы с действиями."""
 
     viewing_menu = State()
 
@@ -21,20 +21,20 @@ class SubMenuStates(StatesGroup):
 
 
 class CarrierOrderStates(StatesGroup):
-    """Состояния для заказов перевозчиков"""
+    """Состояния для заказов перевозчиков."""
 
     viewing_orders = State()
     searching_orders = State()
 
 
 class ChatDetailsStates(StatesGroup):
-    """Состояния для деталей чата"""
+    """Состояния для деталей чата."""
 
     viewing_messages = State()
 
 
 class ReplyStates(StatesGroup):
-    """Состояния для ответа на сообщения"""
+    """Состояния для ответа на сообщения."""
 
     waiting_for_reply_text = State()
 

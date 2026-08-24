@@ -1,5 +1,4 @@
-"""
-Модуль конвертеров и валидаторов для работы с данными Telegram.
+"""Модуль конвертеров и валидаторов для работы с данными Telegram.
 
 Этот модуль предоставляет функции и классы для:
 1. Конвертации данных между различными форматами:
@@ -59,8 +58,7 @@ from ..models import ChatMessageModel, ChatModel, ChatType, UserModel
 
 
 def dict_to_user_model(data: dict[str, Any]) -> UserModel:
-    """
-    Создание модели пользователя из словаря.
+    """Создание модели пользователя из словаря.
 
     Используется для преобразования данных из внешних источников
     в объект UserModel для сохранения в базе данных.
@@ -81,8 +79,7 @@ def dict_to_user_model(data: dict[str, Any]) -> UserModel:
 
 
 def chat_info_from_telethon(telethon_chat: Any) -> dict[str, Any]:
-    """
-    Извлечение информации о чате из объекта Telethon.
+    """Извлечение информации о чате из объекта Telethon.
 
     Преобразует объект чата Telethon в универсальный словарь
     с основными полями.
@@ -123,8 +120,7 @@ def chat_info_from_telethon(telethon_chat: Any) -> dict[str, Any]:
 
 
 def chat_info_from_aiogram(aiogram_chat: Any) -> dict[str, Any]:
-    """
-    Извлечение информации о чате из объекта Aiogram.
+    """Извлечение информации о чате из объекта Aiogram.
 
     Преобразует объект чата Aiogram в универсальный словарь.
 
@@ -152,8 +148,7 @@ def chat_info_from_aiogram(aiogram_chat: Any) -> dict[str, Any]:
 
 
 def dict_to_chat_model(data: dict[str, Any]) -> ChatModel:
-    """
-    Создание модели чата из словаря.
+    """Создание модели чата из словаря.
 
     Args:
         data: Словарь с данными чата
@@ -177,8 +172,7 @@ def dict_to_chat_model(data: dict[str, Any]) -> ChatModel:
 
 
 def message_info_from_telethon(telethon_message: Any) -> dict[str, Any]:
-    """
-    Извлечение информации о сообщении из объекта Telethon.
+    """Извлечение информации о сообщении из объекта Telethon.
 
     Args:
         telethon_message: Объект сообщения Telethon
@@ -230,8 +224,7 @@ def message_info_from_telethon(telethon_message: Any) -> dict[str, Any]:
 
 
 def message_info_from_aiogram(aiogram_message: Any) -> dict[str, Any]:
-    """
-    Извлечение информации о сообщении из объекта Aiogram.
+    """Извлечение информации о сообщении из объекта Aiogram.
 
     Args:
         aiogram_message: Объект сообщения Aiogram
@@ -252,6 +245,20 @@ def message_info_from_aiogram(aiogram_message: Any) -> dict[str, Any]:
             "media_type": "unknown",
         }
 
+    # Исправлено: проверяем forwarded через поля forward_from или forward_origin
+    is_forwarded = False
+    if hasattr(aiogram_message, "forward_from") and aiogram_message.forward_from is not None:
+        is_forwarded = True
+    if not is_forwarded and hasattr(aiogram_message, "forward_origin") and aiogram_message.forward_origin is not None:
+        is_forwarded = True
+    # В новых версиях aiogram также может быть forward_from_chat
+    if (
+        not is_forwarded
+        and hasattr(aiogram_message, "forward_from_chat")
+        and aiogram_message.forward_from_chat is not None
+    ):
+        is_forwarded = True
+
     return {
         "message_id": aiogram_message.message_id,
         "chat_id": aiogram_message.chat.id if aiogram_message.chat else 0,
@@ -260,14 +267,13 @@ def message_info_from_aiogram(aiogram_message: Any) -> dict[str, Any]:
         "date": safe_datetime_convert(aiogram_message.date),
         "edit_date": safe_datetime_convert(aiogram_message.edit_date),
         "is_reply": bool(aiogram_message.reply_to_message),
-        "is_forwarded": bool(aiogram_message.forward_from or aiogram_message.forward_from_chat),
+        "is_forwarded": is_forwarded,
         "media_type": _get_aiogram_media_type(aiogram_message),
     }
 
 
 def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: Any) -> None:
-    """
-    Сохранение информации о медиа-файле в модель сообщения.
+    """Сохранение информации о медиа-файле в модель сообщения.
 
     Извлекает данные о прикрепленных файлах из объекта Telethon
     и сохраняет их в модель для дальнейшей записи в БД.
@@ -332,8 +338,7 @@ def save_media_info_to_model(chat_message: ChatMessageModel, telethon_message: A
 
 
 def _get_telethon_media_type(message: Any) -> str:
-    """
-    Определение типа медиа для сообщения Telethon.
+    """Определение типа медиа для сообщения Telethon.
 
     Args:
         message: Объект сообщения Telethon
@@ -386,8 +391,7 @@ def _get_telethon_media_type(message: Any) -> str:
 
 
 def _get_aiogram_media_type(message: Any) -> str:
-    """
-    Определение типа медиа для сообщения Aiogram.
+    """Определение типа медиа для сообщения Aiogram.
 
     Args:
         message: Объект сообщения Aiogram
@@ -443,8 +447,7 @@ class UserConverter:
 
     @staticmethod
     def get_full_name(first_name: str | None = None, last_name: str | None = None, username: str | None = None) -> str:
-        """
-        Получение полного имени пользователя.
+        """Получение полного имени пользователя.
 
         Args:
             first_name: Имя пользователя
@@ -471,8 +474,7 @@ class UserConverter:
         username: str | None = None,
         user_id: int | None = None,
     ) -> str:
-        """
-        Получение отображаемого имени пользователя.
+        """Получение отображаемого имени пользователя.
 
         Args:
             first_name: Имя пользователя
@@ -497,8 +499,7 @@ class UserConverter:
     def get_mention(
         user_id: int, first_name: str | None = None, last_name: str | None = None, username: str | None = None
     ) -> str:
-        """
-        Получение упоминания пользователя в формате Markdown.
+        """Получение упоминания пользователя в формате Markdown.
 
         Args:
             user_id: ID пользователя
@@ -509,7 +510,8 @@ class UserConverter:
         Returns:
             str: Упоминание в формате [имя](tg://user?id=id)
         """
-        display_name = UserConverter.get_display_name(first_name, last_name, username)
+        # Исправлено: если нет имени и username, используем User {user_id}
+        display_name = UserConverter.get_display_name(first_name, last_name, username, user_id)
         return f"[{display_name}](tg://user?id={user_id})"
 
 
@@ -521,8 +523,7 @@ class Validator:
 
     @staticmethod
     def validate_not_empty(value: Any, field_name: str) -> bool:
-        """
-        Проверка, что значение не пустое.
+        """Проверка, что значение не пустое.
 
         Args:
             value: Проверяемое значение
@@ -547,8 +548,7 @@ class Validator:
 
     @staticmethod
     def validate_length(value: str, field_name: str, min_len: int = 1, max_len: int = 4096) -> bool:
-        """
-        Проверка длины строки.
+        """Проверка длины строки.
 
         Args:
             value: Строка для проверки
@@ -574,8 +574,7 @@ class Validator:
 
     @staticmethod
     def validate_positive_int(value: int, field_name: str) -> bool:
-        """
-        Проверка, что число положительное.
+        """Проверка, что число положительное.
 
         Args:
             value: Число для проверки
@@ -615,8 +614,7 @@ class TextValidator:
 
     @staticmethod
     def sanitize_text(text: str, max_length: int = 4096) -> str:
-        """
-        Санитайзинг текста (очистка от опасных символов).
+        """Санитайзинг текста (очистка от опасных символов).
 
         Args:
             text: Исходный текст
@@ -645,8 +643,7 @@ class TextValidator:
 
     @staticmethod
     def validate_parse_mode(parse_mode: str | None) -> str | None:
-        """
-        Валидация режима парсинга.
+        """Валидация режима парсинга.
 
         Args:
             parse_mode: Режим парсинга
@@ -695,8 +692,7 @@ class TextValidator:
 
     @staticmethod
     def truncate_text(text: str, max_length: int = 100, suffix: str = "...") -> str:
-        """
-        Обрезание текста до указанной длины.
+        """Обрезание текста до указанной длины.
 
         Args:
             text: Исходный текст
@@ -712,7 +708,23 @@ class TextValidator:
         if len(text) <= max_length:
             return text
 
-        return text[: max_length - len(suffix)] + suffix
+        # Исправлено: сохраняем всю строку до max_length - len(suffix)
+        # и добавляем суффикс
+        if max_length > len(suffix):
+            # Вычисляем, сколько символов можно оставить
+            available = max_length - len(suffix)
+            # Ищем последний пробел перед max_length
+            # Находим позицию последнего пробела в пределах available
+            last_space = text[:available].rfind(" ")
+            if last_space > 0:
+                # Обрезаем по последнему пробелу, чтобы не разрывать слова
+                return text[:last_space] + suffix
+            else:
+                # Если нет пробела, обрезаем по available
+                return text[:available] + suffix
+        else:
+            # Если max_length меньше длины суффикса, возвращаем суффикс
+            return suffix
 
 
 class CommandValidator:
@@ -720,8 +732,7 @@ class CommandValidator:
 
     @staticmethod
     def validate_command(command: str) -> bool:
-        """
-        Валидация команды.
+        """Валидация команды.
 
         Args:
             command: Команда (должна начинаться с /)
@@ -740,8 +751,7 @@ class CommandValidator:
 
     @staticmethod
     def parse_command(text: str) -> dict[str, Any]:
-        """
-        Парсинг команды и аргументов.
+        """Парсинг команды и аргументов.
 
         Args:
             text: Текст с командой
@@ -769,8 +779,7 @@ class CommandValidator:
 
     @staticmethod
     def is_admin_command(command: str, admin_commands: list[str] | None = None) -> bool:
-        """
-        Проверка, является ли команда административной.
+        """Проверка, является ли команда административной.
 
         Args:
             command: Команда для проверки
@@ -790,8 +799,7 @@ class DataValidator:
 
     @staticmethod
     def validate_dict_keys(data: dict[str, Any], required_keys: list[str]) -> bool:
-        """
-        Проверка наличия обязательных ключей в словаре.
+        """Проверка наличия обязательных ключей в словаре.
 
         Args:
             data: Проверяемый словарь
@@ -809,8 +817,7 @@ class DataValidator:
 
     @staticmethod
     def validate_dict_types(data: dict[str, Any], type_map: dict[str, type]) -> bool:
-        """
-        Проверка типов значений в словаре.
+        """Проверка типов значений в словаре.
 
         Args:
             data: Проверяемый словарь
@@ -830,8 +837,7 @@ class DataValidator:
 
     @staticmethod
     def validate_phone_number(phone: str) -> bool:
-        """
-        Валидация номера телефона.
+        """Валидация номера телефона.
 
         Args:
             phone: Номер телефона
@@ -847,8 +853,7 @@ class DataValidator:
 
     @staticmethod
     def validate_email(email: str) -> bool:
-        """
-        Валидация email.
+        """Валидация email.
 
         Args:
             email: Email адрес
@@ -864,8 +869,7 @@ class DataValidator:
 
     @staticmethod
     def validate_username(username: str) -> bool:
-        """
-        Валидация username.
+        """Валидация username.
 
         Args:
             username: Username для проверки
@@ -873,26 +877,24 @@ class DataValidator:
         Returns:
             bool: True если username валиден
         """
-        if not username:
+        if username is None:
             return False
 
         if username.startswith("@"):
             username = username[1:]
 
-        return bool(re.fullmatch(r"^[a-zA-Z0-9_]{5,32}$", username))
+        # Исправлено: минимальная длина 3, максимальная 32
+        return bool(re.fullmatch(r"^[a-zA-Z0-9_]{3,32}$", username))
 
 
 class RateLimitValidator:
-    """
-    Валидатор для rate limiting.
+    """Валидатор для rate limiting.
 
-    Отслеживает количество запросов от одного источника
-    и ограничивает их частоту.
+    Отслеживает количество запросов от одного источника и ограничивает их частоту.
     """
 
     def __init__(self, limit: int = 10, period: int = 60) -> None:
-        """
-        Инициализация валидатора.
+        """Инициализация валидатора.
 
         Args:
             limit: Максимальное количество запросов
@@ -903,8 +905,7 @@ class RateLimitValidator:
         self._requests: dict[str, list[datetime]] = {}
 
     def is_allowed(self, key: str) -> bool:
-        """
-        Проверка, разрешен ли запрос.
+        """Проверка, разрешен ли запрос.
 
         Args:
             key: Уникальный ключ источника
@@ -928,8 +929,7 @@ class RateLimitValidator:
         return True
 
     def get_remaining(self, key: str) -> int:
-        """
-        Получение оставшегося количества запросов.
+        """Получение оставшегося количества запросов.
 
         Args:
             key: Уникальный ключ источника
@@ -943,8 +943,7 @@ class RateLimitValidator:
         return max(0, self.limit - len(self._requests[key]))
 
     def get_reset_time(self, key: str) -> datetime | None:
-        """
-        Получение времени сброса лимита.
+        """Получение времени сброса лимита.
 
         Args:
             key: Уникальный ключ источника

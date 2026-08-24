@@ -1,5 +1,4 @@
-"""
-Модуль роутера для управления сообщениями Telegram бота.
+"""Модуль роутера для управления сообщениями Telegram бота.
 
 Этот модуль предоставляет API эндпоинты для работы с сообщениями в Telegram:
 - Отправка сообщений (одиночных, массовых, во все чаты)
@@ -67,11 +66,9 @@ _stats_repo = StatsRepository()
 
 
 class SendMessageRequest(BaseModel):
-    """
-    Модель запроса для отправки сообщения в Telegram.
+    """Модель запроса для отправки сообщения в Telegram.
 
-    Поддерживает отправку как в конкретный чат, так и во все чаты.
-    Включает все параметры, доступные в Telegram Bot API.
+    Поддерживает отправку как в конкретный чат, так и во все чаты. Включает все параметры, доступные в Telegram Bot API.
     """
 
     chat_id: int | None = Field(None, description="ID чата в Telegram (обязателен, если send_to_all=false)")
@@ -97,8 +94,7 @@ class SendMessageRequest(BaseModel):
     @field_validator("parse_mode")
     @classmethod
     def validate_parse_mode(cls, v: str | None) -> str | None:
-        """
-        Валидация режима парсинга.
+        """Валидация режима парсинга.
 
         Args:
             v: Режим парсинга
@@ -119,8 +115,7 @@ class SendMessageRequest(BaseModel):
     @field_validator("lifetime_seconds")
     @classmethod
     def validate_lifetime(cls, v: int | None) -> int | None:
-        """
-        Валидация времени жизни сообщения.
+        """Валидация времени жизни сообщения.
 
         Args:
             v: Время жизни в секундах
@@ -199,8 +194,7 @@ class BatchSetLifetimeRequest(BaseModel):
 
 
 class UnifiedSendRequest(BaseModel):
-    """
-    Универсальная модель для отправки сообщений.
+    """Универсальная модель для отправки сообщений.
 
     Поддерживает три формата:
     1. Прямой объект (одно сообщение)
@@ -228,8 +222,7 @@ class UnifiedSendRequest(BaseModel):
     lifetime_seconds: int | None = Field(None, description="Время жизни сообщения в секундах")
 
     def get_messages(self) -> list[SendMessageRequest]:
-        """
-        Преобразование входных данных в список сообщений.
+        """Преобразование входных данных в список сообщений.
 
         Обрабатывает все поддерживаемые форматы:
         - Прямые поля -> одно сообщение
@@ -274,8 +267,7 @@ class UnifiedSendRequest(BaseModel):
         return []
 
     def is_batch(self) -> bool:
-        """
-        Проверка, является ли запрос пакетным.
+        """Проверка, является ли запрос пакетным.
 
         Returns:
             bool: True если запрос содержит массив сообщений
@@ -289,8 +281,7 @@ class UnifiedSendRequest(BaseModel):
 
 
 async def _get_bot_manager() -> BotManager:
-    """
-    Получение экземпляра BotManager с проверкой статуса.
+    """Получение экземпляра BotManager с проверкой статуса.
 
     Returns:
         BotManager: Экземпляр менеджера бота
@@ -309,8 +300,7 @@ async def _send_single_message(
     bot_manager: BotManager,
     msg: SendMessageRequest,
 ) -> SendMessageResponse:
-    """
-    Отправка одного сообщения через BotManager.
+    """Отправка одного сообщения через BotManager.
 
     Args:
         bot_manager: Экземпляр менеджера бота
@@ -392,8 +382,7 @@ async def _send_message_to_all_chats(
     msg: SendMessageRequest,
     session: AsyncSession,
 ) -> SendMessageToAllResponse:
-    """
-    Отправка сообщения во все активные чаты.
+    """Отправка сообщения во все активные чаты.
 
     Поддерживает фильтрацию по типам чатов и исключение указанных чатов.
 
@@ -519,8 +508,7 @@ async def send_message_unified(
     request: UnifiedSendRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Универсальная отправка сообщений в Telegram.
+    """Универсальная отправка сообщений в Telegram.
 
     Автоматически определяет формат запроса и отправляет сообщения
     соответствующим образом.
@@ -622,8 +610,7 @@ async def set_message_lifetime(
     request: SetLifetimeRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Установка времени жизни для одного сообщения.
+    """Установка времени жизни для одного сообщения.
 
     Args:
         request: Запрос с ID сообщения и временем жизни
@@ -678,8 +665,7 @@ async def set_messages_lifetime_batch(
     request: BatchSetLifetimeRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Массовая установка времени жизни для нескольких сообщений.
+    """Массовая установка времени жизни для нескольких сообщений.
 
     Args:
         request: Запрос со списком ID сообщений и временем жизни
@@ -734,8 +720,7 @@ async def get_message_lifetime_stats(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по времени жизни сообщений.
+    """Получение статистики по времени жизни сообщений.
 
     Args:
         chat_id: ID чата (опционально, для фильтрации)
@@ -766,8 +751,7 @@ async def get_message_lifetime_stats(
 )
 @log_exceptions(api_logger)
 async def force_check_expired_messages() -> JSONResponse:
-    """
-    Принудительная проверка истекших сообщений.
+    """Принудительная проверка истекших сообщений.
 
     Запускает проверку всех сообщений с истекшим временем жизни
     и помечает их для удаления.
@@ -805,8 +789,7 @@ async def get_message_lifetime_info(
     message_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение детальной информации о времени жизни сообщения.
+    """Получение детальной информации о времени жизни сообщения.
 
     Args:
         message_id: ID сообщения
@@ -879,8 +862,7 @@ async def get_deleted_messages_stats(
     days: int = getattr(settings, "API_STATS_DAYS", 7),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики по удаленным сообщениям.
+    """Получение статистики по удаленным сообщениям.
 
     Args:
         chat_id: ID чата (опционально, для фильтрации)
@@ -917,8 +899,7 @@ async def get_deleted_messages(
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение списка удаленных сообщений.
+    """Получение списка удаленных сообщений.
 
     Args:
         chat_id: ID чата (опционально, для фильтрации)
@@ -974,8 +955,7 @@ async def get_deleted_messages_with_initiator(
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение удаленных сообщений с информацией об инициаторе.
+    """Получение удаленных сообщений с информацией об инициаторе.
 
     Возвращает не только сами сообщения, но и кто их удалил.
 
@@ -1021,8 +1001,7 @@ async def get_deletion_stats_by_initiator(
     days: int = getattr(settings, "API_STATS_DAYS", 7),
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение статистики удалений по типам инициаторов.
+    """Получение статистики удалений по типам инициаторов.
 
     Args:
         chat_id: ID чата (опционально, для фильтрации)
@@ -1057,8 +1036,7 @@ async def get_message_deletion_info(
     message_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение детальной информации об удалении сообщения.
+    """Получение детальной информации об удалении сообщения.
 
     Args:
         message_id: ID сообщения
@@ -1133,8 +1111,7 @@ async def restore_deleted_message(
     chat_id: int | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Восстановление удаленного сообщения.
+    """Восстановление удаленного сообщения.
 
     Отменяет флаг удаления и восстанавливает сообщение в базе данных.
 
@@ -1184,8 +1161,7 @@ async def delete_message(
     message_id: int,
     chat_id: int,
 ) -> JSONResponse:
-    """
-    Удаление сообщения из чата Telegram через Bot API.
+    """Удаление сообщения из чата Telegram через Bot API.
 
     Args:
         message_id: ID сообщения для удаления
@@ -1246,8 +1222,7 @@ async def delete_message(
 )
 @log_exceptions(api_logger)
 async def get_telegram_status() -> JSONResponse:
-    """
-    Получение статуса Telegram клиентов.
+    """Получение статуса Telegram клиентов.
 
     Returns:
         JSONResponse: Информация о статусе ботов и подключениях
@@ -1283,8 +1258,7 @@ async def get_chats(
     is_active: bool | None = True,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение списка чатов с детальной информацией.
+    """Получение списка чатов с детальной информацией.
 
     Args:
         is_active: Фильтр по активности (True - только активные)
@@ -1328,8 +1302,7 @@ async def get_chat_info(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение детальной информации о чате.
+    """Получение детальной информации о чате.
 
     Возвращает информацию о чате, участниках, количестве сообщений
     и последние 10 сообщений.
@@ -1386,8 +1359,7 @@ async def get_chat_info(
 async def get_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение общей статистики по системе.
+    """Получение общей статистики по системе.
 
     Включает:
     - Количество чатов

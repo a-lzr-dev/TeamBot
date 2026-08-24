@@ -2,7 +2,7 @@ from ..models import datetime_now
 
 
 def get_timestamp() -> str:
-    """Получение текущего времени в ISO формате"""
+    """Получение текущего времени в ISO формате."""
     dt = datetime_now()
     return dt.isoformat() + "Z"
 

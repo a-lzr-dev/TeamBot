@@ -1,5 +1,4 @@
-"""
-Обработчик списка транспортных средств пользователя.
+"""Обработчик списка транспортных средств пользователя.
 
 Поддерживает:
 - Пагинацию
@@ -32,8 +31,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class VehiclesListHandler(BaseListHandler):
-    """
-    Обработчик списка транспортных средств.
+    """Обработчик списка транспортных средств.
 
     Наследуется от BaseListHandler для универсальной обработки:
     - Отображение списка с пагинацией
@@ -43,8 +41,7 @@ class VehiclesListHandler(BaseListHandler):
     """
 
     def __init__(self) -> None:
-        """
-        Инициализация обработчика списка транспорта.
+        """Инициализация обработчика списка транспорта.
 
         Устанавливает:
         - Префикс callback_data: "vehicles"
@@ -63,8 +60,7 @@ class VehiclesListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Загрузка данных транспортных средств из БД.
+        """Загрузка данных транспортных средств из БД.
 
         Args:
             session: Сессия БД
@@ -136,8 +132,7 @@ class VehiclesListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отображение списка транспортных средств пользователя.
+        """Отображение списка транспортных средств пользователя.
 
         Args:
             event: Событие (Message или CallbackQuery)
@@ -290,8 +285,7 @@ class VehiclesListHandler(BaseListHandler):
         item_id: int,
         **kwargs: Any,
     ) -> None:
-        """
-        Обработка выбора транспортного средства.
+        """Обработка выбора транспортного средства.
 
         Args:
             callback: CallbackQuery от пользователя
@@ -306,8 +300,7 @@ class VehiclesListHandler(BaseListHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """
-        Получение ключей для хранения состояния.
+        """Получение ключей для хранения состояния.
 
         Returns:
             dict: Словарь с ключами состояния:
@@ -329,8 +322,7 @@ class VehiclesListHandler(BaseListHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:
-        """
-        Создание клавиатуры с кнопкой "Назад".
+        """Создание клавиатуры с кнопкой "Назад".
 
         Args:
             state: Состояние FSM
@@ -361,8 +353,7 @@ class VehiclesListHandler(BaseListHandler):
 
     @staticmethod
     def _format_vehicle_item(item: dict[str, Any]) -> str:
-        """
-        Форматирование элемента транспортного средства для отображения.
+        """Форматирование элемента транспортного средства для отображения.
 
         Args:
             item: Словарь с данными транспортного средства
@@ -388,8 +379,7 @@ async def show_vehicles_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """
-    Внешняя функция для отображения списка транспортных средств.
+    """Внешняя функция для отображения списка транспортных средств.
 
     Используется для вызова из других модулей (например, из actions.py).
 
@@ -406,8 +396,7 @@ async def show_vehicles_list(
 # Регистрация обработчиков колбэков для транспортных средств
 @router.callback_query(lambda c: c.data.startswith("vehicles_"))
 async def handle_vehicles_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработчик всех callback-запросов, начинающихся с "vehicles_".
+    """Обработчик всех callback-запросов, начинающихся с "vehicles_".
 
     Args:
         callback: CallbackQuery от пользователя
@@ -419,8 +408,7 @@ async def handle_vehicles_callback(callback: CallbackQuery, state: FSMContext) -
 # Регистрация обработчика поисковых запросов
 @router.message(SubMenuStates.searching_vehicles)
 async def handle_vehicles_search(message: Message, state: FSMContext) -> None:
-    """
-    Обработчик текстовых сообщений в режиме поиска транспорта.
+    """Обработчик текстовых сообщений в режиме поиска транспорта.
 
     Args:
         message: Сообщение от пользователя

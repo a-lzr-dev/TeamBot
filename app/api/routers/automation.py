@@ -1,5 +1,4 @@
-"""
-Модуль роутера для автоматизации процессов.
+"""Модуль роутера для автоматизации процессов.
 
 Этот модуль предоставляет API эндпоинты для автоматизации различных задач:
 - Конвертация документов DOC/DOCX в PDF
@@ -41,11 +40,9 @@ _user_repo = UserRepository()
 
 
 class ConvertDocRequest(BaseModel):
-    """
-    Модель запроса для конвертации DOC в PDF через base64.
+    """Модель запроса для конвертации DOC в PDF через base64.
 
-    Используется в эндпоинте /convert/doc-to-pdf/base64 для передачи
-    документа в закодированном виде.
+    Используется в эндпоинте /convert/doc-to-pdf/base64 для передачи документа в закодированном виде.
     """
 
     doc_base64: str | None = Field(
@@ -56,8 +53,7 @@ class ConvertDocRequest(BaseModel):
 
 
 class ConvertDocResponse(BaseModel):
-    """
-    Модель ответа для операции конвертации документа.
+    """Модель ответа для операции конвертации документа.
 
     Используется как для успешной конвертации, так и для ошибок.
     """
@@ -70,8 +66,7 @@ class ConvertDocResponse(BaseModel):
 
 
 class AutomationRequest(BaseModel):
-    """
-    Модель запроса для создания новой заявки на автоматизацию.
+    """Модель запроса для создания новой заявки на автоматизацию.
 
     Используется в эндпоинте /request для создания заявки.
     """
@@ -86,8 +81,7 @@ class AutomationRequest(BaseModel):
 
 
 class AutomationRequestResponse(BaseModel):
-    """
-    Модель ответа при создании заявки на автоматизацию.
+    """Модель ответа при создании заявки на автоматизацию.
 
     Содержит ID созданной заявки или информацию об ошибке.
     """
@@ -99,8 +93,7 @@ class AutomationRequestResponse(BaseModel):
 
 
 class RequestStatusResponse(BaseModel):
-    """
-    Модель ответа со списком заявок на автоматизацию.
+    """Модель ответа со списком заявок на автоматизацию.
 
     Используется в эндпоинте /requests для возврата списка заявок.
     """
@@ -126,8 +119,7 @@ async def convert_doc_to_pdf(
     file: UploadFile = File(...),  # noqa: B008
     user_id: int | None = Form(None),  # noqa: B008
 ) -> JSONResponse | Response:
-    """
-    Конвертация DOC/DOCX в PDF через загрузку файла.
+    """Конвертация DOC/DOCX в PDF через загрузку файла.
 
     Принимает файл через multipart/form-data и возвращает PDF файл
     в виде бинарного ответа для скачивания.
@@ -226,8 +218,7 @@ async def convert_doc_to_pdf(
 )
 @log_exceptions(api_logger)
 async def convert_doc_to_pdf_base64(request: ConvertDocRequest) -> JSONResponse:
-    """
-    Конвертация DOC/DOCX в PDF через base64.
+    """Конвертация DOC/DOCX в PDF через base64.
 
     Принимает документ в base64 и возвращает PDF также в base64.
     Удобно для интеграции с системами, где нет прямой загрузки файлов.
@@ -322,8 +313,7 @@ async def create_automation_request(
     request: AutomationRequest,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Создание заявки на автоматизацию.
+    """Создание заявки на автоматизацию.
 
     Проверяет существование и аутентификацию пользователя,
     затем создает заявку с указанными параметрами.
@@ -427,8 +417,7 @@ async def get_automation_requests(
     status: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение списка заявок на автоматизацию.
+    """Получение списка заявок на автоматизацию.
 
     Поддерживает фильтрацию по пользователю и статусу.
 
@@ -486,8 +475,7 @@ async def update_request_status(
     note: str | None = None,
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Обновление статуса заявки на автоматизацию.
+    """Обновление статуса заявки на автоматизацию.
 
     Позволяет менять статус заявки и добавлять комментарий.
 

@@ -1,5 +1,4 @@
-"""
-Модуль авторизации пользователей в Telegram боте.
+"""Модуль авторизации пользователей в Telegram боте.
 
 Отвечает за:
 1. Аутентификацию пользователей по номеру телефона
@@ -43,11 +42,9 @@ _avanpost_user_repo = AvanpostUserRepository()  # Репозиторий для 
 
 
 class AuthStates(StatesGroup):
-    """
-    Состояния для аутентификации пользователя.
+    """Состояния для аутентификации пользователя.
 
-    Используются в FSM (Finite State Machine) для отслеживания
-    текущего этапа авторизации.
+    Используются в FSM (Finite State Machine) для отслеживания текущего этапа авторизации.
     """
 
     waiting_for_contact = State()  # Ожидание контакта от пользователя
@@ -61,8 +58,7 @@ _auth_cache: dict[int, dict[str, Any]] = {}
 
 
 async def is_user_authenticated(user_id: int) -> bool:
-    """
-    Проверка, авторизован ли пользователь.
+    """Проверка, авторизован ли пользователь.
 
     Проверяет наличие связи с AvanpostUser в базе данных.
 
@@ -82,8 +78,7 @@ async def is_user_authenticated(user_id: int) -> bool:
 
 
 async def _get_message_by_id(message_id: int) -> dict[str, Any] | None:
-    """
-    Получение сообщения по ID через AvanpostUserRepository.
+    """Получение сообщения по ID через AvanpostUserRepository.
 
     Args:
         message_id: ID сообщения
@@ -105,8 +100,7 @@ async def _handle_deep_link_message(
     msg_id: int,
     bot_manager: Any,
 ) -> bool:
-    """
-    Обработка перехода к сообщению по Deep Linking.
+    """Обработка перехода к сообщению по Deep Linking.
 
     Args:
         event: Сообщение или CallbackQuery от пользователя
@@ -241,7 +235,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
     # Очистка кеша, если пользователь разлогинился
     if is_in_cache and not is_authenticated_db:
-        bot_manager.clear_user_cache(telegram_user_id)
+        await bot_manager.clear_user_cache(telegram_user_id)
         _auth_cache.pop(telegram_user_id, None)
         bot_logger.debug(f"🧹 Cleared stale cache for user {telegram_user_id} during /start")
 
@@ -326,8 +320,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 @router.message(F.text == "❌ Отмена")
 @log_exceptions(bot_logger)
 async def handle_cancel_auth(message: Message, state: FSMContext) -> None:
-    """
-    Отмена авторизации через текстовую кнопку.
+    """Отмена авторизации через текстовую кнопку.
 
     Args:
         message: Сообщение от пользователя
@@ -360,8 +353,7 @@ async def handle_cancel_auth(message: Message, state: FSMContext) -> None:
 @router.message(F.contact)
 @log_exceptions(bot_logger)
 async def handle_contact(message: Message, state: FSMContext) -> None:
-    """
-    Обработка полученного контакта от пользователя.
+    """Обработка полученного контакта от пользователя.
 
     Выполняет проверку номера телефона через хранимую процедуру Avanpost,
     сохраняет данные пользователя в БД и выполняет авторизацию.
@@ -599,8 +591,7 @@ async def handle_contact(message: Message, state: FSMContext) -> None:
 @router.message(Command("logout"))
 @log_exceptions(bot_logger)
 async def cmd_logout(message: Message, state: FSMContext) -> None:
-    """
-    Команда для выхода из системы.
+    """Команда для выхода из системы.
 
     Выполняет выход пользователя, очищает кеш и сбрасывает команды.
 
@@ -635,7 +626,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 
         # Очистка кеша авторизации
         _auth_cache.pop(user_id, None)
-        bot_manager.clear_user_cache(user_id)
+        await bot_manager.clear_user_cache(user_id)
 
         # Сброс команд пользователя
         try:
@@ -670,8 +661,7 @@ async def cmd_logout(message: Message, state: FSMContext) -> None:
 @router.message(Command("actions"))
 @log_exceptions(bot_logger)
 async def cmd_actions_with_auth(message: Message, state: FSMContext) -> None:
-    """
-    Команда /actions с использованием group_id из авторизации.
+    """Команда /actions с использованием group_id из авторизации.
 
     Проверяет авторизацию пользователя и передает управление
     обработчику команды /actions с переданным group_id.
@@ -726,8 +716,7 @@ async def auth_middleware(
     event: TelegramObject,
     data: dict[str, Any],
 ) -> Any:
-    """
-    Middleware для проверки авторизации пользователя.
+    """Middleware для проверки авторизации пользователя.
 
     Проверяет авторизацию для всех команд (кроме /start, /help, /logout).
     Если пользователь не авторизован, отправляет сообщение с требованием
@@ -793,8 +782,7 @@ async def auth_middleware(
 
 
 def normalize_phone(phone: str) -> str:
-    """
-    Нормализация номера телефона к формату +XXXXXXXXXXX.
+    """Нормализация номера телефона к формату +XXXXXXXXXXX.
 
     Выполняет:
     - Удаление всех нецифровых символов
@@ -831,8 +819,7 @@ def normalize_phone(phone: str) -> str:
 
 
 async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, int | None, int | None]:
-    """
-    Проверка пользователя через хранимую процедуру Avanpost.
+    """Проверка пользователя через хранимую процедуру Avanpost.
 
     Args:
         phone_number: Номер телефона для проверки
@@ -863,8 +850,7 @@ async def check_user_by_phone_avanpost(phone_number: str) -> tuple[int | None, i
 
 
 async def get_user_group_id(user_id: int) -> int | None:
-    """
-    Получение ID группы действий для пользователя.
+    """Получение ID группы действий для пользователя.
 
     Поддерживает как Telegram ID, так и Avanpost ID.
     Использует репозиторий вместо прямого доступа к модели.
@@ -912,8 +898,7 @@ async def _sync_user_in_background(
     telegram_user_id: int,
     avanpost_user_id: int,
 ) -> None:
-    """
-    Фоновая синхронизация пользовательских данных из Avanpost.
+    """Фоновая синхронизация пользовательских данных из Avanpost.
 
     Запускается после успешной авторизации пользователя для
     загрузки всех связанных данных (чаты, заказы, транспорт и т.д.)
@@ -945,8 +930,7 @@ async def _sync_user_in_background(
 
 
 def _build_welcome_message(avanpost_user_id: int, menu_group_id: int | None, is_admin: bool) -> str:
-    """
-    Формирование приветственного сообщения для авторизованного пользователя.
+    """Формирование приветственного сообщения для авторизованного пользователя.
 
     Содержит:
     1. Информацию о пользователе (ID, группа действий)

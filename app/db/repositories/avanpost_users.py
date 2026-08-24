@@ -1,5 +1,4 @@
-"""
-Репозиторий для работы с данными пользователей Avanpost.
+"""Репозиторий для работы с данными пользователей Avanpost.
 
 Содержит методы для получения данных о пользователях, их заказах, чатах,
 транспорте, контактах и других связанных сущностях.
@@ -61,8 +60,7 @@ class AvanpostUserRepository:
         page_size: int = 10,
         search_query: str | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение списка пользователей Avanpost с пагинацией и поиском.
+        """Получение списка пользователей Avanpost с пагинацией и поиском.
 
         Используется для:
         - Команды /users (административный интерфейс)
@@ -232,8 +230,7 @@ class AvanpostUserRepository:
         avanpost_user_id: int,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка заказов заказчиков пользователя.
+        """Получение списка заказов заказчиков пользователя.
 
         Args:
             session: Сессия БД
@@ -295,8 +292,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка заказов заказчиков пользователя с пагинацией и поиском.
+        """Получение списка заказов заказчиков пользователя с пагинацией и поиском.
 
         Args:
             session: Сессия БД
@@ -427,8 +423,7 @@ class AvanpostUserRepository:
         avanpost_user_id: int,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка чатов пользователя.
+        """Получение списка чатов пользователя.
 
         Args:
             session: Сессия БД
@@ -490,8 +485,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка чатов пользователя с пагинацией и поиском.
+        """Получение списка чатов пользователя с пагинацией и поиском.
 
         Args:
             session: Сессия БД
@@ -622,8 +616,7 @@ class AvanpostUserRepository:
         avanpost_user_id: int,
         lang_code: str = "RU",
     ) -> list[dict[str, Any]]:
-        """
-        Получение списка транспорта пользователя.
+        """Получение списка транспорта пользователя.
 
         Args:
             session: Сессия БД
@@ -691,8 +684,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка транспорта пользователя с пагинацией и поиском.
+        """Получение списка транспорта пользователя с пагинацией и поиском.
 
         Args:
             session: Сессия БД
@@ -831,8 +823,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка заказов перевозчиков для пользователя с пагинацией и поиском.
+        """Получение списка заказов перевозчиков для пользователя с пагинацией и поиском.
 
         Цепочка связей:
         TAvanpostUsersOrders.FID -> TAvanpostUsersLinksOrdersMissions.FK_Parent
@@ -996,8 +987,7 @@ class AvanpostUserRepository:
         page_size: int = 20,
         exclude_direction: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Получение списка сообщений в чате с пагинацией и фильтрацией по направлению.
+        """Получение списка сообщений в чате с пагинацией и фильтрацией по направлению.
 
         Цепочка связей:
         TAvanpostUsersLinksChatsContactsMsgs.FK_Parent -> TAvanpostContactsMsgs.FID
@@ -1153,8 +1143,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка контактов пользователя с пагинацией и поиском.
+        """Получение списка контактов пользователя с пагинацией и поиском.
 
         Цепочка связей для FK_Type=6 (Открытие списка контактов):
         TAvanpostUsersLinksContacts.FK_User -> TAvanpostUsersLinksContacts.FK_Link
@@ -1437,8 +1426,7 @@ class AvanpostUserRepository:
         search_query: str | None = None,
         lang_code: str = "RU",
     ) -> dict[str, Any]:
-        """
-        Получение списка точек маршрута для миссии с пагинацией и поиском.
+        """Получение списка точек маршрута для миссии с пагинацией и поиском.
 
         Используется при:
         - Выборе заказа перевозчика (FK_Type=11)
@@ -1610,8 +1598,7 @@ class AvanpostUserRepository:
         contact_id: int | None,
         lang_code: str = "RU",
     ) -> str | None:
-        """
-        Получение имени контакта по его ID.
+        """Получение имени контакта по его ID.
 
         Args:
             session: Сессия БД
@@ -1645,8 +1632,7 @@ class AvanpostUserRepository:
         contact_id: int,
         lang_code: str = "RU",
     ) -> dict[str, Any] | None:
-        """
-        Получение контакта по ID с его именем.
+        """Получение контакта по ID с его именем.
 
         Args:
             session: Сессия БД
@@ -1698,8 +1684,7 @@ class AvanpostUserRepository:
         session: AsyncSession,
         message_id: int,
     ) -> dict[str, Any] | None:
-        """
-        Получение сообщения по ID из TAvanpostContactsMsgs.
+        """Получение сообщения по ID из TAvanpostContactsMsgs.
 
         Args:
             session: Сессия БД

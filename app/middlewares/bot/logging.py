@@ -17,9 +17,16 @@ from .utils import get_chat_id, get_message_preview, get_user_id
 
 
 class LoggingMiddleware(BaseMiddleware):
-    """Middleware для логирования обновлений Bot-а"""
+    """Middleware для логирования обновлений Bot-а."""
 
     def __init__(self, log_requests: bool = True, log_updates: bool = True, component: str = "bot") -> None:
+        """Инициализация middleware логирования.
+
+        Args:
+            log_requests: Включить логирование запросов
+            log_updates: Включить логирование обновлений
+            component: Имя компонента для логов
+        """
         self.log_requests = log_requests
         self.log_updates = log_updates
         self.component = component
@@ -34,137 +41,18 @@ class LoggingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Логирование входящих обновлений"""
+        """Обработка входящего обновления с логированием.
+
+        Args:
+            handler: Функция-обработчик события
+            event: Событие от Telegram
+            data: Данные события
+
+        Returns:
+            Any: Результат выполнения обработчика
+        """
         user_id = get_user_id(event)
         chat_id = get_chat_id(event)
-
-        # print(f"log_telegram_event {user_id}{chat_id}")
-        #
-        # if isinstance(event, Message):
-        #     print("✅ Это сообщение")
-        #     # message.text, message.chat, message.from_user и т.д.
-        #
-        # elif isinstance(event, CallbackQuery):
-        #     print("✅ Это callback-запрос")
-        #     # event.data, event.from_user, event.message
-        #
-        # elif isinstance(event, Update):
-        #     print("✅ Это Update (контейнер)")
-        #     # event.message, event.callback_query, event.chat_member и т.д.
-        #
-        # elif isinstance(event, ChatMemberUpdated):
-        #     print("✅ Это обновление участника чата")
-        #     # event.chat, event.from_user, event.new_chat_member
-        #
-        #     # === ДРУГИЕ ТИПЫ ===
-        # elif isinstance(event, InlineQuery):
-        #     print("✅ Это inline-запрос")
-        #
-        # elif isinstance(event, ChosenInlineResult):
-        #     print("✅ Это выбранный inline-результат")
-        #
-        # elif isinstance(event, ShippingQuery):
-        #     print("✅ Это запрос доставки")
-        #
-        # elif isinstance(event, PreCheckoutQuery):
-        #     print("✅ Это запрос предоплаты")
-        #
-        # elif isinstance(event, Poll):
-        #     print("✅ Это опрос")
-        #
-        # elif isinstance(event, PollAnswer):
-        #     print("✅ Это ответ на опрос")
-        #
-        # elif isinstance(event, ChatJoinRequest):
-        #     print("✅ Это запрос на вступление в чат")
-        #
-        # # Проверяем, что это Update
-        # if isinstance(event, Update):
-        #     update: Update = event
-        #
-        #     # === 1. Обработка Message ===
-        #     if update.message:
-        #         message: Message = update.message
-        #         print(f"📩 Message: {message.text}")
-        #         print(f"   Chat ID: {message.chat.id}")
-        #         print(f"   User ID: {message.from_user.id if message.from_user else None}")
-        #
-        #         # Можно получить все данные из сообщения
-        #         if message.text:
-        #             text = message.text
-        #             if text.startswith("/"):
-        #                 command = text.split()[0]
-        #                 args = text.split()[1:] if len(text.split()) > 1 else []
-        #                 print(f"   Command: {command}, Args: {args}")
-        #
-        #         elif message.photo:
-        #             print(f"   Photo: {message.photo[-1].file_id}")
-        #
-        #         elif message.document:
-        #             print(f"   Document: {message.document.file_name}")
-        #
-        #     # === 2. Обработка edited_message ===
-        #     elif update.edited_message:
-        #         message: Message = update.edited_message
-        #         print(f"📝 Edited message: {message.text}")
-        #
-        #     # === 3. Обработка CallbackQuery ===
-        #     elif update.callback_query:
-        #         callback: CallbackQuery = update.callback_query
-        #         print(f"🔘 Callback: {callback.data}")
-        #         print(f"   User ID: {callback.from_user.id}")
-        #
-        #         if callback.message:
-        #             print(f"   Message ID: {callback.message.message_id}")
-        #             print(f"   Chat ID: {callback.message.chat.id}")
-        #
-        #     # === 4. Обработка ChatMemberUpdated ===
-        #     elif update.chat_member:
-        #         chat_member: ChatMemberUpdated = update.chat_member
-        #         print(f"👤 Chat member update in {chat_member.chat.id}")
-        #         print(f"   Old status: {chat_member.old_chat_member.status}")
-        #         print(f"   New status: {chat_member.new_chat_member.status}")
-        #
-        #     # === 5. Обработка MyChatMemberUpdated ===
-        #     elif update.my_chat_member:
-        #         my_chat_member = update.my_chat_member
-        #         print(f"🤖 Bot status changed in {my_chat_member.chat.id}")
-        #         print(f"   Old: {my_chat_member.old_chat_member.status}")
-        #         print(f"   New: {my_chat_member.new_chat_member.status}")
-        #
-        #     # === 6. Обработка InlineQuery ===
-        #     elif update.inline_query:
-        #         inline_query = update.inline_query
-        #         print(f"🔍 Inline query: {inline_query.query}")
-        #         print(f"   User: {inline_query.from_user.id}")
-        #
-        #     # === 7. Обработка ChosenInlineResult ===
-        #     elif update.chosen_inline_result:
-        #         chosen = update.chosen_inline_result
-        #         print(f"✅ Chosen inline result: {chosen.result_id}")
-        #
-        #     # === 8. Обработка ChatJoinRequest ===
-        #     elif update.chat_join_request:
-        #         join_request = update.chat_join_request
-        #         print(f"📨 Join request to {join_request.chat.id}")
-        #         print(f"   User: {join_request.from_user.id}")
-        #
-        #     # === 9. Другие типы ===
-        #     elif update.poll:
-        #         print(f"📊 Poll: {update.poll.question}")
-        #     elif update.poll_answer:
-        #         print(f"📊 Poll answer from {update.poll_answer.user.id}")
-        #     elif update.shipping_query:
-        #         print(f"📦 Shipping query")
-        #     elif update.pre_checkout_query:
-        #         print(f"💳 Pre-checkout query")
-        #
-        #     # === Продолжаем обработку ===
-        #     return await handler(event, data)
-        #
-        # # Если это не Update - обрабатываем как обычно
-        # else:
-        #     return await handler(event, data)
 
         # Логирование обновления
         if self.log_updates:
@@ -212,7 +100,14 @@ class LoggingMiddleware(BaseMiddleware):
             raise
 
     def _get_event_type(self, event: TelegramObject) -> str:
-        """Определение типа события"""
+        """Определение типа события.
+
+        Args:
+            event: Событие от Telegram
+
+        Returns:
+            str: Тип события
+        """
         if isinstance(event, Message):
             if event.text and event.text.startswith("/"):
                 return f"command_{event.text.split()[0]}"
@@ -225,7 +120,14 @@ class LoggingMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_update_type(update: Update) -> str:
-        """Определение типа обновления"""
+        """Определение типа обновления.
+
+        Args:
+            update: Обновление от Telegram
+
+        Returns:
+            str: Тип обновления
+        """
         types = {
             "message": update.message,
             "edited_message": update.edited_message,
@@ -244,7 +146,14 @@ class LoggingMiddleware(BaseMiddleware):
 
     @staticmethod
     def _get_update_id(event: TelegramObject) -> int | None:
-        """Получение ID обновления"""
+        """Получение ID обновления.
+
+        Args:
+            event: Событие от Telegram
+
+        Returns:
+            int | None: ID обновления или None
+        """
         if isinstance(event, Update):
             update_id = event.update_id
             if isinstance(update_id, int):
@@ -253,7 +162,15 @@ class LoggingMiddleware(BaseMiddleware):
         return None
 
     async def _is_message_for_bot(self, message: Message, bot: Bot) -> bool:
-        """Основная проверка адресованности боту"""
+        """Основная проверка адресованности боту.
+
+        Args:
+            message: Сообщение от пользователя
+            bot: Экземпляр бота
+
+        Returns:
+            bool: True если сообщение адресовано боту
+        """
         if not bot:
             return False
 
@@ -311,9 +228,14 @@ class LoggingMiddleware(BaseMiddleware):
         return False
 
     async def _get_bot_info(self, bot: Bot) -> dict:
-        """Кешированное получение информации о боте"""
-        import time
+        """Кешированное получение информации о боте.
 
+        Args:
+            bot: Экземпляр бота
+
+        Returns:
+            dict: Информация о боте
+        """
         current_time = time.time()
         if self._bot_info_cache and (current_time - self._cache_time) < self._cache_ttl:
             return self._bot_info_cache
@@ -334,9 +256,16 @@ class LoggingMiddleware(BaseMiddleware):
 
 
 class ChatActivityMiddleware(BaseMiddleware):
-    """Middleware для отслеживания активности в чатах"""
+    """Middleware для отслеживания активности в чатах."""
 
     def __init__(self, db_manager: DBManager, update_interval: int = 60, component: str = "bot") -> None:
+        """Инициализация middleware активности чатов.
+
+        Args:
+            db_manager: Менеджер базы данных
+            update_interval: Интервал обновления активности в секундах
+            component: Имя компонента для логов
+        """
         self.db_manager = db_manager
         self.update_interval = update_interval
         self.component = component
@@ -349,7 +278,16 @@ class ChatActivityMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        """Обновление времени последней активности"""
+        """Обновление времени последней активности.
+
+        Args:
+            handler: Функция-обработчик события
+            event: Событие от Telegram
+            data: Данные события
+
+        Returns:
+            Any: Результат выполнения обработчика
+        """
         if isinstance(event, Message) and event.from_user and event.chat:
             chat_id = event.chat.id
             user = event.from_user
@@ -371,8 +309,7 @@ class ChatActivityMiddleware(BaseMiddleware):
         return await handler(event, data)
 
     async def _update_activity(self, message: Message, user: Any) -> None:
-        """
-        Обновление активности пользователя и чата через репозитории.
+        """Обновление активности пользователя и чата через репозитории.
 
         Args:
             message: Объект сообщения
@@ -401,7 +338,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                     db_user.FDateLastActivity = now
 
                     await session.flush()
-                    bot_logger.debug(f"✅ User {user_id} activity updated")
+                    bot_logger.debug("User {user_id} activity updated")
                 else:
                     # Создание пользователя, если его нет
                     await UserRepository.save_user(
@@ -413,7 +350,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                         username=user.username,
                         is_bot=user.is_bot,
                     )
-                    bot_logger.debug(f"✅ New user {user_id} created from activity")
+                    bot_logger.debug("New user {user_id} created from activity")
 
                 # Обновление чата через репозиторий
                 chat = await ChatRepository.get_chat_by_id(session, chat_id)
@@ -425,7 +362,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                         chat.FTitle = message.chat.title
 
                     await session.flush()
-                    bot_logger.debug(f"✅ Chat {chat_id} activity updated")
+                    bot_logger.debug("Chat {chat_id} activity updated")
                 else:
                     # Создание чата, если его нет
                     from ...core.converters import chat_type_from_aiogram, chat_type_to_str
@@ -440,7 +377,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                         title=message.chat.title,
                         is_active=True,
                     )
-                    bot_logger.debug(f"✅ New chat {chat_id} created from activity")
+                    bot_logger.debug("New chat {chat_id} created from activity")
 
                 await session.commit()
 
@@ -450,7 +387,7 @@ class ChatActivityMiddleware(BaseMiddleware):
                 )
 
             except Exception as e:
-                bot_logger.error(f"❌ Failed to update activity: {e}", exc_info=True)
+                bot_logger.error(f"Failed to update activity: {e}", exc_info=True)
                 await session.rollback()
                 raise
 

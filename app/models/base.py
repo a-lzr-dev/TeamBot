@@ -16,7 +16,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def datetime_now() -> datetime:
-    """Возвращает текущее время без часового пояса"""
+    """Возвращает текущее время без часового пояса."""
     return datetime.now(UTC).replace(tzinfo=None)
 
 
@@ -31,7 +31,7 @@ class BaseModel(DeclarativeBase):
 
 
 class ChatType(StrEnum):
-    """Типы чатов Telegram"""
+    """Типы чатов Telegram."""
 
     SENDER = "sender"
     PRIVATE = "private"
@@ -82,7 +82,7 @@ class ChatType(StrEnum):
 
 
 class ChatMemberStatus(StrEnum):
-    """Статусы участников чата"""
+    """Статусы участников чата."""
 
     CREATOR = "creator"
     ADMINISTRATOR = "administrator"
@@ -132,7 +132,7 @@ class ChatMemberStatus(StrEnum):
 
 
 class MessageType(StrEnum):
-    """Типы сообщений"""
+    """Типы сообщений."""
 
     USER_REQUEST = "user_request"
     BOT_RESPONSE = "bot_response"
@@ -149,7 +149,7 @@ class MessageType(StrEnum):
 
 
 class MessageActionType(StrEnum):
-    """Типы действий с сообщениями для очистки"""
+    """Типы действий с сообщениями для очистки."""
 
     COMMAND_CLEANUP = "command_cleanup"
     COMMAND_ADMIN_CLEANUP = "admin_cleanup"
@@ -159,7 +159,7 @@ class MessageActionType(StrEnum):
 
 
 class MessageSource(StrEnum):
-    """Источники сообщений"""
+    """Источники сообщений."""
 
     USER = "user"
     BOT = "bot"
@@ -167,7 +167,7 @@ class MessageSource(StrEnum):
 
 
 class ErrorCategory(StrEnum):
-    """Категории ошибок"""
+    """Категории ошибок."""
 
     ARBITRARY = "arbitrary"
     PERIODIC_TASK = "periodic_task"
@@ -177,7 +177,7 @@ class ErrorCategory(StrEnum):
 
 
 class ErrorSeverity(StrEnum):
-    """Степень серьезности ошибки"""
+    """Степень серьезности ошибки."""
 
     CRITICAL = "critical"
     ERROR = "error"
@@ -186,7 +186,7 @@ class ErrorSeverity(StrEnum):
 
 
 class ErrorStatus(StrEnum):
-    """Статус ошибки"""
+    """Статус ошибки."""
 
     NEW = "new"
     IN_PROGRESS = "in_progress"
@@ -199,7 +199,7 @@ class ErrorStatus(StrEnum):
 
 
 class UserRequestAutomationStatus(StrEnum):
-    """Статусы заявок на автоматизацию"""
+    """Статусы заявок на автоматизацию."""
 
     NEW = "new"
     IN_PROGRESS = "in_progress"
@@ -209,7 +209,7 @@ class UserRequestAutomationStatus(StrEnum):
 
 
 class UserRequestAutomationPriority(StrEnum):
-    """Приоритеты заявок на автоматизацию"""
+    """Приоритеты заявок на автоматизацию."""
 
     LOW = "low"
     MEDIUM = "medium"
@@ -221,7 +221,7 @@ class UserRequestAutomationPriority(StrEnum):
 
 
 class UserMixin:
-    """Базовые поля пользователя"""
+    """Базовые поля пользователя."""
 
     FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     FUserName: Mapped[str] = mapped_column(String(64))
@@ -231,7 +231,7 @@ class UserMixin:
 
 
 class ChatMemberMixin:
-    """Базовые поля участника чата"""
+    """Базовые поля участника чата."""
 
     FStatus: Mapped[ChatMemberStatus] = mapped_column(
         SQLEnum(ChatMemberStatus, name="chatmemberstatus"), default=ChatMemberStatus.MEMBER
@@ -240,14 +240,14 @@ class ChatMemberMixin:
 
 
 class TimestampMixin:
-    """Mixin для добавления временных меток"""
+    """Mixin для добавления временных меток."""
 
     FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FUpdatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
 
 
 class SoftDeleteMixin:
-    """Mixin для мягкого удаления"""
+    """Mixin для мягкого удаления."""
 
     FIsDeleted: Mapped[bool] = mapped_column(Boolean, default=False)
     FDeletedAt: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -255,7 +255,7 @@ class SoftDeleteMixin:
 
 
 class ActiveMixin:
-    """Mixin для активности"""
+    """Mixin для активности."""
 
     FIsActive: Mapped[bool] = mapped_column(Boolean, default=True)
 

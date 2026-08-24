@@ -1,5 +1,4 @@
-"""
-Реализация клиента Telegram на основе Aiogram.
+"""Реализация клиента Telegram на основе Aiogram.
 
 Этот модуль предоставляет обертку над библиотекой Aiogram,
 реализующую интерфейс BaseBotClient.
@@ -30,18 +29,13 @@ from .base import BaseBotClient
 
 
 class AiogramClient(BaseBotClient):
-    """
-    Обертка для Aiogram бота.
+    """Обертка для Aiogram бота.
 
-    Реализует интерфейс BaseBotClient для работы с Telegram через
-    библиотеку Aiogram. Управляет жизненным циклом бота,
+    Реализует интерфейс BaseBotClient для работы с Telegram через библиотеку Aiogram. Управляет жизненным циклом бота,
     отправкой сообщений и проверкой состояния.
 
-    Атрибуты:
-        _bot (Bot | None): Экземпляр Aiogram бота
-        _session (AiohttpSession | None): HTTP сессия
-        _is_running (bool): Флаг запуска
-        _initialized (bool): Флаг инициализации
+    Атрибуты:     _bot (Bot | None): Экземпляр Aiogram бота     _session (AiohttpSession | None): HTTP сессия
+    _is_running (bool): Флаг запуска     _initialized (bool): Флаг инициализации
     """
 
     def __init__(self) -> None:
@@ -52,8 +46,7 @@ class AiogramClient(BaseBotClient):
         self._initialized = False
 
     async def initialize(self) -> None:
-        """
-        Инициализация Aiogram бота.
+        """Инициализация Aiogram бота.
 
         Создает экземпляр Bot с токеном из настроек,
         настраивает HTTP сессию и проверяет работоспособность.
@@ -86,11 +79,9 @@ class AiogramClient(BaseBotClient):
             raise
 
     async def start(self) -> None:
-        """
-        Запуск бота.
+        """Запуск бота.
 
-        Устанавливает флаг запуска. Поллинг обрабатывается
-        менеджером бота, а не этим клиентом.
+        Устанавливает флаг запуска. Поллинг обрабатывается менеджером бота, а не этим клиентом.
         """
         if not self._initialized:
             await self.initialize()
@@ -99,11 +90,9 @@ class AiogramClient(BaseBotClient):
         bot_logger.debug("✅ Aiogram client started (polling will be handled by manager)")
 
     async def stop(self) -> None:
-        """
-        Остановка бота.
+        """Остановка бота.
 
-        Закрывает сессию и освобождает ресурсы.
-        Устойчив к ошибкам флуда при закрытии.
+        Закрывает сессию и освобождает ресурсы. Устойчив к ошибкам флуда при закрытии.
         """
         self._is_running = False
 
@@ -136,8 +125,7 @@ class AiogramClient(BaseBotClient):
         bot_logger.info("⛔ Aiogram client stopped")
 
     async def is_connected(self) -> bool:
-        """
-        Проверка подключения к Telegram.
+        """Проверка подключения к Telegram.
 
         Returns:
             bool: True если бот подключен и работает
@@ -153,8 +141,7 @@ class AiogramClient(BaseBotClient):
             return False
 
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса клиента.
+        """Получение статуса клиента.
 
         Returns:
             dict: Информация о состоянии клиента
@@ -185,8 +172,7 @@ class AiogramClient(BaseBotClient):
         }
 
     async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
-        """
-        Отправка сообщения через Aiogram.
+        """Отправка сообщения через Aiogram.
 
         Args:
             chat_id: ID чата в Telegram
@@ -223,8 +209,7 @@ class AiogramClient(BaseBotClient):
             }
 
     async def get_me(self) -> dict[str, Any]:
-        """
-        Получение информации о боте.
+        """Получение информации о боте.
 
         Returns:
             dict: Информация о боте (id, username, first_name, и т.д.)

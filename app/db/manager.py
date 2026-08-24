@@ -18,7 +18,7 @@ from ..utils.decorators import log_exceptions
 
 
 class DBType(StrEnum):
-    """Типы поддерживаемых БД"""
+    """Типы поддерживаемых БД."""
 
     SQLITE = "sqlite"
     MSSQL = "mssql"
@@ -27,7 +27,7 @@ class DBType(StrEnum):
 
 @dataclass
 class DBConfig:
-    """Конфигурация для подключения к БД"""
+    """Конфигурация для подключения к БД."""
 
     url: str
     echo: bool = False
@@ -50,7 +50,7 @@ class DBConfig:
 
 
 class DBEngine:
-    """Обертка для движка БД"""
+    """Обертка для движка БД."""
 
     def __init__(self, config: DBConfig):
         self.config = config
@@ -75,7 +75,7 @@ class DBEngine:
         return self._initialized
 
     async def initialize(self) -> None:
-        """Инициализация движка"""
+        """Инициализация движка."""
         if self._initialized:
             return
 
@@ -119,7 +119,7 @@ class DBEngine:
         self._initialized = True
 
     async def dispose(self) -> None:
-        """Закрытие движка"""
+        """Закрытие движка."""
         if self._engine:
             await self._engine.dispose()
             self._initialized = False
@@ -127,7 +127,7 @@ class DBEngine:
 
 
 class DBManager:
-    """Универсальный менеджер для работы с несколькими БД"""
+    """Универсальный менеджер для работы с несколькими БД."""
 
     _instance: Optional["DBManager"] = None
 
@@ -146,7 +146,7 @@ class DBManager:
         self._initialized = False
 
     def register_database(self, name: str, config: DBConfig) -> "DBManager":
-        """Регистрация новой БД"""
+        """Регистрация новой БД."""
         if name in self._engines:
             db_logger.warning(f"⚠️ Database '{name}' already registered, updating...")
 
@@ -186,7 +186,7 @@ class DBManager:
         db_name: str | None = None,
         show_logs: bool = True,
     ) -> AsyncGenerator[AsyncSession]:
-        """Получение сессии для указанной БД"""
+        """Получение сессии для указанной БД."""
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -220,7 +220,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def initialize_all(self) -> None:
-        """Инициализация всех зарегистрированных БД"""
+        """Инициализация всех зарегистрированных БД."""
         if self._initialized:
             return
 
@@ -238,7 +238,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def init_tables(self, db_name: str | None = None, drop_first: bool = False) -> None:
-        """Инициализация таблиц для БД"""
+        """Инициализация таблиц для БД."""
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -259,7 +259,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def seed_tables(self) -> None:
-        """Заполнение таблиц данными"""
+        """Заполнение таблиц данными."""
         from app.services.seed_service import avanpost_seed_service
 
         db_logger.debug("🔍 Seeding Avanpost system data types...")
@@ -275,8 +275,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def sync_avanpost(self, force: bool = False) -> dict[str, Any]:
-        """
-        Синхронизация данных Avanpost с выводом статистики только при изменениях.
+        """Синхронизация данных Avanpost с выводом статистики только при изменениях.
 
         Args:
             force: Принудительная полная синхронизация (игнорировать кеш)
@@ -348,8 +347,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def sync_avanpost_async(self, force: bool = False) -> asyncio.Task:
-        """
-        Запуск синхронизации Avanpost в фоновом режиме.
+        """Запуск синхронизации Avanpost в фоновом режиме.
 
         Args:
             force: Принудительная полная синхронизация
@@ -393,7 +391,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def close_all(self) -> None:
-        """Закрытие всех соединений"""
+        """Закрытие всех соединений."""
         for name, engine in self._engines.items():
             try:
                 await engine.dispose()
@@ -406,7 +404,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def check_connection(self, db_name: str | None = None) -> bool:
-        """Проверка подключения к БД"""
+        """Проверка подключения к БД."""
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -423,7 +421,7 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def get_stats(self) -> dict:
-        """Получение статистики всех БД"""
+        """Получение статистики всех БД."""
         return {
             "databases": {
                 name: {

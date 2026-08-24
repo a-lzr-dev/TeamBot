@@ -22,7 +22,7 @@ _avanpost_user_repo = AvanpostUserRepository()
 
 
 class OrdersListHandler(BaseListHandler):
-    """Обработчик списка заказов"""
+    """Обработчик списка заказов."""
 
     def __init__(self) -> None:
         super().__init__(prefix="orders", list_type="orders", page_size=10)
@@ -36,7 +36,7 @@ class OrdersListHandler(BaseListHandler):
         search_query: str | None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Загрузка данных заказов"""
+        """Загрузка данных заказов."""
         avanpost_user_id = kwargs.get("avanpost_user_id")
         if not avanpost_user_id:
             return {
@@ -89,7 +89,7 @@ class OrdersListHandler(BaseListHandler):
         search_query: str | None = None,
         **kwargs: Any,
     ) -> None:
-        """Отображение списка заказов"""
+        """Отображение списка заказов."""
         bot_manager = get_bot_manager()
 
         if isinstance(event, CallbackQuery):
@@ -283,7 +283,7 @@ class OrdersListHandler(BaseListHandler):
         )
 
     async def get_state_keys(self) -> dict[str, str]:
-        """Получение ключей для состояния"""
+        """Получение ключей для состояния."""
         return {
             "page": "orders_page",
             "search_query": "orders_search_query",
@@ -295,7 +295,7 @@ class OrdersListHandler(BaseListHandler):
 
     @staticmethod
     async def get_back_keyboard(state: FSMContext) -> Any:
-        """Клавиатура с кнопкой назад"""
+        """Клавиатура с кнопкой назад."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         state_data = await state.get_data()
@@ -329,7 +329,7 @@ async def show_orders_list(
     search_query: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """Внешняя функция для отображения списка заказов"""
+    """Внешняя функция для отображения списка заказов."""
     await orders_handler.show_list(event, state, page, search_query, **kwargs)
 
 
@@ -354,7 +354,7 @@ async def handle_orders_back(callback: CallbackQuery, state: FSMContext) -> None
 
 @router.callback_query(lambda c: c.data == "orders_back_to_list")
 async def handle_orders_back_to_list(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработчик для кнопки 'Назад к заказам'"""
+    """Обработчик для кнопки 'Назад к заказам'."""
     bot_manager = get_bot_manager()
     bot_logger.debug("🔍 [handle_orders_back_to_list] START")
 
@@ -395,13 +395,13 @@ async def handle_orders_back_to_list(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(lambda c: c.data.startswith("orders_"))
 async def handle_orders_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """Обработка колбэков для заказов"""
+    """Обработка колбэков для заказов."""
     await orders_handler.handle(callback, state)
 
 
 @router.message(SubMenuStates.searching_orders)
 async def handle_orders_search(message: Message, state: FSMContext) -> None:
-    """Обработка поискового запроса для заказов"""
+    """Обработка поискового запроса для заказов."""
     await orders_search_handler.handle_search_query(message, state)
 
 

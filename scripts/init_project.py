@@ -1,14 +1,22 @@
-"""
-Полная инициализация проекта TeamBot
+"""Полная инициализация проекта TeamBot.
 
-Запуск: python scripts/init_project.py
+Использование:
+    python scripts/init_project.py [options]
+
+Опции:
+    --test-data     Создать тестовые данные после инициализации
+    --force         Пропустить подтверждения
+    --no-sync       Пропустить синхронизацию данных Avanpost
+    --sync-force    Принудительная синхронизация (игнорировать кеш)
+    --sync-users    Синхронизировать пользовательские данные Avanpost
+    --skip-seed     Пропустить заполнение системных данных Avanpost (только sync)
 
 Выполняет:
-1. Инициализацию всех БД
-2. Создание таблиц
-3. Заполнение системных данных Avanpost (seed)
-4. Синхронизацию данных Avanpost (sync) - ОПЦИОНАЛЬНО
-5. Создание тестовых данных (опционально)
+    1. Инициализацию всех БД
+    2. Создание таблиц
+    3. Заполнение системных данных Avanpost (seed)
+    4. Синхронизацию данных Avanpost (sync) - ОПЦИОНАЛЬНО
+    5. Создание тестовых данных (опционально)
 """
 
 import argparse
@@ -23,8 +31,7 @@ from app.db.manager import db_manager
 
 
 async def seed_avanpost_data() -> bool:
-    """
-    Заполнение системных данных Avanpost.
+    """Заполнение системных данных Avanpost.
 
     Returns:
         bool: True если успешно, False если ошибка
@@ -51,8 +58,7 @@ async def seed_avanpost_data() -> bool:
 
 
 async def execute_avanpost_sync(force: bool = False, sync_users: bool = False) -> bool:
-    """
-    Запуск синхронизации данных Avanpost.
+    """Запуск синхронизации данных Avanpost.
 
     Args:
         force: Принудительная синхронизация (игнорировать кеш)
@@ -100,8 +106,7 @@ async def execute_avanpost_sync(force: bool = False, sync_users: bool = False) -
 
 
 async def create_test_data() -> bool:
-    """
-    Создание тестовых данных.
+    """Создание тестовых данных.
 
     Returns:
         bool: True если успешно, False если ошибка
@@ -132,8 +137,7 @@ async def init_project(
     sync_users: bool = False,
     skip_seed: bool = False,
 ) -> None:
-    """
-    Полная инициализация проекта.
+    """Полная инициализация проекта.
 
     Args:
         seed_test_data: Создать тестовые данные
@@ -220,39 +224,11 @@ async def init_project(
 
 
 async def main() -> None:
-    """Точка входа в приложение"""
+    """Точка входа в приложение."""
     parser = argparse.ArgumentParser(
         description="TeamBot Project Initialization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Полная инициализация с seed и sync
-    python scripts/init_project.py
-
-    # Только seed, без sync
-    python scripts/init_project.py --no-sync
-
-    # Только sync (без seed)
-    python scripts/init_project.py --skip-seed
-
-    # С тестовыми данными
-    python scripts/init_project.py --test-data
-
-    # Принудительная синхронизация (полная перезапись)
-    python scripts/init_project.py --sync-force
-
-    # С синхронизацией пользователей
-    python scripts/init_project.py --sync-users
-
-    # Пропустить подтверждения
-    python scripts/init_project.py --force
-
-    # Комбинация: force + sync force + users
-    python scripts/init_project.py --force --sync-force --sync-users
-
-    # Только sync (без seed) с пользователями
-    python scripts/init_project.py --skip-seed --sync-users
-        """,
+        epilog=__doc__,
     )
     parser.add_argument("--test-data", action="store_true", help="Create test data after initialization")
     parser.add_argument("--force", action="store_true", help="Skip confirmation prompts")

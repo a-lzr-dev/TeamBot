@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class LogHandlerService:
-    """Сервис-мост для обработки логов уровня ERROR и CRITICAL"""
+    """Сервис-мост для обработки логов уровня ERROR и CRITICAL."""
 
     def __init__(self) -> None:
         self._initialized = False
@@ -37,11 +37,11 @@ class LogHandlerService:
 
     @property
     def is_initialized(self) -> bool:
-        """Проверка, инициализирован ли сервис"""
+        """Проверка, инициализирован ли сервис."""
         return self._initialized
 
     async def initialize(self) -> None:
-        """Инициализация сервиса"""
+        """Инициализация сервиса."""
         if self._initialized:
             return
 
@@ -54,8 +54,7 @@ class LogHandlerService:
         app_logger.info("✅ LogHandlerService initialized")
 
     async def send_notification(self, error_model: Any) -> None:
-        """
-        Отправка уведомления об ошибке в чаты техподдержки.
+        """Отправка уведомления об ошибке в чаты техподдержки.
 
         Args:
             error_model: Модель ошибки
@@ -66,7 +65,7 @@ class LogHandlerService:
         await self._send_notification(error_model)
 
     def _setup_log_handler(self) -> None:
-        """Настройка обработчика для перехвата логов"""
+        """Настройка обработчика для перехвата логов."""
         if self._handler:
             return
 
@@ -84,7 +83,7 @@ class LogHandlerService:
         app_logger.debug("✅ Log handler attached to root logger")
 
     async def _worker_loop(self) -> None:
-        """Фоновый воркер для обработки логов из очереди"""
+        """Фоновый воркер для обработки логов из очереди."""
         app_logger.debug("🔄 LogHandler worker started")
         self._is_worker_running = True
 
@@ -118,7 +117,7 @@ class LogHandlerService:
             app_logger.debug("⏹️ LogHandler worker finished")
 
     async def _handle_log_record(self, record: logging.LogRecord) -> None:
-        """Обработка записи лога"""
+        """Обработка записи лога."""
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Shutdown detected, skipping log record")
             return
@@ -210,12 +209,12 @@ class LogHandlerService:
 
     @staticmethod
     def _get_cache_key(record: logging.LogRecord) -> str:
-        """Создание ключа для кеша"""
+        """Создание ключа для кеша."""
         msg = record.getMessage()
         return f"{record.name}:{msg[:100]}"
 
     def _cleanup_cache(self) -> None:
-        """Очистка кеша"""
+        """Очистка кеша."""
         if len(self._error_cache) > 1000:
             now = datetime_now()
             expired = [
@@ -226,7 +225,7 @@ class LogHandlerService:
 
     @staticmethod
     def _determine_category(logger_name: str) -> ErrorCategory:
-        """Определение категории по имени логгера"""
+        """Определение категории по имени логгера."""
         logger_lower = logger_name.lower()
 
         category_map = {
@@ -246,7 +245,7 @@ class LogHandlerService:
 
     @staticmethod
     def _determine_severity(level: int) -> ErrorSeverity:
-        """Определение серьезности по уровню лога"""
+        """Определение серьезности по уровню лога."""
         if level >= logging.CRITICAL:
             return ErrorSeverity.CRITICAL
         elif level >= logging.ERROR:
@@ -257,8 +256,7 @@ class LogHandlerService:
             return ErrorSeverity.INFO
 
     async def _send_notification(self, error_model: Any) -> None:
-        """
-        Отправка уведомления об ошибке в чат техподдержки.
+        """Отправка уведомления об ошибке в чат техподдержки.
 
         Поддерживает отправку в разные топики в зависимости от источника ошибки:
         - Globus → топик Globus
@@ -356,7 +354,6 @@ class LogHandlerService:
     @staticmethod
     def _format_notification(error: Any) -> str:
         """Форматирование сообщения для чата техподдержки (HTML)"""
-
         severity_emoji = {
             ErrorSeverity.CRITICAL: "🚨",
             ErrorSeverity.ERROR: "❌",
@@ -374,7 +371,7 @@ class LogHandlerService:
 
         # Экранирование для HTML
         def escape_html(text: str) -> str:
-            """Экранирование основных спецсимволов для HTML"""
+            """Экранирование основных спецсимволов для HTML."""
             if not text:
                 return ""
             return (
@@ -418,7 +415,7 @@ class LogHandlerService:
         return message
 
     async def shutdown(self) -> None:
-        """Корректное завершение сервиса"""
+        """Корректное завершение сервиса."""
         app_logger.debug("🚀 Stopping LogHandlerService...")
 
         self._shutting_down = True
@@ -479,8 +476,7 @@ class LogHandlerService:
         app_logger.info("⛔ LogHandlerService shut down")
 
     async def set_shutting_down(self, value: bool = True) -> None:
-        """
-        Установка флага завершения работы.
+        """Установка флага завершения работы.
 
         Args:
             value: Значение флага
@@ -489,8 +485,7 @@ class LogHandlerService:
         app_logger.debug(f"ℹ️ Shutting down flag set to {value}")
 
     async def is_shutting_down(self) -> bool:
-        """
-        Проверка, завершается ли сервис.
+        """Проверка, завершается ли сервис.
 
         Returns:
             bool: True если сервис завершается
@@ -498,8 +493,7 @@ class LogHandlerService:
         return self._shutting_down
 
     async def get_stats(self) -> dict[str, int]:
-        """
-        Получение статистики работы сервиса.
+        """Получение статистики работы сервиса.
 
         Returns:
             dict: Статистика

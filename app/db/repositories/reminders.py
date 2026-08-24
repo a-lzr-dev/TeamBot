@@ -12,7 +12,7 @@ from ...utils.decorators import log_exceptions
 
 
 class ReminderRepository:
-    """Репозиторий для работы с напоминаниями и делами"""
+    """Репозиторий для работы с напоминаниями и делами."""
 
     # ==================== СОЗДАНИЕ ====================
 
@@ -34,8 +34,7 @@ class ReminderRepository:
         shared_with: list[int] | None = None,
         encrypt: bool = False,
     ) -> UserReminderModel:
-        """
-        Создание напоминания с поддержкой шифрования.
+        """Создание напоминания с поддержкой шифрования.
 
         Args:
             session: Сессия БД
@@ -134,8 +133,7 @@ class ReminderRepository:
     async def complete_reminder(
         session: AsyncSession, reminder_id: int, user_id: int, successful: bool = True
     ) -> tuple[bool, str | None]:
-        """
-        Завершение дела.
+        """Завершение дела.
 
         Args:
             session: Сессия БД
@@ -205,8 +203,7 @@ class ReminderRepository:
         limit: int | None = None,
         offset: int = 0,
     ) -> list[UserReminderModel]:
-        """
-        Получение списка дел пользователя.
+        """Получение списка дел пользователя.
 
         Args:
             session: Сессия БД
@@ -268,8 +265,7 @@ class ReminderRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_reminder_by_id(session: AsyncSession, reminder_id: int) -> UserReminderModel | None:
-        """
-        Получение напоминания по ID.
+        """Получение напоминания по ID.
 
         Args:
             session: Сессия БД
@@ -305,8 +301,7 @@ class ReminderRepository:
         chat_id: int | None = None,
         include_completed: bool = False,
     ) -> list[UserReminderModel]:
-        """
-        Поиск дел по кодовому слову.
+        """Поиск дел по кодовому слову.
 
         Args:
             session: Сессия БД
@@ -358,8 +353,7 @@ class ReminderRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[UserReminderModel]:
-        """
-        Получение активных напоминаний, время которых наступило.
+        """Получение активных напоминаний, время которых наступило.
 
         Args:
             session: Сессия БД
@@ -410,8 +404,7 @@ class ReminderRepository:
         is_active: bool | None = None,
         remind_at: datetime | None = None,
     ) -> bool:
-        """
-        Обновление статуса напоминания после отправки уведомления.
+        """Обновление статуса напоминания после отправки уведомления.
 
         Args:
             session: Сессия БД
@@ -465,8 +458,7 @@ class ReminderRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def deactivate_reminder(session: AsyncSession, reminder_id: int) -> bool:
-        """
-        Деактивация напоминания.
+        """Деактивация напоминания.
 
         Args:
             session: Сессия БД
@@ -498,8 +490,7 @@ class ReminderRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def delete_reminder(session: AsyncSession, reminder_id: int, soft: bool = True) -> bool:
-        """
-        Удаление напоминания (мягкое или жесткое).
+        """Удаление напоминания (мягкое или жесткое).
 
         Args:
             session: Сессия БД
@@ -558,8 +549,7 @@ class ReminderRepository:
         user_id: int,
         period: str = "week",
     ) -> dict[str, Any]:
-        """
-        Получение статистики по делам пользователя.
+        """Получение статистики по делам пользователя.
 
         Args:
             session: Сессия БД
@@ -664,8 +654,7 @@ class ReminderRepository:
 
     @staticmethod
     def format_reminder(reminder: UserReminderModel) -> dict[str, Any]:
-        """
-        Форматирование дела для вывода с поддержкой расшифровки.
+        """Форматирование дела для вывода с поддержкой расшифровки.
 
         Args:
             reminder: Модель напоминания
@@ -715,8 +704,7 @@ class ReminderRepository:
         session: AsyncSession,
         reminder_ids: list[int],
     ) -> int:
-        """
-        Массовая деактивация напоминаний.
+        """Массовая деактивация напоминаний.
 
         Args:
             session: Сессия БД
@@ -750,8 +738,7 @@ class ReminderRepository:
         reminder_ids: list[int],
         soft: bool = True,
     ) -> int:
-        """
-        Массовое удаление напоминаний.
+        """Массовое удаление напоминаний.
 
         Args:
             session: Сессия БД

@@ -1,5 +1,4 @@
-"""
-Пакет Telegram бота TeamBot.
+"""Пакет Telegram бота TeamBot.
 
 Содержит все компоненты для работы с Telegram:
 - Менеджер бота (BotManager) - главный координатор

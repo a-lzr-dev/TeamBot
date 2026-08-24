@@ -11,7 +11,7 @@ from ...utils.decorators import log_exceptions, suppress_debug_logs
 
 
 class MessageRepository:
-    """Репозиторий для работы с сообщениями"""
+    """Репозиторий для работы с сообщениями."""
 
     # ==================== СОЗДАНИЕ И ОБНОВЛЕНИЕ ====================
 
@@ -41,8 +41,7 @@ class MessageRepository:
         is_forwarded: bool = False,
         is_reply: bool = False,
     ) -> ChatMessageModel:
-        """
-        Создание нового сообщения в БД.
+        """Создание нового сообщения в БД.
 
         Args:
             session: Сессия БД
@@ -131,8 +130,7 @@ class MessageRepository:
         caption: str | None = None,
         edit_date: datetime | None = None,
     ) -> ChatMessageModel | None:
-        """
-        Обновление существующего сообщения.
+        """Обновление существующего сообщения.
 
         Args:
             session: Сессия БД
@@ -205,8 +203,7 @@ class MessageRepository:
         is_reply: bool = False,
         edit_date: datetime | None = None,
     ) -> tuple[ChatMessageModel, bool]:
-        """
-        Создание или обновление сообщения (UPSERT).
+        """Создание или обновление сообщения (UPSERT).
 
         Returns:
             tuple[ChatMessageModel, bool]: (сообщение, created)
@@ -268,8 +265,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_message_by_id(session: AsyncSession, message_id: int) -> ChatMessageModel | None:
-        """
-        Получение сообщения по ID.
+        """Получение сообщения по ID.
 
         Args:
             session: Сессия БД
@@ -301,8 +297,7 @@ class MessageRepository:
         message_ids: list[int],
         include_deleted: bool = False,
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений по списку ID.
+        """Получение сообщений по списку ID.
 
         Args:
             session: Сессия БД
@@ -336,8 +331,7 @@ class MessageRepository:
     async def get_messages_by_chat(
         session: AsyncSession, chat_id: int, limit: int = 100, offset: int = 0, include_deleted: bool = False
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений по чату.
+        """Получение сообщений по чату.
 
         Args:
             session: Сессия БД
@@ -378,8 +372,7 @@ class MessageRepository:
         exclude_message_types: list[MessageType] | None = None,
         limit: int | None = None,
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений по фильтру с возможностью исключения типов.
+        """Получение сообщений по фильтру с возможностью исключения типов.
 
         Args:
             session: Сессия БД
@@ -430,8 +423,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_message_count_by_chat(session: AsyncSession, chat_id: int) -> int:
-        """
-        Получение количества активных сообщений в чате.
+        """Получение количества активных сообщений в чате.
 
         Args:
             session: Сессия БД
@@ -459,8 +451,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_message_lifetime_stats(session: AsyncSession, chat_id: int | None = None) -> dict[str, Any]:
-        """
-        Получение статистики по времени жизни сообщений.
+        """Получение статистики по времени жизни сообщений.
 
         Args:
             session: Сессия БД
@@ -510,8 +501,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def set_message_lifetime(session: AsyncSession, message_id: int, lifetime_seconds: int) -> bool:
-        """
-        Установка времени жизни для сообщения.
+        """Установка времени жизни для сообщения.
 
         Args:
             session: Сессия БД
@@ -550,8 +540,7 @@ class MessageRepository:
     async def get_expired_messages(
         session: AsyncSession, chat_id: int | None = None, limit: int = 1000
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений, у которых истекло время жизни.
+        """Получение сообщений, у которых истекло время жизни.
 
         Args:
             session: Сессия БД
@@ -596,8 +585,7 @@ class MessageRepository:
         deleted_by_type: str = "expired",
         deleted_by_message_id: int | None = None,
     ) -> int:
-        """
-        Отметка сообщений как удаленных.
+        """Отметка сообщений как удаленных.
 
         Args:
             session: Сессия БД
@@ -644,8 +632,7 @@ class MessageRepository:
     async def mark_messages_deleted_by_ids(
         session: AsyncSession, message_ids: list[int], deleted_by_type: str = "cleanup"
     ) -> int:
-        """
-        Отметка конкретных сообщений как удаленных.
+        """Отметка конкретных сообщений как удаленных.
 
         Args:
             session: Сессия БД
@@ -689,8 +676,7 @@ class MessageRepository:
         deleted_by_type: str = "error_cleanup",
         deleted_by_message_id: int | None = None,
     ) -> int:
-        """
-        Мягкое удаление сообщений по списку ID (аналог mark_messages_as_deleted).
+        """Мягкое удаление сообщений по списку ID (аналог mark_messages_as_deleted).
 
         Args:
             session: Сессия БД
@@ -711,8 +697,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def restore_deleted_message(session: AsyncSession, message_id: int, chat_id: int | None = None) -> bool:
-        """
-        Восстановление удаленного сообщения.
+        """Восстановление удаленного сообщения.
 
         Args:
             session: Сессия БД
@@ -766,8 +751,7 @@ class MessageRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений за период.
+        """Получение сообщений за период.
 
         Args:
             session: Сессия БД
@@ -821,8 +805,7 @@ class MessageRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ChatMessageModel]:
-        """
-        Получение сообщений по типу.
+        """Получение сообщений по типу.
 
         Args:
             session: Сессия БД
@@ -856,8 +839,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_last_message_in_chat(session: AsyncSession, chat_id: int) -> ChatMessageModel | None:
-        """
-        Получение последнего сообщения в чате.
+        """Получение последнего сообщения в чате.
 
         Args:
             session: Сессия БД
@@ -892,8 +874,7 @@ class MessageRepository:
     async def get_message_count_by_type(
         session: AsyncSession, message_type: MessageType, chat_id: int | None = None
     ) -> int:
-        """
-        Получение количества сообщений по типу.
+        """Получение количества сообщений по типу.
 
         Args:
             session: Сессия БД
@@ -923,8 +904,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def get_all_message_types_stats(session: AsyncSession, chat_id: int | None = None) -> dict[str, int]:
-        """
-        Получение статистики по всем типам сообщений.
+        """Получение статистики по всем типам сообщений.
 
         Args:
             session: Сессия БД
@@ -948,8 +928,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def delete_messages_permanently(session: AsyncSession, message_ids: list[int]) -> int:
-        """
-        Полное удаление сообщений из БД (без возможности восстановления).
+        """Полное удаление сообщений из БД (без возможности восстановления).
 
         Args:
             session: Сессия БД
@@ -979,8 +958,7 @@ class MessageRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def cleanup_expired_messages(session: AsyncSession, batch_size: int = 1000) -> dict[str, int]:
-        """
-        Очистка всех истекших сообщений.
+        """Очистка всех истекших сообщений.
 
         Args:
             session: Сессия БД

@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
 
+    # API Keys (для аутентификации)
+    API_KEYS: list[str] = Field(default_factory=lambda: [], description="Список API ключей для аутентификации запросов")
+
     # Режим работы
     APP_ENV: str = "production"
     APP_DEBUG: bool = False
@@ -283,7 +286,7 @@ class Settings(BaseSettings):
     @field_validator("ADMIN_IDS", "AUTOMATION_NOTIFICATION_CHAT_IDS", mode="before")
     @classmethod
     def parse_list_field(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списков из строки в список"""
+        """Парсинг списков из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -320,7 +323,7 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_AUTO_ADD_USERS_IDS_ON_START", mode="before")
     @classmethod
     def parse_avanpost_users_list(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списка пользователей Avanpost из строки в список"""
+        """Парсинг списка пользователей Avanpost из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -349,7 +352,7 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_USER_IDS", mode="before")
     @classmethod
     def parse_avanpost_sync_user_ids(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списка пользователей для синхронизации из строки в список"""
+        """Парсинг списка пользователей для синхронизации из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -400,7 +403,7 @@ class Settings(BaseSettings):
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")
     @classmethod
     def parse_support_chat_topic_ids(cls, v: str | dict | None) -> dict[str, int]:
-        """Парсинг SUPPORT_CHAT_TOPIC_IDS из строки в словарь"""
+        """Парсинг SUPPORT_CHAT_TOPIC_IDS из строки в словарь."""
         if v is None:
             return {}
         if isinstance(v, dict):
@@ -433,7 +436,7 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_ALLOWED_EXTENSIONS", mode="before")
     @classmethod
     def parse_extensions_list(cls, v: str | list[str] | None) -> list[str]:
-        """Парсинг списка расширений"""
+        """Парсинг списка расширений."""
         if v is None:
             return [".doc", ".docx"]
         if isinstance(v, list):
@@ -456,7 +459,7 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_CONVERSION_METHOD")
     @classmethod
     def validate_conversion_method(cls, v: str) -> str:
-        """Валидация метода конвертации"""
+        """Валидация метода конвертации."""
         valid_methods = ["pywin32", "comtypes", "libreoffice", "auto"]
         if v.lower() not in valid_methods:
             raise ValueError(f"Invalid conversion method: {v}. Must be one of: {', '.join(valid_methods)}")
@@ -465,7 +468,7 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_MAX_FILE_SIZE")
     @classmethod
     def validate_max_file_size(cls, v: int) -> int:
-        """Валидация максимального размера файла"""
+        """Валидация максимального размера файла."""
         if v < 1024 * 1024:  # Меньше 1 MB
             raise ValueError("AUTOMATION_MAX_FILE_SIZE must be at least 1 MB")
         if v > 500 * 1024 * 1024:  # Больше 500 MB
@@ -475,7 +478,7 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_CONVERSION_TIMEOUT")
     @classmethod
     def validate_timeout(cls, v: int) -> int:
-        """Валидация таймаута конвертации"""
+        """Валидация таймаута конвертации."""
         if v < 5:
             raise ValueError("AUTOMATION_CONVERSION_TIMEOUT must be at least 5 seconds")
         if v > 300:
@@ -485,7 +488,7 @@ class Settings(BaseSettings):
     @field_validator("MESSAGE_LIFETIME_DEFAULT_SECONDS")
     @classmethod
     def validate_message_lifetime(cls, v: int) -> int:
-        """Валидация времени жизни сообщений"""
+        """Валидация времени жизни сообщений."""
         if v < 10:
             raise ValueError("MESSAGE_LIFETIME_DEFAULT_SECONDS must be at least 10 seconds")
         if v > 86400:  # 24 часа
@@ -495,7 +498,7 @@ class Settings(BaseSettings):
     @field_validator("LOG_QUEUE_MAX_SIZE")
     @classmethod
     def validate_queue_size(cls, v: int) -> int:
-        """Валидация размера очереди логов"""
+        """Валидация размера очереди логов."""
         if v < 10:
             raise ValueError("LOG_QUEUE_MAX_SIZE must be at least 10")
         if v > 10000:
@@ -505,7 +508,7 @@ class Settings(BaseSettings):
     @field_validator("API_DEFAULT_PAGE_SIZE")
     @classmethod
     def validate_page_size(cls, v: int) -> int:
-        """Валидация размера страницы API"""
+        """Валидация размера страницы API."""
         if v < 1:
             raise ValueError("API_DEFAULT_PAGE_SIZE must be at least 1")
         if v > 1000:
@@ -515,7 +518,7 @@ class Settings(BaseSettings):
     @field_validator("TELEGRAM_MAX_RETRIES")
     @classmethod
     def validate_max_retries(cls, v: int) -> int:
-        """Валидация максимального количества попыток"""
+        """Валидация максимального количества попыток."""
         if v < 1:
             raise ValueError("TELEGRAM_MAX_RETRIES must be at least 1")
         if v > 20:
@@ -525,7 +528,7 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_CHUNK_SIZE")
     @classmethod
     def validate_sync_chunk_size(cls, v: int) -> int:
-        """Валидация размера чанка синхронизации"""
+        """Валидация размера чанка синхронизации."""
         if v < 1:
             raise ValueError("AVANPOST_SYNC_CHUNK_SIZE must be at least 1")
         if v > 50:
@@ -535,7 +538,7 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_TIMEOUT")
     @classmethod
     def validate_sync_timeout(cls, v: int) -> int:
-        """Валидация таймаута синхронизации"""
+        """Валидация таймаута синхронизации."""
         if v < 0:
             raise ValueError("AVANPOST_SYNC_TIMEOUT must be >= 0")
         return v
@@ -556,22 +559,22 @@ class Settings(BaseSettings):
 
     @property
     def is_windows(self) -> bool:
-        """Проверка, работаем ли мы на Windows"""
+        """Проверка, работаем ли мы на Windows."""
         return sys.platform == "win32"
 
     @property
     def is_linux(self) -> bool:
-        """Проверка, работаем ли мы на Linux"""
+        """Проверка, работаем ли мы на Linux."""
         return sys.platform.startswith("linux")
 
     @property
     def is_macos(self) -> bool:
-        """Проверка, работаем ли мы на macOS"""
+        """Проверка, работаем ли мы на macOS."""
         return sys.platform == "darwin"
 
     @property
     def automation_supported_methods(self) -> list[str]:
-        """Список доступных методов конвертации на текущей платформе"""
+        """Список доступных методов конвертации на текущей платформе."""
         methods: list[str] = []
 
         if self.is_windows:
@@ -595,13 +598,13 @@ class Settings(BaseSettings):
 
     @property
     def automation_is_available(self) -> bool:
-        """Проверка, доступна ли конвертация на текущей платформе"""
+        """Проверка, доступна ли конвертация на текущей платформе."""
         return len(self.automation_supported_methods) > 0
 
     @property
     def automation_best_method(self) -> str | None:
-        """
-        Определение лучшего метода для текущей платформы.
+        """Определение лучшего метода для текущей платформы.
+
         Возвращает Optional[str], так как метод может быть не найден.
         """
         # Если пользователь указал конкретный метод
@@ -627,8 +630,8 @@ class Settings(BaseSettings):
 
     @property
     def automation_get_notification_chats(self) -> list[int]:
-        """
-        Получение списка чатов для уведомлений о заявках.
+        """Получение списка чатов для уведомлений о заявках.
+
         Возвращает список с одним чатом (SUPPORT_CHAT_ID) или пустой список.
         """
         if self.AUTOMATION_NOTIFICATION_CHAT_IDS:
@@ -640,8 +643,8 @@ class Settings(BaseSettings):
 
     @property
     def automation_get_notification_topic(self) -> int | None:
-        """
-        Получение ID топика для уведомлений о заявках.
+        """Получение ID топика для уведомлений о заявках.
+
         Возвращает ID топика для "Jobs" или None, если не настроен.
         """
         # Заявки на автоматизацию отправляем в топик Jobs
@@ -649,23 +652,23 @@ class Settings(BaseSettings):
 
     @property
     def avanpost_sync_enabled(self) -> bool:
-        """Проверка, включена ли синхронизация Avanpost"""
+        """Проверка, включена ли синхронизация Avanpost."""
         return self.AVANPOST_AUTO_SYNC_ON_START
 
     @property
     def avanpost_sync_mode(self) -> str:
-        """Режим синхронизации: 'async' или 'sync'"""
+        """Режим синхронизации: 'async' или 'sync'."""
         return "async" if self.AVANPOST_SYNC_ASYNC else "sync"
 
     @property
     def avanpost_sync_is_required(self) -> bool:
-        """Является ли синхронизация обязательной"""
+        """Является ли синхронизация обязательной."""
         return self.AVANPOST_SYNC_REQUIRED
 
     @property
     def avanpost_sync_user_ids(self) -> list[int]:
-        """
-        Получение списка пользователей для синхронизации.
+        """Получение списка пользователей для синхронизации.
+
         Возвращает список ID пользователей или пустой список.
         """
         return self.AVANPOST_SYNC_USER_IDS

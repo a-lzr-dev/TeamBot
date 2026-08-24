@@ -6,7 +6,7 @@ from ..models import ChatMessageModel, ChatModel
 
 @dataclass
 class ChatDTO:
-    """DTO для чата"""
+    """DTO для чата."""
 
     chat_id: int
     title: str
@@ -19,7 +19,7 @@ class ChatDTO:
 
     @classmethod
     def from_model(cls, chat: ChatModel, members_count: int = 0, messages_count: int = 0) -> "ChatDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             chat_id=chat.FID,
             title=chat.FTitle or f"Chat {chat.FID}",
@@ -32,7 +32,7 @@ class ChatDTO:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование в словарь."""
         return {
             "chat_id": self.chat_id,
             "title": self.title,
@@ -47,12 +47,12 @@ class ChatDTO:
 
 @dataclass
 class ChatDetailDTO(ChatDTO):
-    """DTO для детальной информации о чате"""
+    """DTO для детальной информации о чате."""
 
     recent_messages: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Инициализация после создания объекта"""
+        """Инициализация после создания объекта."""
         if self.recent_messages is None:
             self.recent_messages = []
 
@@ -64,7 +64,7 @@ class ChatDetailDTO(ChatDTO):
         messages_count: int = 0,
         recent_messages: list[ChatMessageModel] | None = None,
     ) -> "ChatDetailDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         recent_messages_list = []
         if recent_messages:
             for msg in recent_messages[:5]:
@@ -85,7 +85,7 @@ class ChatDetailDTO(ChatDTO):
 
 @dataclass
 class MessageDTO:
-    """DTO для сообщения"""
+    """DTO для сообщения."""
 
     # Все поля БЕЗ дефолта
     id: int
@@ -104,7 +104,7 @@ class MessageDTO:
 
     @classmethod
     def from_model(cls, message: ChatMessageModel) -> "MessageDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=message.FID,
             chat_id=message.FK_Chat,
@@ -120,7 +120,7 @@ class MessageDTO:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование в словарь."""
         result = {
             "id": self.id,
             "chat_id": self.chat_id,
@@ -144,7 +144,7 @@ class MessageDTO:
 
 @dataclass
 class DeletedMessageDTO:
-    """DTO для удаленного сообщения"""
+    """DTO для удаленного сообщения."""
 
     # Все поля БЕЗ дефолта
     id: int
@@ -162,7 +162,7 @@ class DeletedMessageDTO:
 
     @classmethod
     def from_model(cls, message: ChatMessageModel) -> "DeletedMessageDTO":
-        """Создание DTO из модели"""
+        """Создание DTO из модели."""
         return cls(
             id=message.FID,
             chat_id=message.FK_Chat,
@@ -179,7 +179,7 @@ class DeletedMessageDTO:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Преобразование в словарь"""
+        """Преобразование в словарь."""
         return {
             "id": self.id,
             "chat_id": self.chat_id,

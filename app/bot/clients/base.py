@@ -1,5 +1,4 @@
-"""
-Базовый абстрактный класс для Telegram клиентов.
+"""Базовый абстрактный класс для Telegram клиентов.
 
 Этот модуль определяет интерфейс, которому должны соответствовать
 все реализации клиентов Telegram (Aiogram, Telethon и т.д.).
@@ -20,23 +19,18 @@ from typing import Any
 
 
 class BaseBotClient(ABC):
-    """
-    Базовый абстрактный класс для Telegram клиентов.
+    """Базовый абстрактный класс для Telegram клиентов.
 
-    Определяет единый интерфейс для всех реализаций клиентов
-    (Aiogram, Telethon, и т.д.), обеспечивая универсальность
+    Определяет единый интерфейс для всех реализаций клиентов (Aiogram, Telethon, и т.д.), обеспечивая универсальность
     работы с разными библиотеками.
 
-    Атрибуты:
-        client_type (str): Тип клиента (aiogram, telethon, и т.д.)
-        is_initialized (bool): Инициализирован ли клиент
-        is_running (bool): Запущен ли клиент
+    Атрибуты:     client_type (str): Тип клиента (aiogram, telethon, и т.д.)     is_initialized (bool): Инициализирован
+    ли клиент     is_running (bool): Запущен ли клиент
     """
 
     @abstractmethod
     async def initialize(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Инициализация клиента.
+        """Инициализация клиента.
 
         Выполняет подготовку клиента к работе: создание сессии,
         настройка подключения, регистрация обработчиков.
@@ -49,8 +43,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def start(self) -> None:
-        """
-        Запуск клиента.
+        """Запуск клиента.
 
         Устанавливает соединение с Telegram и начинает обработку событий.
         """
@@ -58,8 +51,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def stop(self) -> None:
-        """
-        Остановка клиента.
+        """Остановка клиента.
 
         Закрывает соединение с Telegram и останавливает обработку событий.
         """
@@ -67,8 +59,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def is_connected(self) -> bool:
-        """
-        Проверка подключения к Telegram.
+        """Проверка подключения к Telegram.
 
         Returns:
             bool: True если клиент подключен к Telegram
@@ -77,8 +68,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса клиента.
+        """Получение статуса клиента.
 
         Returns:
             dict: Словарь с информацией о состоянии клиента
@@ -87,8 +77,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def send_message(self, chat_id: int, text: str, **kwargs: Any) -> dict[str, Any]:
-        """
-        Отправка сообщения в чат.
+        """Отправка сообщения в чат.
 
         Args:
             chat_id: ID чата в Telegram
@@ -102,8 +91,7 @@ class BaseBotClient(ABC):
 
     @abstractmethod
     async def get_me(self) -> dict[str, Any]:
-        """
-        Получение информации о текущем аккаунте.
+        """Получение информации о текущем аккаунте.
 
         Returns:
             dict: Информация о пользователе (id, username, first_name, и т.д.)
@@ -113,8 +101,7 @@ class BaseBotClient(ABC):
     @property
     @abstractmethod
     def client_type(self) -> str:
-        """
-        Получение типа клиента.
+        """Получение типа клиента.
 
         Returns:
             str: Тип клиента (aiogram, telethon, и т.д.)
@@ -124,8 +111,7 @@ class BaseBotClient(ABC):
     @property
     @abstractmethod
     def is_initialized(self) -> bool:
-        """
-        Проверка инициализации клиента.
+        """Проверка инициализации клиента.
 
         Returns:
             bool: True если клиент инициализирован
@@ -135,8 +121,7 @@ class BaseBotClient(ABC):
     @property
     @abstractmethod
     def is_running(self) -> bool:
-        """
-        Проверка запуска клиента.
+        """Проверка запуска клиента.
 
         Returns:
             bool: True если клиент запущен
@@ -144,8 +129,7 @@ class BaseBotClient(ABC):
         pass
 
     async def health_check(self) -> bool:
-        """
-        Проверка здоровья клиента.
+        """Проверка здоровья клиента.
 
         Выполняет проверку подключения и возвращает статус.
 
@@ -158,8 +142,7 @@ class BaseBotClient(ABC):
             return False
 
     async def __aenter__(self) -> "BaseBotClient":
-        """
-        Поддержка async context manager.
+        """Поддержка async context manager.
 
         Автоматически запускает клиент при входе в контекст.
 
@@ -172,8 +155,7 @@ class BaseBotClient(ABC):
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: Any | None
     ) -> None:
-        """
-        Поддержка async context manager.
+        """Поддержка async context manager.
 
         Автоматически останавливает клиент при выходе из контекста.
 

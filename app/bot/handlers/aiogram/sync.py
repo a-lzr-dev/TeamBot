@@ -1,5 +1,4 @@
-"""
-Модуль обработчиков синхронизации для Telegram бота.
+"""Модуль обработчиков синхронизации для Telegram бота.
 
 Этот модуль предоставляет обработчики для команд и колбэков,
 связанных с синхронизацией данных Avanpost:
@@ -79,8 +78,7 @@ async def _show_result(
     report: str,
     show_back_menu: bool = True,
 ) -> None:
-    """
-    Отображение результата синхронизации через callback.
+    """Отображение результата синхронизации через callback.
 
     Args:
         callback: CallbackQuery от пользователя
@@ -111,8 +109,7 @@ async def _show_result_to_message(
     report: str,
     state: FSMContext,
 ) -> None:
-    """
-    Отображение результата синхронизации через сообщение.
+    """Отображение результата синхронизации через сообщение.
 
     Args:
         message: Сообщение от пользователя
@@ -145,8 +142,7 @@ async def _show_result_to_message(
 
 
 async def show_sync_menu(event: Message | CallbackQuery) -> None:
-    """
-    Отображение главного меню синхронизации.
+    """Отображение главного меню синхронизации.
 
     Args:
         event: Сообщение или CallbackQuery
@@ -206,8 +202,7 @@ async def show_sync_menu(event: Message | CallbackQuery) -> None:
 @router.message(Command("sync"))
 @log_exceptions(bot_logger)
 async def cmd_sync(message: Message) -> None:
-    """
-    Команда /sync — открытие меню синхронизации.
+    """Команда /sync — открытие меню синхронизации.
 
     Args:
         message: Сообщение от пользователя
@@ -223,8 +218,7 @@ async def cmd_sync(message: Message) -> None:
 @router.callback_query(F.data.startswith("sync_"))
 @log_exceptions(bot_logger)
 async def handle_sync_callback(callback: CallbackQuery, state: FSMContext) -> None:
-    """
-    Обработка колбэков меню синхронизации.
+    """Обработка колбэков меню синхронизации.
 
     Args:
         callback: CallbackQuery от пользователя
@@ -280,8 +274,7 @@ async def handle_sync_callback(callback: CallbackQuery, state: FSMContext) -> No
 @router.message(Command("sync_base"))
 @log_exceptions(bot_logger)
 async def cmd_sync_base(message: Message) -> None:
-    """
-    Команда /sync_base — синхронизация справочников.
+    """Команда /sync_base — синхронизация справочников.
 
     Args:
         message: Сообщение от пользователя
@@ -347,8 +340,7 @@ async def cmd_sync_base(message: Message) -> None:
 @router.message(Command("sync_contacts"))
 @log_exceptions(bot_logger)
 async def cmd_sync_contacts(message: Message) -> None:
-    """
-    Команда /sync_contacts — синхронизация контактов.
+    """Команда /sync_contacts — синхронизация контактов.
 
     Args:
         message: Сообщение от пользователя
@@ -422,8 +414,7 @@ async def cmd_sync_contacts(message: Message) -> None:
 @router.message(Command("sync_user"))
 @log_exceptions(bot_logger)
 async def cmd_sync_user(message: Message) -> None:
-    """
-    Команда /sync_user <id> — синхронизация конкретного пользователя.
+    """Команда /sync_user <id> — синхронизация конкретного пользователя.
 
     Формат: /sync_user <user_id>
 
@@ -525,8 +516,7 @@ async def cmd_sync_user(message: Message) -> None:
 @router.message(Command("sync_all_users"))
 @log_exceptions(bot_logger)
 async def cmd_sync_all_users(message: Message) -> None:
-    """
-    Команда /sync_all_users — синхронизация всех пользователей.
+    """Команда /sync_all_users — синхронизация всех пользователей.
 
     Args:
         message: Сообщение от пользователя
@@ -594,8 +584,7 @@ async def cmd_sync_all_users(message: Message) -> None:
 @router.message(Command("sync_seed_users"))
 @log_exceptions(bot_logger)
 async def cmd_sync_seed_users(message: Message) -> None:
-    """
-    Команда /sync_seed_users — загрузка всех пользователей из Avanpost.
+    """Команда /sync_seed_users — загрузка всех пользователей из Avanpost.
 
     Args:
         message: Сообщение от пользователя
@@ -667,8 +656,7 @@ async def _handle_sync_user_prompt(
     bot_manager: Any,
     state: FSMContext,
 ) -> None:
-    """
-    Запрос ID пользователя для синхронизации.
+    """Запрос ID пользователя для синхронизации.
 
     Args:
         callback: CallbackQuery от пользователя
@@ -697,8 +685,7 @@ async def _handle_sync_user_prompt(
 @router.message(SyncStates.waiting_for_user_id)
 @log_exceptions(bot_logger)
 async def handle_sync_user_input(message: Message, state: FSMContext) -> None:
-    """
-    Обработка ввода ID пользователя для синхронизации.
+    """Обработка ввода ID пользователя для синхронизации.
 
     Args:
         message: Сообщение от пользователя

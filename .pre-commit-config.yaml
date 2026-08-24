@@ -10,7 +10,151 @@ repos:
     rev: v1.15.0
     hooks:
       - id: mypy
-        args: [
-          --ignore-missing-imports,
-        ]
+        args: [--ignore-missing-imports]
         exclude: ^(tests/|scripts/|Lesson|TeamBot/old)
+
+  # ============================================================
+  # ХУКИ ДЛЯ ТЕСТИРОВАНИЯ
+  # ============================================================
+
+  # Запуск pytest только при push (не при каждом коммите)
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        description: Run pytest tests
+        entry: pytest tests/ -v --maxfail=5 --tb=short
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+        verbose: true
+
+  # Быстрые тесты при каждом коммите (unit-тесты)
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest (unit)
+        description: Run unit tests quickly
+        entry: pytest tests/unit/ -v --maxfail=3 --tb=short -m "not slow"
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-commit]
+        verbose: true
+
+  # Проверка покрытия кода при push
+  - repo: local
+    hooks:
+      - id: pytest-cov
+        name: pytest (coverage)
+        description: Run tests with coverage report
+        entry: pytest tests/ -v --maxfail=5 --cov=app --cov-report=term --cov-report=html --cov-fail-under=60
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+        verbose: true
+        fail_fast: true
+
+  # ============================================================
+  # ХУКИ ДЛЯ КАЧЕСТВА КОДА
+  # ============================================================
+
+  # Проверка на наличие TODO/FIXME
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.1.1
+    hooks:
+      - id: flake8
+        name: flake8 (todo check)
+        args: [--select=TOD]
+        files: \.py$
+        stages: [pre-commit]
+        additional_dependencies: [flake8-todo]
+
+#   # Проверка секретов
+#   - repo: https://github.com/Yelp/detect-secrets
+#     rev: v1.5.0
+#     hooks:
+#       - id: detect-secrets
+#         name: detect-secrets
+#         args: ['--baseline', '.secrets.baseline']
+#         exclude: '\.env|\.env\.example|\.secrets\.baseline'
+#         stages: [pre-commit]
+
+  # Проверка безопасности
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.8.3
+    hooks:
+      - id: bandit
+        name: bandit
+        args: ['-c', 'pyproject.toml', '-r', 'app']
+        additional_dependencies: ['bandit[toml]']
+        stages: [pre-push]
+        exclude: ^tests/
+
+  # ============================================================
+  # ХУКИ ДЛЯ ФОРМАТИРОВАНИЯ И СТИЛЯ
+  # ============================================================
+
+  # Проверка импортов (isort уже включен в ruff)
+  # Проверка JSON
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: trailing-whitespace
+        stages: [pre-commit]
+      - id: end-of-file-fixer
+        name: end-of-file-fixer
+        stages: [pre-commit]
+      - id: check-yaml
+        name: check-yaml
+        stages: [pre-commit]
+      - id: check-json
+        name: check-json
+        stages: [pre-commit]
+      - id: check-added-large-files
+        name: check-added-large-files
+        args: ['--maxkb=500']
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        name: check-merge-conflict
+        stages: [pre-commit]
+      - id: debug-statements
+        name: debug-statements
+        stages: [pre-commit]
+      - id: detect-private-key
+        name: detect-private-key
+        stages: [pre-commit]
+
+  # ============================================================
+  # ХУКИ ДЛЯ ДОКУМЕНТАЦИИ
+  # ============================================================
+
+#   # Проверка docstrings
+#   - repo: https://github.com/PyCQA/docformatter
+#     rev: v1.7.8
+#     hooks:
+#       - id: docformatter
+#         args: [--in-place, --wrap-summaries=120, --wrap-descriptions=120]
+#         stages: [pre-commit]
+#         exclude: ^tests/
+
+  # ============================================================
+  # ХУКИ ДЛЯ БАЗЫ ДАННЫХ (опционально, при изменении моделей)
+  # ============================================================
+
+  - repo: local
+    hooks:
+      - id: check-migrations
+        name: check-migrations
+        description: Check if migrations need to be created
+        entry: alembic check
+        language: system
+        types: [python]
+        files: ^app/models/.*\.py$
+        pass_filenames: false
+        stages: [pre-commit]
+        verbose: true
+        always_run: false

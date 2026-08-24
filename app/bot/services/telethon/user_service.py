@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class TelethonUserService(BaseService):
-    """Сервис для работы с пользователями через Telethon"""
+    """Сервис для работы с пользователями через Telethon."""
 
     def __init__(self, telethon_client: TelethonClient) -> None:
         self._client = telethon_client
@@ -24,7 +24,7 @@ class TelethonUserService(BaseService):
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Инициализация сервиса"""
+        """Инициализация сервиса."""
         if self._initialized:
             return
 
@@ -37,7 +37,7 @@ class TelethonUserService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_user_from_telegram(self, user_id: int) -> dict[str, Any] | None:
-        """Получение информации о пользователе из Telegram"""
+        """Получение информации о пользователе из Telegram."""
         if not self._initialized:
             await self.initialize()
 
@@ -73,7 +73,7 @@ class TelethonUserService(BaseService):
         last_name: str | None = None,
         username: str | None = None,
     ) -> UserModel:
-        """Сохранение пользователя в БД"""
+        """Сохранение пользователя в БД."""
         return await UserRepository.save_user(  # type: ignore[no-any-return]
             session=session,
             user_id=user_id,
@@ -85,7 +85,7 @@ class TelethonUserService(BaseService):
 
     @log_exceptions(bot_logger)
     async def get_me(self) -> dict[str, Any]:
-        """Получение информации о текущем пользователе"""
+        """Получение информации о текущем пользователе."""
         if not self._initialized:
             await self.initialize()
 
@@ -107,11 +107,11 @@ class TelethonUserService(BaseService):
             return {}
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса"""
+        """Получение статуса сервиса."""
         return {"initialized": self._initialized, "client_available": bool(self._telethon), "service": "telethon_user"}
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса"""
+        """Проверка здоровья сервиса."""
         if not self._initialized or not self._telethon:
             return False
 

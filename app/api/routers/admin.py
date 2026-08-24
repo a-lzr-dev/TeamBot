@@ -1,5 +1,4 @@
-"""
-Модуль административных маршрутов API.
+"""Модуль административных маршрутов API.
 
 Предоставляет API эндпоинты для административных функций:
 - Управление администраторами
@@ -72,8 +71,7 @@ def _is_admin(user_id: int) -> bool:
 )
 @log_exceptions(api_logger)
 async def get_admins() -> JSONResponse:
-    """
-    Получение списка администраторов.
+    """Получение списка администраторов.
 
     Returns:
         JSONResponse: Список ID администраторов
@@ -100,8 +98,7 @@ async def get_admins() -> JSONResponse:
 async def add_admin(
     request: AddAdminRequest,
 ) -> JSONResponse:
-    """
-    Добавление администратора.
+    """Добавление администратора.
 
     Args:
         request: Запрос с ID пользователя
@@ -145,8 +142,7 @@ async def add_admin(
 async def remove_admin(
     request: RemoveAdminRequest,
 ) -> JSONResponse:
-    """
-    Удаление администратора.
+    """Удаление администратора.
 
     Args:
         request: Запрос с ID пользователя
@@ -205,8 +201,7 @@ async def remove_admin(
 async def get_admin_stats(
     session: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
-    """
-    Получение административной статистики.
+    """Получение административной статистики.
 
     Args:
         session: Асинхронная сессия SQLAlchemy

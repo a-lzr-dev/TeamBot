@@ -1,6 +1,4 @@
-"""
-Репозиторий для работы с рассылками.
-"""
+"""Репозиторий для работы с рассылками."""
 
 from typing import Any
 
@@ -96,9 +94,7 @@ class BroadcastRepository:
         broadcast_id: int,
         cancelled_by: int,
     ) -> BroadcastModel | None:
-        """
-        Принудительная отмена рассылки.
-        """
+        """Принудительная отмена рассылки."""
         stmt = (
             update(BroadcastModel)
             .where(

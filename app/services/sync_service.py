@@ -26,10 +26,10 @@ SyncStats = dict[str, bool | int | str | list | dict | None]
 
 
 class SyncService(ISyncService):
-    """Единый сервис синхронизации для Telegram"""
+    """Единый сервис синхронизации для Telegram."""
 
     def __init__(self, telethon_client: Any) -> None:
-        """Инициализация сервиса синхронизации"""
+        """Инициализация сервиса синхронизации."""
         self._client = telethon_client
         self._sync_engine = ChatSyncEngine()
         self._last_sync_time: datetime | None = None
@@ -73,7 +73,7 @@ class SyncService(ISyncService):
         session: AsyncSession,
         force: bool = False,
     ) -> dict[str, Any]:
-        """Синхронизация участников конкретного чата"""
+        """Синхронизация участников конкретного чата."""
         if not self._initialized:
             await self.initialize()
 
@@ -148,7 +148,7 @@ class SyncService(ISyncService):
         max_chats: int | None = None,
         chat_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Синхронизация всех чатов"""
+        """Синхронизация всех чатов."""
         if not self._initialized:
             await self.initialize()
 
@@ -198,11 +198,11 @@ class SyncService(ISyncService):
             return {"success": False, "error": str(e)}
 
     async def get_last_sync_time(self) -> datetime | None:
-        """Получение времени последней синхронизации"""
+        """Получение времени последней синхронизации."""
         return self._last_sync_time
 
     async def get_status(self) -> dict[str, Any]:
-        """Получение статуса сервиса"""
+        """Получение статуса сервиса."""
         return {
             "initialized": self._initialized,
             "client_available": bool(self._client.client),
@@ -220,7 +220,7 @@ class SyncService(ISyncService):
         }
 
     async def health_check(self) -> bool:
-        """Проверка здоровья сервиса"""
+        """Проверка здоровья сервиса."""
         if not self._initialized:
             return False
 
@@ -230,7 +230,7 @@ class SyncService(ISyncService):
             return False
 
     async def clear_cache(self, chat_id: int | None = None) -> None:
-        """Очистка кеша"""
+        """Очистка кеша."""
         if chat_id is not None:
             self._cache.pop(chat_id, None)
             bot_logger.debug(f"✅ Cache cleared for chat {chat_id}")
@@ -239,7 +239,7 @@ class SyncService(ISyncService):
             bot_logger.debug("✅ All cache cleared")
 
     async def _get_cached_members(self, chat_id: int) -> list[dict[str, Any]] | None:
-        """Получение кешированных участников чата"""
+        """Получение кешированных участников чата."""
         if chat_id not in self._cache:
             return None
 
@@ -252,11 +252,11 @@ class SyncService(ISyncService):
         return None
 
     async def _update_cache(self, chat_id: int, members: list[dict[str, Any]]) -> None:
-        """Обновление кеша участников чата"""
+        """Обновление кеша участников чата."""
         self._cache[chat_id] = (datetime_now(), members)
 
     async def reset_metrics(self) -> None:
-        """Сброс метрик"""
+        """Сброс метрик."""
         self._metrics = {
             "total_syncs": 0,
             "failed_syncs": 0,
@@ -275,7 +275,7 @@ class ChatSyncEngine:
     def _create_error_stats(
         error_message: str, chat_id: int | None = None, retry_after: int | None = None
     ) -> dict[str, Any]:
-        """Создание стандартной структуры для ошибок"""
+        """Создание стандартной структуры для ошибок."""
         stats: dict[str, Any] = {
             "success": False,
             "error": error_message,
@@ -303,7 +303,7 @@ class ChatSyncEngine:
         chat_repo: ChatRepository,
         user_repo: UserRepository,
     ) -> dict[str, Any]:
-        """Синхронизация участников чата"""
+        """Синхронизация участников чата."""
         from ..db.repositories.chats import normalize_chat_id
 
         normalized_chat_id = normalize_chat_id(chat_id)
@@ -425,7 +425,7 @@ class ChatSyncEngine:
         max_chats: int | None = None,
         chat_types: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Синхронизация всех чатов"""
+        """Синхронизация всех чатов."""
         bot_logger.debug("🚀 Syncing all chats...")
 
         stats: dict[str, Any] = {
@@ -558,7 +558,7 @@ class ChatSyncEngine:
 
     @staticmethod
     async def _get_chat_members_from_telegram(client: TelegramClient, chat_id: int) -> list[UserChatMemberModel]:
-        """Получение участников чата из Telegram"""
+        """Получение участников чата из Telegram."""
         from ..db.repositories.chats import normalize_chat_id
 
         normalized_chat_id = normalize_chat_id(chat_id)
@@ -710,7 +710,10 @@ class ChatSyncEngine:
     async def _get_chats_from_telegram(
         client: TelegramClient, max_chats: int | None = None, chat_types: list[str] | None = None
     ) -> list[ChatModel]:
-        """Получение списка чатов из Telegram. Возвращает только те чаты, где присутствует бот"""
+        """Получение списка чатов из Telegram.
+
+        Возвращает только те чаты, где присутствует бот
+        """
         if settings.is_bot_account:
             bot_logger.warning("⚠️ get_chats() called with bot account")
             return []
@@ -794,7 +797,7 @@ class ChatSyncEngine:
 
     @staticmethod
     async def _check_bot_in_chat_aiogram(bot: Any, chat_id: int) -> bool:
-        """Проверка, присутствует ли бот в чате через Aiogram"""
+        """Проверка, присутствует ли бот в чате через Aiogram."""
         try:
             bot_member = await bot.get_chat_member(chat_id, bot.id)
 
@@ -823,7 +826,7 @@ class ChatSyncEngine:
 
     @staticmethod
     async def _check_bot_in_chat(client: TelegramClient, chat_entity: Any, bot_id: int) -> bool:
-        """Проверка, присутствует ли бот в чате через Telethon"""
+        """Проверка, присутствует ли бот в чате через Telethon."""
         try:
             participants = await client.get_participants(chat_entity, limit=200)
 

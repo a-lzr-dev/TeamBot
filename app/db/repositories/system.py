@@ -10,7 +10,7 @@ from ...utils.decorators import log_exceptions
 
 
 class SystemRepository:
-    """Репозиторий для работы с системными таблицами синхронизации"""
+    """Репозиторий для работы с системными таблицами синхронизации."""
 
     # ==================== ТИПЫ ДАННЫХ ====================
 
@@ -19,8 +19,7 @@ class SystemRepository:
     async def get_all_data_types(
         session: AsyncSession,
     ) -> list[AvanpostDirSysDataTypeModel]:
-        """
-        Получение всех типов данных синхронизации.
+        """Получение всех типов данных синхронизации.
 
         Args:
             session: Сессия БД
@@ -45,8 +44,7 @@ class SystemRepository:
     async def get_data_types_dict(
         session: AsyncSession,
     ) -> dict[int, dict[str, Any]]:
-        """
-        Получение всех типов данных в виде словаря для кеширования.
+        """Получение всех типов данных в виде словаря для кеширования.
 
         Args:
             session: Сессия БД
@@ -89,8 +87,7 @@ class SystemRepository:
         data_type_id: int,
         show_logs: bool = True,
     ) -> AvanpostDirSysDataTypeModel | None:
-        """
-        Получение типа данных по ID.
+        """Получение типа данных по ID.
 
         Args:
             session: Сессия БД
@@ -124,8 +121,7 @@ class SystemRepository:
     async def get_data_type_ids(
         session: AsyncSession,
     ) -> list[int]:
-        """
-        Получение всех ID типов данных.
+        """Получение всех ID типов данных.
 
         Args:
             session: Сессия БД
@@ -155,8 +151,7 @@ class SystemRepository:
         user_related: bool = False,
         deferred_sync: bool = False,
     ) -> AvanpostDirSysDataTypeModel:
-        """
-        Создание нового типа данных.
+        """Создание нового типа данных.
 
         Args:
             session: Сессия БД
@@ -191,8 +186,7 @@ class SystemRepository:
         session: AsyncSession,
         data_types: list[dict[str, Any]],
     ) -> int:
-        """
-        Массовое создание типов данных.
+        """Массовое создание типов данных.
 
         Args:
             session: Сессия БД
@@ -244,8 +238,7 @@ class SystemRepository:
         session: AsyncSession,
         data_type_id: int,
     ) -> datetime | None:
-        """
-        Получение времени последней синхронизации для типа данных.
+        """Получение времени последней синхронизации для типа данных.
 
         Args:
             session: Сессия БД
@@ -280,17 +273,16 @@ class SystemRepository:
         data_types: list[int],
         show_logs: bool = True,
     ) -> dict[int, datetime]:
-        """
-        Получение времени синхронизации для списка типов данных.
+        """Получение времени синхронизации для списка типов данных.
+
         Оптимизировано: один запрос вместо N.
+                Args:
+                    session: Сессия БД
+                    data_types: Список ID типов данных
+                    show_logs: Отображение подробного логирования (Debug уровень)
 
-        Args:
-            session: Сессия БД
-            data_types: Список ID типов данных
-            show_logs: Отображение подробного логирования (Debug уровень)
-
-        Returns:
-            dict[int, datetime]: Словарь {data_type_id: last_sync_time}
+                Returns:
+                    dict[int, datetime]: Словарь {data_type_id: last_sync_time}
         """
         if show_logs:
             db_logger.debug(f"📋 [get_sync_times] Getting sync times for {len(data_types)} types (optimized)")
@@ -341,8 +333,7 @@ class SystemRepository:
         data_type_id: int,
         sync_time: datetime | None = None,
     ) -> AvanpostSysUpdateModel | None:
-        """
-        Создание записи синхронизации для типа данных.
+        """Создание записи синхронизации для типа данных.
 
         Args:
             session: Сессия БД
@@ -381,17 +372,16 @@ class SystemRepository:
         data_type_ids: list[int],
         sync_time: datetime | None = None,
     ) -> int:
-        """
-        Массовое создание записей синхронизации.
+        """Массовое создание записей синхронизации.
+
         Логирует только итоговое количество.
+                Args:
+                    session: Сессия БД
+                    data_type_ids: Список ID типов данных
+                    sync_time: Время синхронизации (по умолчанию - 1900-01-01)
 
-        Args:
-            session: Сессия БД
-            data_type_ids: Список ID типов данных
-            sync_time: Время синхронизации (по умолчанию - 1900-01-01)
-
-        Returns:
-            int: Количество созданных записей
+                Returns:
+                    int: Количество созданных записей
         """
         if not data_type_ids:
             db_logger.debug("ℹ️ [create_sync_records_bulk] No data type IDs provided")
@@ -430,8 +420,7 @@ class SystemRepository:
         sync_time: datetime,
         show_logs: bool = True,
     ) -> None:
-        """
-        Обновление времени синхронизации для типа данных.
+        """Обновление времени синхронизации для типа данных.
 
         Args:
             session: Сессия БД
@@ -461,8 +450,7 @@ class SystemRepository:
         sync_times: dict[int, datetime],
         show_logs: bool = True,
     ) -> None:
-        """
-        Массовое обновление времени синхронизации для системных типов данных.
+        """Массовое обновление времени синхронизации для системных типов данных.
 
         Args:
             session: Сессия БД
@@ -491,9 +479,7 @@ class SystemRepository:
         user_id: int,
         data_types: list[int],
     ) -> dict[int, datetime]:
-        """
-        Получение времени синхронизации пользователя для списка типов данных.
-        """
+        """Получение времени синхронизации пользователя для списка типов данных."""
         #        if show_logs:
         #            db_logger.debug(f"📋 [get_user_sync_times] Getting user sync times for user {user_id}")
 
@@ -549,9 +535,8 @@ class SystemRepository:
         sync_time: datetime | None = None,
         data_type_names: dict[int, str] | None = None,
     ) -> dict[str, Any]:
-        """
-        Массовое создание записей синхронизации для множества пользователей
-        с возвратом агрегированной статистики по типам данных.
+        """Массовое создание записей синхронизации для множества пользователей с возвратом агрегированной статистики по
+        типам данных.
 
         Args:
             session: Сессия БД
@@ -659,8 +644,7 @@ class SystemRepository:
         sync_time: datetime,
         show_logs: bool = True,
     ) -> None:
-        """
-        Обновление времени синхронизации пользователя для типа данных.
+        """Обновление времени синхронизации пользователя для типа данных.
 
         Args:
             session: Сессия БД
@@ -703,8 +687,7 @@ class SystemRepository:
         sync_times: dict[int, datetime],
         show_logs: bool = True,
     ) -> None:
-        """
-        Массовое обновление времени синхронизации для пользователя.
+        """Массовое обновление времени синхронизации для пользователя.
 
         Args:
             session: Сессия БД
@@ -735,8 +718,7 @@ class SystemRepository:
         session: AsyncSession,
         data_type_id: int,
     ) -> bool:
-        """
-        Удаление записи синхронизации для типа данных.
+        """Удаление записи синхронизации для типа данных.
 
         Args:
             session: Сессия БД
@@ -771,8 +753,7 @@ class SystemRepository:
         user_id: int,
         data_type_id: int,
     ) -> bool:
-        """
-        Удаление записи синхронизации пользователя.
+        """Удаление записи синхронизации пользователя.
 
         Args:
             session: Сессия БД

@@ -24,7 +24,7 @@ GROUP_ICONS = {
 
 
 class UserKeyboard:
-    """Клавиатуры для списка пользователей"""
+    """Клавиатуры для списка пользователей."""
 
     @staticmethod
     def get_users_keyboard(
@@ -35,9 +35,7 @@ class UserKeyboard:
         has_next: bool = False,
         search_query: str | None = None,
     ) -> InlineKeyboardMarkup:
-        """
-        Создание клавиатуры со списком пользователей через ListKeyboardBuilder.
-        """
+        """Создание клавиатуры со списком пользователей через ListKeyboardBuilder."""
         builder = ListKeyboardBuilder(
             callback_prefix="users",
             buttons_per_row=BUTTONS_PER_ROW_USERS,
@@ -56,7 +54,7 @@ class UserKeyboard:
 
     @staticmethod
     def get_close_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура с кнопкой закрытия"""
+        """Клавиатура с кнопкой закрытия."""
         builder = ListKeyboardBuilder(callback_prefix="users")
         return builder.build(
             items=[],
@@ -67,7 +65,7 @@ class UserKeyboard:
 
     @staticmethod
     def get_search_cancel_keyboard() -> InlineKeyboardMarkup:
-        """Клавиатура для отмены поиска"""
+        """Клавиатура для отмены поиска."""
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         return InlineKeyboardMarkup(
@@ -76,7 +74,7 @@ class UserKeyboard:
 
 
 def format_user_item(item: dict[str, Any]) -> str:
-    """Форматирование элемента пользователя с иконкой в зависимости от FK_Group"""
+    """Форматирование элемента пользователя с иконкой в зависимости от FK_Group."""
     name = item.get("name", f"User #{item.get('id', '?')}")
     is_authorized = item.get("is_authorized", False)
     group_id = item.get("group_id")

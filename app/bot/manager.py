@@ -48,8 +48,7 @@ R = TypeVar("R")
 
 
 def ensure_initialized[R](func: Callable[..., Awaitable[R]]) -> Callable[..., Awaitable[R]]:
-    """
-    Декоратор для автоматической инициализации менеджера.
+    """Декоратор для автоматической инициализации менеджера.
 
     Используется для методов, которые требуют, чтобы менеджер был инициализирован.
     Если менеджер не инициализирован, вызывает метод initialize() перед выполнением.
@@ -71,8 +70,7 @@ def ensure_initialized[R](func: Callable[..., Awaitable[R]]) -> Callable[..., Aw
 
 
 class BotManager:
-    """
-    Главный менеджер для управления клиентами и сервисами бота.
+    """Главный менеджер для управления клиентами и сервисами бота.
 
     Координирует работу всех компонентов Telegram бота:
     - Aiogram клиент для работы с Bot API
@@ -85,11 +83,10 @@ class BotManager:
     # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 
     def __init__(self) -> None:
-        """
-        Инициализация менеджера бота.
+        """Инициализация менеджера бота.
 
-        Создает все клиенты, сервисы и репозитории, необходимые для работы.
-        Устанавливает начальное состояние (не инициализирован, не запущен).
+        Создает все клиенты, сервисы и репозитории, необходимые для работы. Устанавливает начальное состояние (не
+        инициализирован, не запущен).
         """
         # === Клиенты ===
         # Aiogram клиент для работы с Bot API (отправка сообщений, команды)
@@ -124,7 +121,7 @@ class BotManager:
         self._message_repo = MessageRepository()
         self._reminder_repo = ReminderRepository()
         self._stats_repo = StatsRepository()
-        self._broadcast_repo = BroadcastRepository()  # ← ДОБАВЛЕНО
+        self._broadcast_repo = BroadcastRepository()
 
         # === Состояние ===
         # Флаг инициализации менеджера
@@ -223,8 +220,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **_kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни.
+        """Отправка сообщения в Telegram с сохранением в БД и поддержкой времени жизни.
 
         Использует унифицированный сервис сообщений, который автоматически выбирает
         оптимальный клиент (Aiogram или Telethon) для отправки.
@@ -297,8 +293,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Ответ на событие (сообщение или callback).
+        """Ответ на событие (сообщение или callback).
 
         Универсальный метод для ответа на любые события от пользователя.
         Автоматически определяет тип события и выбирает правильный способ отправки.
@@ -350,8 +345,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Отправка фото с сохранением в БД.
+        """Отправка фото с сохранением в БД.
 
         Args:
             chat_id: ID чата
@@ -391,8 +385,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> None:
-        """
-        Отправка toast-уведомления (временное сообщение).
+        """Отправка toast-уведомления (временное сообщение).
 
         Поддерживает различные типы событий:
         - CallbackQuery: показывает toast через answer()
@@ -467,8 +460,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Редактирование сообщения.
+        """Редактирование сообщения.
 
         Args:
             chat_id: ID чата
@@ -502,8 +494,7 @@ class BotManager:
         message_thread_id: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """
-        Редактирование сообщения из callback.
+        """Редактирование сообщения из callback.
 
         Args:
             callback: CallbackQuery
@@ -527,8 +518,7 @@ class BotManager:
 
     @ensure_initialized
     async def delete_message_by_id(self, chat_id: int, message_id: int) -> dict[str, Any]:
-        """
-        Удаление сообщения с отметкой в БД.
+        """Удаление сообщения с отметкой в БД.
 
         Args:
             chat_id: ID чата
@@ -543,8 +533,7 @@ class BotManager:
     async def delete_messages_by_type(
         self, *, chat_id: int, message_types: list[MessageType] | None = None, deleted_by_type: str = "cleanup"
     ) -> None:
-        """
-        Очистка сообщений по типу.
+        """Очистка сообщений по типу.
 
         Args:
             chat_id: ID чата
@@ -568,8 +557,7 @@ class BotManager:
 
     @ensure_initialized
     async def delete_message_by_link(self, message: Message) -> None:
-        """
-        Удаление сообщения с командой через message_service.
+        """Удаление сообщения с командой через message_service.
 
         Args:
             message: Сообщение для удаления
@@ -597,10 +585,9 @@ class BotManager:
         sender_username: str | None = None,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         message_thread_id: int | None = None,
-        broadcast_id: int | None = None,  # ← ДОБАВЛЕНО: ID рассылки для связи
+        broadcast_id: int | None = None,
     ) -> dict[str, Any]:
-        """
-        Рассылка сообщения во все активные чаты с сохранением истории.
+        """Рассылка сообщения во все активные чаты с сохранением истории.
 
         Отправляет сообщение во все чаты, где присутствует бот.
         Поддерживает фильтрацию по типам чатов и исключение отдельных чатов.
@@ -662,7 +649,7 @@ class BotManager:
 
                 success_count = 0
                 failed_chats: list[dict[str, Any]] = []
-                sent_messages: list[dict[str, Any]] = []  # ← ДОБАВЛЕНО
+                sent_messages: list[dict[str, Any]] = []
 
                 for idx, chat in enumerate(chats, 1):
                     try:
@@ -738,7 +725,7 @@ class BotManager:
                     "successful": success_count,
                     "failed": len(failed_chats),
                     "failed_chats": failed_chats[:10],
-                    "sent_messages": sent_messages,  # ← ДОБАВЛЕНО
+                    "sent_messages": sent_messages,
                 }
 
         except Exception as e:
@@ -757,11 +744,9 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def initialize(self) -> None:
-        """
-        Инициализация всех клиентов и сервисов.
+        """Инициализация всех клиентов и сервисов.
 
-        Выполняется один раз при первом запуске.
-        Инициализирует Aiogram, Telethon и все сервисы.
+        Выполняется один раз при первом запуске. Инициализирует Aiogram, Telethon и все сервисы.
         """
         if self._initialized:
             bot_logger.warning("⚠️ Telegram Manager already initialized")
@@ -791,8 +776,7 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def start(self) -> None:
-        """
-        Запуск всех клиентов и сервисов.
+        """Запуск всех клиентов и сервисов.
 
         Настраивает обработчики, запускает Aiogram и Telethon клиенты.
         """
@@ -826,8 +810,7 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def stop(self) -> None:
-        """
-        Остановка всех клиентов и сервисов.
+        """Остановка всех клиентов и сервисов.
 
         Корректно завершает все задачи и закрывает клиенты.
         """
@@ -865,8 +848,7 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def restart(self) -> None:
-        """
-        Перезапуск менеджера.
+        """Перезапуск менеджера.
 
         Выполняет остановку и повторный запуск всех компонентов.
         """
@@ -877,8 +859,7 @@ class BotManager:
         bot_logger.info("✅ Telegram Manager restarted")
 
     def _get_main_loop(self) -> asyncio.AbstractEventLoop:
-        """
-        Получение главного event loop.
+        """Получение главного event loop.
 
         Returns:
             asyncio.AbstractEventLoop: Главный event loop
@@ -898,8 +879,7 @@ class BotManager:
     # ==================== НАСТРОЙКА AIOGRAM ====================
 
     async def _setup_aiogram(self) -> Dispatcher:
-        """
-        Настройка Aiogram бота.
+        """Настройка Aiogram бота.
 
         Создает и настраивает Dispatcher с middleware и обработчиками.
 
@@ -969,8 +949,7 @@ class BotManager:
     # ==================== ЗАПУСК КЛИЕНТОВ ====================
 
     async def _run_aiogram(self, dp: Dispatcher) -> None:
-        """
-        Запуск Aiogram бота с автоматическим переподключением.
+        """Запуск Aiogram бота с автоматическим переподключением.
 
         Args:
             dp: Диспетчер Aiogram
@@ -1059,8 +1038,7 @@ class BotManager:
             raise
 
     async def _wait_for_completion(self) -> None:
-        """
-        Ожидание завершения задач или сигнала остановки.
+        """Ожидание завершения задач или сигнала остановки.
 
         Обрабатывает завершение фоновых задач и корректно отменяет их при остановке.
         """
@@ -1098,8 +1076,7 @@ class BotManager:
     # ==================== КОЛБЭКИ ====================
 
     async def _on_aiogram_startup(self, bot: Bot) -> None:
-        """
-        Обработчик запуска Aiogram.
+        """Обработчик запуска Aiogram.
 
         Отправляет уведомление администраторам о запуске бота.
 
@@ -1160,8 +1137,7 @@ class BotManager:
 
     @staticmethod
     def get_public_commands() -> list[dict[str, str]]:
-        """
-        Базовые команды (доступны без авторизации).
+        """Базовые команды (доступны без авторизации).
 
         Returns:
             list[dict[str, str]]: Список публичных команд
@@ -1173,8 +1149,7 @@ class BotManager:
 
     @staticmethod
     def get_auth_commands() -> list[dict[str, str]]:
-        """
-        Команды, требующие авторизации (видны всем авторизованным пользователям).
+        """Команды, требующие авторизации (видны всем авторизованным пользователям).
 
         Returns:
             list[dict[str, str]]: Список команд для авторизованных пользователей
@@ -1190,8 +1165,7 @@ class BotManager:
 
     @staticmethod
     def get_admin_commands() -> list[dict[str, str]]:
-        """
-        Административные команды (видны только администраторам).
+        """Административные команды (видны только администраторам).
 
         Returns:
             list[dict[str, str]]: Список административных команд
@@ -1204,8 +1178,7 @@ class BotManager:
         ]
 
     def _get_commands_for_user(self, user_id: int, is_admin: bool = False) -> list[dict[str, str]]:
-        """
-        Получение списка команд для пользователя.
+        """Получение списка команд для пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1227,8 +1200,7 @@ class BotManager:
         return commands
 
     async def update_user_commands(self, user_id: int, is_admin: bool = False) -> None:
-        """
-        Обновление команд для конкретного пользователя.
+        """Обновление команд для конкретного пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1252,8 +1224,7 @@ class BotManager:
             bot_logger.warning(f"⚠️ Failed to update commands for user {user_id}: {e}")
 
     async def reset_user_commands(self, user_id: int) -> None:
-        """
-        Сброс команд пользователя до базовых.
+        """Сброс команд пользователя до базовых.
 
         Args:
             user_id: ID пользователя
@@ -1275,11 +1246,10 @@ class BotManager:
             bot_logger.warning(f"⚠️ Failed to reset commands for user {user_id}: {e}")
 
     async def _setup_dynamic_commands(self) -> None:
-        """
-        Динамическая установка команд бота.
+        """Динамическая установка команд бота.
 
-        Устанавливает публичные команды для всех пользователей
-        и персональные команды для авторизованных пользователей и администраторов.
+        Устанавливает публичные команды для всех пользователей и персональные команды для авторизованных пользователей и
+        администраторов.
         """
         try:
             if not self._aiogram_client.bot:
@@ -1314,8 +1284,7 @@ class BotManager:
     # ==================== РАБОТА С КЕШЕМ КОМАНД ====================
 
     def is_user_in_cache(self, user_id: int) -> bool:
-        """
-        Проверка, есть ли пользователь в кеше команд.
+        """Проверка, есть ли пользователь в кеше команд.
 
         Args:
             user_id: ID пользователя
@@ -1327,8 +1296,7 @@ class BotManager:
 
     @ensure_initialized
     async def is_user_authorized(self, user_id: int) -> bool:
-        """
-        Публичный метод для проверки авторизации пользователя.
+        """Публичный метод для проверки авторизации пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1339,8 +1307,7 @@ class BotManager:
         return await self._is_user_authorized(user_id)
 
     def get_user_commands(self, user_id: int) -> list[dict[str, str]] | None:
-        """
-        Получение кешированных команд пользователя.
+        """Получение кешированных команд пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1350,9 +1317,8 @@ class BotManager:
         """
         return self._user_commands_cache.get(user_id)
 
-    def clear_user_cache(self, user_id: int) -> None:
-        """
-        Очистка кеша команд для пользователя.
+    async def clear_user_cache(self, user_id: int) -> None:
+        """Очистка кеша команд для пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1361,8 +1327,7 @@ class BotManager:
         bot_logger.debug(f"🧹 Cache cleared for user {user_id}")
 
     def get_cache_stats(self) -> dict[str, Any]:
-        """
-        Получение статистики кеша команд.
+        """Получение статистики кеша команд.
 
         Returns:
             dict[str, Any]: Статистика кеша
@@ -1374,8 +1339,7 @@ class BotManager:
 
     @staticmethod
     async def _is_user_authorized(user_id: int) -> bool:
-        """
-        Внутренний метод для проверки авторизации пользователя.
+        """Внутренний метод для проверки авторизации пользователя.
 
         Args:
             user_id: ID пользователя
@@ -1394,8 +1358,7 @@ class BotManager:
 
     @ensure_initialized
     async def get_bot_info(self) -> dict[str, Any]:
-        """
-        Получение информации о боте через AiogramBotService.
+        """Получение информации о боте через AiogramBotService.
 
         Returns:
             dict[str, Any]: Информация о боте
@@ -1403,8 +1366,7 @@ class BotManager:
         return await self._bot_service.get_me()  # type: ignore[no-any-return]
 
     async def is_bot_in_chat(self, chat_id: int) -> bool:
-        """
-        Проверка, находится ли бот в чате.
+        """Проверка, находится ли бот в чате.
 
         Args:
             chat_id: ID чата
@@ -1449,8 +1411,7 @@ class BotManager:
     @log_exceptions(bot_logger)
     @ensure_initialized
     async def sync_chat(self, chat_id: int, session: AsyncSession | None = None, force: bool = False) -> dict[str, Any]:
-        """
-        Синхронизация чата.
+        """Синхронизация чата.
 
         Args:
             chat_id: ID чата
@@ -1471,8 +1432,7 @@ class BotManager:
     async def sync_all_chats(
         self, force: bool = False, max_chats: int | None = None, chat_types: list[str] | None = None
     ) -> dict[str, Any]:
-        """
-        Синхронизация всех чатов.
+        """Синхронизация всех чатов.
 
         Args:
             force: Принудительная синхронизация
@@ -1482,6 +1442,7 @@ class BotManager:
         Returns:
             dict[str, Any]: Результат синхронизации
         """
+
         async with db_manager.get_session() as session:
             return await self._sync_service.sync_all_chats(  # type: ignore[no-any-return]
                 session=session, force=force, max_chats=max_chats, chat_types=chat_types
@@ -1489,8 +1450,7 @@ class BotManager:
 
     @ensure_initialized
     async def clear_sync_cache(self, chat_id: int | None = None) -> None:
-        """
-        Очистка кеша синхронизации.
+        """Очистка кеша синхронизации.
 
         Args:
             chat_id: ID чата (если None - очистка всего кеша)
@@ -1506,8 +1466,7 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def get_status(self) -> dict[str, Any]:
-        """
-        Получение статуса менеджера.
+        """Получение статуса менеджера.
 
         Returns:
             dict[str, Any]: Полный статус всех компонентов
@@ -1579,8 +1538,7 @@ class BotManager:
 
     @log_exceptions(bot_logger)
     async def health_check(self) -> dict[str, bool]:
-        """
-        Проверка здоровья всех компонентов.
+        """Проверка здоровья всех компонентов.
 
         Returns:
             dict[str, bool]: Результаты проверки здоровья
@@ -1600,8 +1558,7 @@ class BotManager:
     # ==================== MAGIC METHODS ====================
 
     def __repr__(self) -> str:
-        """
-        Строковое представление для отладки.
+        """Строковое представление для отладки.
 
         Returns:
             str: Строковое представление менеджера
@@ -1625,8 +1582,7 @@ bot_manager = BotManager()
 
 
 def get_public_commands() -> list[dict[str, str]]:
-    """
-    Получение публичных команд (функция-обертка).
+    """Получение публичных команд (функция-обертка).
 
     Returns:
         list[dict[str, str]]: Список публичных команд
@@ -1635,8 +1591,7 @@ def get_public_commands() -> list[dict[str, str]]:
 
 
 def get_auth_commands() -> list[dict[str, str]]:
-    """
-    Получение команд для авторизованных пользователей (функция-обертка).
+    """Получение команд для авторизованных пользователей (функция-обертка).
 
     Returns:
         list[dict[str, str]]: Список команд для авторизованных пользователей
@@ -1645,8 +1600,7 @@ def get_auth_commands() -> list[dict[str, str]]:
 
 
 def get_admin_commands() -> list[dict[str, str]]:
-    """
-    Получение административных команд (функция-обертка).
+    """Получение административных команд (функция-обертка).
 
     Returns:
         list[dict[str, str]]: Список административных команд
