@@ -1,10 +1,32 @@
-"""Репозиторий для работы с пользователями Telegram (TUsers) и их связями с Avanpost.
+"""
+Репозиторий для работы с пользователями Telegram (TUsers) и их связями с Avanpost.
 
-Содержит методы для:
-1. Базовых операций с пользователями (создание, обновление, поиск)
-2. Работы со связями пользователей с Avanpost
-3. Проверки авторизации и аутентификации
-4. Статистики пользователей
+Назначение:
+    Предоставляет полный набор методов для управления пользователями Telegram
+    и их связями с внешней системой Avanpost. Реализует CRUD операции,
+    поиск, проверку авторизации и статистику.
+
+Основные разделы:
+    1. Базовые операции (создание, обновление, поиск пользователей)
+    2. Поиск и списки пользователей (все, авторизованные, поиск)
+    3. Работа с Avanpost пользователями (создание, обновление, связи)
+    4. Проверка авторизации и аутентификации
+    5. Обновление данных (активность, выход, очистка)
+    6. Статистика пользователей
+
+Технические особенности:
+    - Все методы статические, используют AsyncSession
+    - Поддержка мягкого обновления (обновляются только переданные поля)
+    - Использование selectinload для оптимизации запросов
+    - UPSERT через SQLAlchemy insert().on_conflict_do_update()
+    - Логирование всех операций с уровнями DEBUG/INFO/WARNING/ERROR
+    - Обработка ошибок с откатом транзакций
+
+Архитектура:
+    - Работает с моделями UserModel, AvanpostUserModel, AvanpostUserLinkModel
+    - Использует цепочки связей: User -> AvanpostUserLink -> AvanpostUser
+    - Интегрируется с основным приложением и Avanpost
+    - Поддерживает авторизацию через номер телефона
 """
 
 from typing import Any, Optional
@@ -26,7 +48,11 @@ from ...utils.decorators import log_exceptions
 
 
 class UserRepository:
-    """Репозиторий для работы с пользователями."""
+    """Репозиторий для работы с пользователями.
+
+    Предоставляет методы для управления пользователями Telegram и их связями
+    с Avanpost. Все методы асинхронны и принимают AsyncSession.
+    """
 
     # ==================== 1. БАЗОВЫЕ ОПЕРАЦИИ ====================
 
@@ -44,21 +70,24 @@ class UserRepository:
     ) -> UserModel:
         """Сохранение пользователя (создание или обновление).
 
+        Если пользователь с указанным user_id существует, обновляет переданные поля.
+        Если не существует, создаёт нового пользователя.
+
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram
             chat_id: ID чата (опционально)
-            first_name: Имя
-            last_name: Фамилия
-            username: Username
-            is_bot: Является ли ботом
+            first_name: Имя пользователя
+            last_name: Фамилия пользователя
+            username: Username пользователя
+            is_bot: Является ли пользователь ботом
             phone: Номер телефона
 
         Returns:
-            UserModel: Сохраненная модель пользователя
+            UserModel: Сохранённая модель пользователя
 
         Raises:
-            ValueError: Если user_id невалидный
+            ValueError: Если user_id невалидный (<= 0)
         """
         if not user_id or user_id <= 0:
             raise ValueError(f"Invalid user_id: {user_id}")
@@ -101,7 +130,6 @@ class UserRepository:
             else:
                 db_logger.debug(f"ℹ️ [save_user] User {user_id} already exists")
         else:
-            # Создание нового пользователя
             if username is None:
                 username = f"user_{user_id}"
 
@@ -125,12 +153,16 @@ class UserRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_by_id(session: AsyncSession, user_id: int, show_logs: bool = True) -> UserModel | None:
+    async def get_user_by_id(
+        session: AsyncSession,
+        user_id: int,
+        show_logs: bool = True,
+    ) -> UserModel | None:
         """Получение пользователя по ID.
 
         Args:
-            session: Сессия БД,
-            user_id: ID пользователя,
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя
             show_logs: Отображение подробного логирования
 
         Returns:
@@ -153,11 +185,14 @@ class UserRepository:
 
     @staticmethod
     @log_exceptions(db_logger)
-    async def get_user_by_phone(session: AsyncSession, phone: str) -> UserModel | None:
+    async def get_user_by_phone(
+        session: AsyncSession,
+        phone: str,
+    ) -> UserModel | None:
         """Получение пользователя по номеру телефона.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             phone: Номер телефона
 
         Returns:
@@ -195,9 +230,9 @@ class UserRepository:
         """Получение списка всех пользователей.
 
         Args:
-            session: Сессия БД
-            limit: Лимит записей
-            offset: Смещение
+            session: Асинхронная сессия SQLAlchemy
+            limit: Лимит записей (опционально)
+            offset: Смещение для пагинации
 
         Returns:
             list[UserModel]: Список пользователей
@@ -228,9 +263,9 @@ class UserRepository:
         Использует EXISTS для проверки наличия связи с AvanpostUser.
 
         Args:
-            session: Сессия БД
-            limit: Лимит записей
-            offset: Смещение
+            session: Асинхронная сессия SQLAlchemy
+            limit: Лимит записей (опционально)
+            offset: Смещение для пагинации
 
         Returns:
             list[UserModel]: Список авторизованных пользователей
@@ -241,7 +276,6 @@ class UserRepository:
 
         from ...models import AvanpostUserLinkModel
 
-        # Подзапрос для проверки наличия связи
         has_avanpost_link = exists().where(AvanpostUserLinkModel.FK_Link == UserModel.FID)
 
         stmt = select(UserModel).where(has_avanpost_link).order_by(UserModel.FID).offset(offset)
@@ -262,10 +296,10 @@ class UserRepository:
     async def get_authorized_users_count(session: AsyncSession) -> int:
         """Получение количества авторизованных пользователей.
 
-        Использует AvanpostUserLinkModel для подсчета связей.
+        Использует AvanpostUserLinkModel для подсчёта связей.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
 
         Returns:
             int: Количество авторизованных пользователей
@@ -275,7 +309,6 @@ class UserRepository:
         try:
             from ...models import AvanpostUserLinkModel
 
-            # Подсчет количества записей в AvanpostUserLinkModel
             stmt = (
                 select(func.count())
                 .select_from(AvanpostUserLinkModel)
@@ -304,9 +337,9 @@ class UserRepository:
         """Поиск пользователей по имени, фамилии или username.
 
         Args:
-            session: Сессия БД
-            query: Поисковый запрос
-            limit: Лимит записей
+            session: Асинхронная сессия SQLAlchemy
+            query: Поисковый запрос (регистронезависимый)
+            limit: Максимальное количество результатов
 
         Returns:
             list[UserModel]: Список найденных пользователей
@@ -349,9 +382,9 @@ class UserRepository:
         """Получение всех пользователей Avanpost (TAvanpostUsers).
 
         Args:
-            session: Сессия БД
-            limit: Лимит записей
-            offset: Смещение
+            session: Асинхронная сессия SQLAlchemy
+            limit: Лимит записей (опционально)
+            offset: Смещение для пагинации
 
         Returns:
             list[AvanpostUserModel]: Список пользователей Avanpost
@@ -386,7 +419,7 @@ class UserRepository:
         """Получение данных пользователя из TAvanpostUsers.
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             avanpost_user_id: ID пользователя в TAvanpostUsers
             show_logs: Отображение подробного логирования
 
@@ -441,7 +474,7 @@ class UserRepository:
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             telegram_user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
@@ -459,7 +492,6 @@ class UserRepository:
 
             from ...models import AvanpostUserLinkModel
 
-            # Загрузка AvanpostUser через цепочку связей
             stmt = (
                 select(AvanpostUserModel)
                 .join(AvanpostUserLinkModel, AvanpostUserModel.FID == AvanpostUserLinkModel.FK_Parent)
@@ -502,7 +534,7 @@ class UserRepository:
         """Создание нового пользователя в TAvanpostUsers.
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             avanpost_user_id: ID пользователя в Avanpost
             fk_contact: ID контакта
             fk_language: Код языка (по умолчанию 'RU')
@@ -561,7 +593,7 @@ class UserRepository:
         """Создание или обновление пользователя Avanpost.
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             telegram_user_id: ID пользователя в Telegram
             avanpost_user_id: ID пользователя в Avanpost
             fk_contact: ID контакта
@@ -584,13 +616,11 @@ class UserRepository:
         )
 
         try:
-            # 1. Проверка существования пользователя в TUsers
             user = await UserRepository.get_user_by_id(session, telegram_user_id, show_logs=False)
             if not user:
                 db_logger.error(f"❌ [create_or_update_avanpost_user] User {telegram_user_id} not found")
                 return False, None
 
-            # 2. Проверка существования записи в TAvanpostUsers по FID
             stmt = select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
 
             db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
@@ -599,7 +629,6 @@ class UserRepository:
             avanpost_user = result.scalar_one_or_none()
 
             if avanpost_user:
-                # Обновление существующей записи
                 db_logger.debug(f"🔄 Updating existing AvanpostUser {avanpost_user_id}")
 
                 if fk_contact is not None:
@@ -617,14 +646,12 @@ class UserRepository:
                 if fphone:
                     avanpost_user.FPhone = fphone[:30]
 
-                # Обновление связи с Telegram пользователем
                 avanpost_user.FK_User = telegram_user_id
 
                 await session.flush()
                 db_logger.info(f"✅ Updated AvanpostUser {avanpost_user.FID}")
                 return True, avanpost_user
 
-            # 3. Создание нового AvanpostUser
             db_logger.debug(f"🆕 Creating new AvanpostUser {avanpost_user_id}")
 
             new_user = AvanpostUserModel(
@@ -671,7 +698,7 @@ class UserRepository:
         - TAvanpostUsersLinks (связь с Telegram)
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             avanpost_user_id: ID пользователя в Avanpost
             telegram_user_id: ID пользователя в Telegram
             telegram_user_required: Требуется ли Telegram пользователь
@@ -704,7 +731,6 @@ class UserRepository:
 
             from ...models import AvanpostUserLinkModel, AvanpostUserModel
 
-            # 1. UPSERT для TAvanpostUsers (данные из Avanpost)
             user_values: dict[str, Any] = {
                 "FID": avanpost_user_id,
                 "FK_Language": fk_language or "RU",
@@ -734,8 +760,6 @@ class UserRepository:
             await session.execute(user_stmt)
             db_logger.debug(f"✅ TAvanpostUsers upserted: {avanpost_user_id}")
 
-            # 2. UPSERT для TAvanpostUsersLinks (связь с Telegram)
-            # Проверка, есть ли уже связь
             link_stmt = select(AvanpostUserLinkModel).where(AvanpostUserLinkModel.FK_Parent == avanpost_user_id)
 
             db_logger.debug(f"📝 SQL (check link): {link_stmt.compile(compile_kwargs={'literal_binds': True})}")
@@ -744,13 +768,11 @@ class UserRepository:
             existing_link = result.scalar_one_or_none()
 
             if existing_link:
-                # Обновление существующей связи
                 if existing_link.FK_Link != telegram_user_id:
                     existing_link.FK_Link = telegram_user_id
                     await session.flush()
                     db_logger.debug(f"✅ TAvanpostUsersLinks updated: {avanpost_user_id} -> {telegram_user_id}")
             else:
-                # Создание новой связи
                 new_link = AvanpostUserLinkModel(
                     FK_Parent=avanpost_user_id,
                     FK_Link=telegram_user_id,
@@ -759,7 +781,6 @@ class UserRepository:
                 await session.flush()
                 db_logger.debug(f"✅ TAvanpostUsersLinks created: {avanpost_user_id} -> {telegram_user_id}")
 
-            # 3. Получение созданной/обновленной записи пользователя Avanpost
             result_user = await session.execute(
                 select(AvanpostUserModel).where(AvanpostUserModel.FID == avanpost_user_id)
             )
@@ -791,7 +812,7 @@ class UserRepository:
         """Обновление связи AvanpostUser с Telegram пользователем.
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             avanpost_user_id: ID пользователя в Avanpost
             telegram_user_id: ID пользователя в Telegram
 
@@ -838,7 +859,7 @@ class UserRepository:
         """Получение пользователя с предзагруженной связью с Avanpost.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram
 
         Returns:
@@ -854,7 +875,6 @@ class UserRepository:
 
             from ...models import AvanpostUserLinkModel
 
-            # Загрузка пользователя с двумя уровнями связей
             stmt = (
                 select(UserModel)
                 .where(UserModel.FID == user_id)
@@ -891,7 +911,7 @@ class UserRepository:
         Использует цепочку: User -> AvanpostUserLink -> AvanpostUser -> FK_MenuGroup
 
         Args:
-            session: Сессия БД (main)
+            session: Асинхронная сессия SQLAlchemy (main)
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
@@ -908,7 +928,6 @@ class UserRepository:
 
             from ...models import AvanpostUserLinkModel
 
-            # Загрузка пользователя с предзагрузкой связей
             stmt = (
                 select(UserModel)
                 .where(UserModel.FID == user_id)
@@ -924,12 +943,10 @@ class UserRepository:
                 db_logger.warning(f"⚠️ [get_user_group_id] User {user_id} not found")
                 return None
 
-            # Проверка наличия связи
             if not user.avanpost_link or user.avanpost_link.FK_Link is None:
                 db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} is not authenticated (no link)")
                 return None
 
-            # Получение группы из AvanpostUser
             if user.avanpost_link.avanpost_user:
                 group_id = user.avanpost_link.avanpost_user.FK_MenuGroup
                 if group_id is not None:
@@ -937,7 +954,6 @@ class UserRepository:
                 else:
                     db_logger.debug(f"ℹ️ [get_user_group_id] User {user_id} has no group assigned")
 
-                # Явная проверка типа для mypy
                 if not isinstance(group_id, int):
                     return None
 
@@ -963,7 +979,7 @@ class UserRepository:
         Проверяет наличие связи в AvanpostUserLinkModel.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
@@ -1000,7 +1016,7 @@ class UserRepository:
         """Проверка аутентификации пользователя с обновлением времени активности.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
@@ -1014,7 +1030,6 @@ class UserRepository:
         try:
             from sqlalchemy.orm import selectinload
 
-            # Загрузка пользователя с предзагрузкой связи
             stmt = select(UserModel).where(UserModel.FID == user_id).options(selectinload(UserModel.avanpost_link))
 
             db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
@@ -1022,9 +1037,7 @@ class UserRepository:
             result = await session.execute(stmt)
             user = result.scalar_one_or_none()
 
-            # Проверка наличия связи
             if user and user.avanpost_link and user.avanpost_link.FK_Link is not None:
-                # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
                 db_logger.info(f"✅ User {user_id} is authenticated")
@@ -1049,7 +1062,7 @@ class UserRepository:
         и обновляет время последней активности.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram (TUsers.FID)
 
         Returns:
@@ -1065,7 +1078,6 @@ class UserRepository:
 
             from ...models import AvanpostUserLinkModel
 
-            # Загрузка пользователя с предзагрузкой связи
             stmt = (
                 select(UserModel)
                 .where(UserModel.FID == user_id)
@@ -1078,11 +1090,9 @@ class UserRepository:
             user = result.scalar_one_or_none()
 
             if user and user.avanpost_link and user.avanpost_link.FK_Link is not None:
-                # Обновление времени последней активности
                 user.FDateLastActivity = datetime_now()
                 await session.flush()
 
-                # Явная проверка типа для mypy
                 if not isinstance(user, UserModel):
                     return None
 
@@ -1107,7 +1117,7 @@ class UserRepository:
         Является синонимом get_authenticated_user для обратной совместимости.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя в Telegram
 
         Returns:
@@ -1126,7 +1136,7 @@ class UserRepository:
         """Обновление времени последней активности пользователя.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
 
         Returns:
@@ -1158,7 +1168,7 @@ class UserRepository:
         Удаляет связь с AvanpostUser и очищает Telegram данные.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
 
         Returns:
@@ -1169,19 +1179,16 @@ class UserRepository:
 
         db_logger.debug(f"🚪 [logout_user] Logging out user {user_id}")
 
-        # Использование метода с предзагрузкой
         user = await UserRepository.get_user_with_avanpost(session, user_id)
 
         if not user:
             db_logger.warning(f"⚠️ [logout_user] User {user_id} not found for logout")
             return False
 
-        # Удаление связи с AvanpostUser
         if user.avanpost_user:
             await session.delete(user.avanpost_user)
             db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
 
-        # Очистка Telegram данных
         user.FK_Chat = None
         user.FDateUpdated = datetime_now()
 
@@ -1200,7 +1207,7 @@ class UserRepository:
         Удаляет связь с AvanpostUser.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
 
         Returns:
@@ -1217,7 +1224,6 @@ class UserRepository:
             return False
 
         if user.avanpost_user:
-            # Удаление записи из TAvanpostUsers для этого пользователя
             await session.delete(user.avanpost_user)
             db_logger.info(f"✅ Deleted AvanpostUser for user {user_id}")
 
@@ -1240,11 +1246,11 @@ class UserRepository:
 
         Включает:
         - Количество сообщений
-        - Количество решенных ошибок
+        - Количество решённых ошибок
         - Информацию об авторизации
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
 
         Returns:

@@ -1,3 +1,33 @@
+"""
+Репозиторий для работы с системными таблицами синхронизации Avanpost.
+
+Назначение:
+    Предоставляет методы для управления системными данными синхронизации:
+    - Типы данных (TAvanpostDirSysDataTypes)
+    - Время глобальной синхронизации (TAvanpostSysUpdates)
+    - Время синхронизации пользователей (TAvanpostSysUsersUpdates)
+
+Основные разделы:
+    1. Типы данных (CRUD операции)
+    2. Системные настройки синхронизации (глобальные)
+    3. Пользовательские настройки синхронизации
+    4. Дополнительные методы (удаление записей)
+
+Технические особенности:
+    - Все методы статические, используют AsyncSession
+    - Поддержка массовых операций (bulk create/update)
+    - Оптимизированные запросы с использованием SQLAlchemy
+    - Кеширование данных через словари
+    - Логирование с уровнями DEBUG/INFO/WARNING/ERROR
+    - Обработка ошибок с откатом транзакций
+
+Архитектура:
+    - Работает с моделями AvanpostDirSysDataTypeModel, AvanpostSysUpdateModel, AvanpostSysUserUpdateModel
+    - Используется в AvanpostSyncService для управления синхронизацией
+    - Поддерживает как глобальные, так и пользовательские записи синхронизации
+    - Интегрируется с системой синхронизации через data_type_id
+"""
+
 from datetime import datetime
 from typing import Any
 
@@ -10,7 +40,11 @@ from ...utils.decorators import log_exceptions
 
 
 class SystemRepository:
-    """Репозиторий для работы с системными таблицами синхронизации."""
+    """Репозиторий для работы с системными таблицами синхронизации Avanpost.
+
+    Предоставляет методы для управления типами данных и записями синхронизации.
+    Все методы асинхронны и принимают AsyncSession.
+    """
 
     # ==================== ТИПЫ ДАННЫХ ====================
 
@@ -22,7 +56,7 @@ class SystemRepository:
         """Получение всех типов данных синхронизации.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
 
         Returns:
             list[AvanpostDirSysDataTypeModel]: Список всех типов данных
@@ -47,7 +81,7 @@ class SystemRepository:
         """Получение всех типов данных в виде словаря для кеширования.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
 
         Returns:
             dict[int, dict]: Словарь {data_type_id: {name, table, user_related, deferred_sync}}
@@ -90,7 +124,7 @@ class SystemRepository:
         """Получение типа данных по ID.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
             show_logs: Отображение подробного логирования
 
@@ -124,7 +158,7 @@ class SystemRepository:
         """Получение всех ID типов данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
 
         Returns:
             list[int]: Список ID типов данных
@@ -154,7 +188,7 @@ class SystemRepository:
         """Создание нового типа данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
             name: Название
             table_name: Имя таблицы
@@ -189,7 +223,7 @@ class SystemRepository:
         """Массовое создание типов данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_types: Список словарей с данными
 
         Returns:
@@ -204,7 +238,6 @@ class SystemRepository:
         created = 0
         for data in data_types:
             try:
-                # Проверяем существование
                 existing = await SystemRepository.get_data_type_by_id(
                     session=session,
                     data_type_id=data["FID"],
@@ -241,7 +274,7 @@ class SystemRepository:
         """Получение времени последней синхронизации для типа данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
 
         Returns:
@@ -276,13 +309,14 @@ class SystemRepository:
         """Получение времени синхронизации для списка типов данных.
 
         Оптимизировано: один запрос вместо N.
-                Args:
-                    session: Сессия БД
-                    data_types: Список ID типов данных
-                    show_logs: Отображение подробного логирования (Debug уровень)
 
-                Returns:
-                    dict[int, datetime]: Словарь {data_type_id: last_sync_time}
+        Args:
+            session: Асинхронная сессия SQLAlchemy
+            data_types: Список ID типов данных
+            show_logs: Отображение подробного логирования
+
+        Returns:
+            dict[int, datetime]: Словарь {data_type_id: last_sync_time}
         """
         if show_logs:
             db_logger.debug(f"📋 [get_sync_times] Getting sync times for {len(data_types)} types (optimized)")
@@ -301,15 +335,12 @@ class SystemRepository:
         result_query = await session.execute(stmt)
         records = result_query.scalars().all()
 
-        # Создание словаря из полученных записей
         existing = {record.FK_Type: record.FDate for record in records}
 
-        # Проход по всем типам и заполнение результата
         for dt_id in data_types:
             if dt_id in existing:
                 result[dt_id] = existing[dt_id]
             else:
-                # Создание с временем по умолчанию
                 result[dt_id] = default_time
                 new_record = AvanpostSysUpdateModel(
                     FK_Type=dt_id,
@@ -336,19 +367,18 @@ class SystemRepository:
         """Создание записи синхронизации для типа данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
             sync_time: Время синхронизации (по умолчанию - 1900-01-01)
 
         Returns:
-            AvanpostSysUpdateModel: Созданная запись
+            AvanpostSysUpdateModel | None: Созданная запись или None
         """
         db_logger.debug(f"🆕 [create_sync_record] Creating sync record for type {data_type_id}")
 
         if sync_time is None:
             sync_time = datetime(1900, 1, 1)
 
-        # Проверяем существование
         existing = await SystemRepository.get_sync_time(session, data_type_id)
         if existing is not None:
             db_logger.debug(f"ℹ️ [create_sync_record] Sync record for type {data_type_id} already exists")
@@ -375,13 +405,14 @@ class SystemRepository:
         """Массовое создание записей синхронизации.
 
         Логирует только итоговое количество.
-                Args:
-                    session: Сессия БД
-                    data_type_ids: Список ID типов данных
-                    sync_time: Время синхронизации (по умолчанию - 1900-01-01)
 
-                Returns:
-                    int: Количество созданных записей
+        Args:
+            session: Асинхронная сессия SQLAlchemy
+            data_type_ids: Список ID типов данных
+            sync_time: Время синхронизации (по умолчанию - 1900-01-01)
+
+        Returns:
+            int: Количество созданных записей
         """
         if not data_type_ids:
             db_logger.debug("ℹ️ [create_sync_records_bulk] No data type IDs provided")
@@ -423,10 +454,10 @@ class SystemRepository:
         """Обновление времени синхронизации для типа данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
             sync_time: Новое время синхронизации
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         if show_logs:
             db_logger.debug(f"🔄 [update_sync_time] Updating sync time for type {data_type_id}: {sync_time}")
@@ -453,9 +484,9 @@ class SystemRepository:
         """Массовое обновление времени синхронизации для системных типов данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             sync_times: Словарь {data_type_id: sync_time}
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         if not sync_times:
             db_logger.debug("ℹ️ [update_sync_times_bulk] No sync times to update")
@@ -479,10 +510,16 @@ class SystemRepository:
         user_id: int,
         data_types: list[int],
     ) -> dict[int, datetime]:
-        """Получение времени синхронизации пользователя для списка типов данных."""
-        #        if show_logs:
-        #            db_logger.debug(f"📋 [get_user_sync_times] Getting user sync times for user {user_id}")
+        """Получение времени синхронизации пользователя для списка типов данных.
 
+        Args:
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя Avanpost
+            data_types: Список ID типов данных
+
+        Returns:
+            dict[int, datetime]: Словарь {data_type_id: last_sync_time}
+        """
         result: dict[int, datetime] = {}
         default_time = datetime(1900, 1, 1)
 
@@ -493,9 +530,6 @@ class SystemRepository:
             AvanpostSysUserUpdateModel.FK_User == user_id,
             AvanpostSysUserUpdateModel.FK_Type.in_(data_types),
         )
-
-        #        if show_logs:
-        #            db_logger.debug(f"📝 SQL: {stmt.compile(compile_kwargs={'literal_binds': True})}")
 
         result_query = await session.execute(stmt)
         records = result_query.scalars().all()
@@ -519,11 +553,6 @@ class SystemRepository:
         if created_count > 0:
             await session.flush()
 
-        #        if show_logs:
-        #            db_logger.info(
-        #                f"✅ [get_user_sync_times] Found {len(existing)} existing records, created {created_count} new"
-        #            )
-
         return result
 
     @staticmethod
@@ -535,12 +564,12 @@ class SystemRepository:
         sync_time: datetime | None = None,
         data_type_names: dict[int, str] | None = None,
     ) -> dict[str, Any]:
-        """Массовое создание записей синхронизации для множества пользователей с возвратом агрегированной статистики по
-        типам данных.
+        """Массовое создание записей синхронизации для множества пользователей
+        с возвратом агрегированной статистики по типам данных.
 
         Args:
-            session: Сессия БД
-            user_ids: Список ID пользователей
+            session: Асинхронная сессия SQLAlchemy
+            user_ids: Список ID пользователей Avanpost
             data_type_ids: Список ID типов данных
             sync_time: Время синхронизации (по умолчанию - 1900-01-01)
             data_type_names: Словарь {data_type_id: table_name} для отображения
@@ -563,7 +592,6 @@ class SystemRepository:
         if sync_time is None:
             sync_time = datetime(1900, 1, 1)
 
-        # Получение имен типов данных, если не переданы
         if data_type_names is None:
             data_type_names = {}
             stmt = select(AvanpostDirSysDataTypeModel.FID, AvanpostDirSysDataTypeModel.FTableName).where(
@@ -576,18 +604,15 @@ class SystemRepository:
             for row in result.all():
                 data_type_names[row.FID] = row.FTableName or f"Type_{row.FID}"
 
-        # Счетчики по типам данных
         stats_by_type: dict[int, int] = dict.fromkeys(data_type_ids, 0)
         total_created = 0
         users_with_records = 0
 
-        # Обработка пользователей пакетами
         batch_size = 50
         for i in range(0, len(user_ids), batch_size):
             batch_user_ids = user_ids[i : i + batch_size]
 
             for user_id in batch_user_ids:
-                # Получение существующих записей для пользователя
                 existing_times = await SystemRepository.get_user_sync_times(session, user_id, data_type_ids)
 
                 user_created = 0
@@ -606,17 +631,13 @@ class SystemRepository:
                 if user_created > 0:
                     users_with_records += 1
 
-                # Периодический flush для освобождения памяти
                 if total_created % 1000 == 0:
                     await session.flush()
 
-            # Коммит пакета
             await session.flush()
 
-        # Финальный коммит
         await session.commit()
 
-        # Формирование результата с человекочитаемыми названиями таблиц
         by_data_type_readable = {}
         for dt_id, count in stats_by_type.items():
             if count > 0:
@@ -647,11 +668,11 @@ class SystemRepository:
         """Обновление времени синхронизации пользователя для типа данных.
 
         Args:
-            session: Сессия БД
-            user_id: ID пользователя
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя Avanpost
             data_type_id: ID типа данных
             sync_time: Новое время синхронизации
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         if show_logs:
             db_logger.debug(
@@ -690,10 +711,10 @@ class SystemRepository:
         """Массовое обновление времени синхронизации для пользователя.
 
         Args:
-            session: Сессия БД
-            user_id: ID пользователя
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя Avanpost
             sync_times: Словарь {data_type_id: sync_time}
-            show_logs: Отображение подробного логирования (Debug уровень)
+            show_logs: Отображение подробного логирования
         """
         if not sync_times:
             db_logger.debug("ℹ️ [update_user_sync_times_bulk] No sync times to update")
@@ -721,7 +742,7 @@ class SystemRepository:
         """Удаление записи синхронизации для типа данных.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             data_type_id: ID типа данных
 
         Returns:
@@ -756,8 +777,8 @@ class SystemRepository:
         """Удаление записи синхронизации пользователя.
 
         Args:
-            session: Сессия БД
-            user_id: ID пользователя
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя Avanpost
             data_type_id: ID типа данных
 
         Returns:

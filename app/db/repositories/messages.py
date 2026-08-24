@@ -1,3 +1,60 @@
+"""
+Репозиторий для работы с сообщениями (ChatMessageModel).
+
+Назначение:
+    Предоставляет полный набор методов для управления сообщениями в базе данных:
+    создание, чтение, обновление, удаление (CRUD), а также специализированные
+    операции для управления временем жизни, статистикой и массовыми действиями.
+
+Основные разделы:
+    1. СОЗДАНИЕ И ОБНОВЛЕНИЕ:
+       - create_message: Создание нового сообщения.
+       - update_message: Обновление текста/подписи/даты редактирования существующего.
+       - create_or_update_message: UPSERT-операция (создать или обновить).
+
+    2. ОСНОВНЫЕ МЕТОДЫ (ЧТЕНИЕ):
+       - get_message_by_id: Получение сообщения по ID.
+       - get_messages_by_ids: Получение нескольких сообщений по списку ID.
+       - get_messages_by_chat: Получение сообщений для конкретного чата.
+       - get_messages_by_filter: Получение сообщений по сложному фильтру
+         (по времени, типам, с исключением типов).
+
+    3. СТАТИСТИКА:
+       - get_message_count_by_chat: Подсчет количества сообщений в чате.
+       - get_message_lifetime_stats: Статистика по времени жизни сообщений в чате.
+       - get_message_count_by_type: Подсчет сообщений по типу.
+       - get_all_message_types_stats: Статистика по всем типам сообщений.
+
+    4. УПРАВЛЕНИЕ ВРЕМЕНЕМ ЖИЗНИ:
+       - set_message_lifetime: Установка времени жизни для сообщения.
+       - get_expired_messages: Получение сообщений с истекшим сроком жизни.
+
+    5. УДАЛЕНИЕ И ВОССТАНОВЛЕНИЕ:
+       - mark_messages_as_deleted: Мягкое удаление (отметка) сообщений.
+       - mark_messages_deleted_by_ids: Алиас для mark_messages_as_deleted.
+       - delete_messages_permanently: Полное удаление сообщений из БД.
+       - restore_deleted_message: Восстановление (отмена мягкого удаления).
+
+    6. ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ:
+       - get_messages_by_date_range: Получение сообщений за период.
+       - get_messages_by_type: Получение сообщений по типу.
+       - get_last_message_in_chat: Получение последнего сообщения в чате.
+       - cleanup_expired_messages: Пакетная очистка всех истекших сообщений.
+
+Технические особенности:
+    - Все методы статические и асинхронные.
+    - Работают с моделью ChatMessageModel через SQLAlchemy Core и ORM.
+    - Используют AsyncSession для асинхронных операций.
+    - Поддерживают мягкое удаление (FFlagDeleted) вместо физического.
+    - Оптимизированы для пакетной обработки (batch operations).
+    - Возвращают объекты моделей или словари с данными.
+
+Архитектура:
+    - Используется в слое сервисов (UnifiedMessageService, MessageLifetimeService).
+    - Интегрируется с репозиториями чатов и пользователей для проверки связей.
+    - Является основным источником данных о сообщениях для API и бота.
+"""
+
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -13,7 +70,7 @@ from ...utils.decorators import log_exceptions, suppress_debug_logs
 class MessageRepository:
     """Репозиторий для работы с сообщениями."""
 
-    # ==================== СОЗДАНИЕ И ОБНОВЛЕНИЕ ====================
+    # ==================== 1. СОЗДАНИЕ И ОБНОВЛЕНИЕ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -260,7 +317,7 @@ class MessageRepository:
 
         return message, True
 
-    # ==================== ОСНОВНЫЕ МЕТОДЫ ====================
+    # ==================== 2. ОСНОВНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -418,7 +475,7 @@ class MessageRepository:
         db_logger.debug(f"✅ Found {len(messages)} messages")
         return messages
 
-    # ==================== СТАТИСТИКА ====================
+    # ==================== 3. СТАТИСТИКА ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -496,7 +553,7 @@ class MessageRepository:
         db_logger.info(f"✅ Stats: {stats_dict}")
         return stats_dict
 
-    # ==================== УПРАВЛЕНИЕ ВРЕМЕНЕМ ЖИЗНИ ====================
+    # ==================== 4. УПРАВЛЕНИЕ ВРЕМЕНЕМ ЖИЗНИ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -575,7 +632,7 @@ class MessageRepository:
         db_logger.debug(f"✅ Found {len(messages)} expired messages")
         return messages
 
-    # ==================== УДАЛЕНИЕ СООБЩЕНИЙ ====================
+    # ==================== 5. УДАЛЕНИЕ И ВОССТАНОВЛЕНИЕ ====================
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -738,7 +795,7 @@ class MessageRepository:
             await session.rollback()
             raise
 
-    # ==================== ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ====================
+    # ==================== 6. ДОПОЛНИТЕЛЬНЫЕ МЕТОДЫ ====================
 
     @staticmethod
     @log_exceptions(db_logger)

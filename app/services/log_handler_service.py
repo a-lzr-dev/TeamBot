@@ -1,3 +1,34 @@
+"""
+Сервис-мост для обработки логов уровня ERROR и CRITICAL.
+
+Назначение:
+    Перехватывает логи уровня ERROR и CRITICAL из всех компонентов приложения
+    через стандартный механизм логирования Python (logging.Handler) и преобразует
+    их в структурированные ошибки с отправкой уведомлений в Telegram.
+
+Основные функции:
+    1. Перехват логов уровня ERROR и CRITICAL через кастомный обработчик
+    2. Асинхронная обработка логов через очередь (worker)
+    3. Группировка и дедупликация ошибок для предотвращения спама
+    4. Отправка уведомлений в чат поддержки с поддержкой топиков
+    5. Интеграция с ErrorService для сохранения ошибок в БД
+    6. Graceful shutdown с очисткой очереди
+
+Технические особенности:
+    - Асинхронная очередь с ограничением размера (LOG_QUEUE_MAX_SIZE)
+    - Кеширование ошибок для предотвращения дублирования уведомлений
+    - Автоматическое определение категории и серьёзности по логгеру
+    - Поддержка топиков в супергруппах (SUPPORT_CHAT_TOPIC_IDS)
+    - Установка времени жизни сообщений об ошибках (ERROR_MESSAGE_LIFETIME_SECONDS)
+    - Корректная обработка CancelledError при завершении
+
+Архитектура:
+    - Синглтон с асинхронным воркером
+    - Интегрируется с корневым логгером Python через logging.Handler
+    - Использует ErrorService для сохранения и управления ошибками
+    - Отправляет уведомления через BotManager
+"""
+
 import asyncio
 import contextlib
 import logging
@@ -16,9 +47,30 @@ if TYPE_CHECKING:
 
 
 class LogHandlerService:
-    """Сервис-мост для обработки логов уровня ERROR и CRITICAL."""
+    """Сервис-мост для обработки логов уровня ERROR и CRITICAL.
+
+    Перехватывает логи через стандартный механизм Python logging и преобразует
+    их в структурированные ошибки с отправкой уведомлений в Telegram.
+
+    Attributes:
+        _initialized (bool): Флаг инициализации сервиса
+        _shutting_down (bool): Флаг завершения работы
+        _error_cache (dict[str, datetime]): Кеш ошибок для группировки
+        _cache_ttl (int): Время жизни кеша в секундах
+        _error_handling (bool): Флаг обработки ошибки (предотвращает рекурсию)
+        _handler (logging.Handler | None): Обработчик логов
+        _queue (asyncio.Queue): Очередь логов для асинхронной обработки
+        _worker_task (asyncio.Task | None): Задача фонового воркера
+        _is_worker_running (bool): Флаг работы воркера
+        _notification_stats (dict[str, int]): Статистика уведомлений
+    """
 
     def __init__(self) -> None:
+        """Инициализация сервиса обработки логов.
+
+        Создаёт асинхронную очередь с ограничением размера и инициализирует
+        структуры для кеширования и статистики.
+        """
         self._initialized = False
         self._shutting_down = False
         self._error_cache: dict[str, datetime] = {}
@@ -37,11 +89,20 @@ class LogHandlerService:
 
     @property
     def is_initialized(self) -> bool:
-        """Проверка, инициализирован ли сервис."""
+        """Проверка, инициализирован ли сервис.
+
+        Returns:
+            bool: True если сервис инициализирован
+        """
         return self._initialized
 
     async def initialize(self) -> None:
-        """Инициализация сервиса."""
+        """Инициализация сервиса.
+
+        Подключает кастомный обработчик к корневому логгеру Python для
+        перехвата всех логов уровня ERROR и CRITICAL.
+        Запускает фоновый воркер для асинхронной обработки логов.
+        """
         if self._initialized:
             return
 
@@ -57,7 +118,7 @@ class LogHandlerService:
         """Отправка уведомления об ошибке в чаты техподдержки.
 
         Args:
-            error_model: Модель ошибки
+            error_model: Модель ошибки для отправки
         """
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Service is shutting down or not initialized, skipping notification")
@@ -65,7 +126,11 @@ class LogHandlerService:
         await self._send_notification(error_model)
 
     def _setup_log_handler(self) -> None:
-        """Настройка обработчика для перехвата логов."""
+        """Настройка обработчика для перехвата логов.
+
+        Создаёт синхронный обработчик, который помещает записи логов
+        в асинхронную очередь для дальнейшей обработки воркером.
+        """
         if self._handler:
             return
 
@@ -83,7 +148,11 @@ class LogHandlerService:
         app_logger.debug("✅ Log handler attached to root logger")
 
     async def _worker_loop(self) -> None:
-        """Фоновый воркер для обработки логов из очереди."""
+        """Фоновый воркер для обработки логов из очереди.
+
+        Постоянно работает в фоне, извлекает записи логов из очереди
+        и обрабатывает их через _handle_log_record.
+        """
         app_logger.debug("🔄 LogHandler worker started")
         self._is_worker_running = True
 
@@ -117,7 +186,14 @@ class LogHandlerService:
             app_logger.debug("⏹️ LogHandler worker finished")
 
     async def _handle_log_record(self, record: logging.LogRecord) -> None:
-        """Обработка записи лога."""
+        """Обработка записи лога.
+
+        Извлекает информацию из записи лога, создаёт ошибку через ErrorService
+        и отправляет уведомление при необходимости.
+
+        Args:
+            record: Запись лога
+        """
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Shutdown detected, skipping log record")
             return
@@ -128,7 +204,7 @@ class LogHandlerService:
 
             self._notification_stats["total_errors"] += 1
 
-            # Проверка кеша
+            # Проверка кеша для предотвращения дублирования
             cache_key = self._get_cache_key(record)
             if cache_key in self._error_cache:
                 last_sent = self._error_cache[cache_key]
@@ -162,7 +238,7 @@ class LogHandlerService:
                 }
             )
 
-            # Логирование ошибки через error_service
+            # Логирование ошибки через ErrorService
             error_model, chat_message = await error_service.log_error(
                 error=error_obj,
                 session=None,
@@ -209,12 +285,24 @@ class LogHandlerService:
 
     @staticmethod
     def _get_cache_key(record: logging.LogRecord) -> str:
-        """Создание ключа для кеша."""
+        """Создание ключа для кеша.
+
+        Использует имя логгера и первые 100 символов сообщения.
+
+        Args:
+            record: Запись лога
+
+        Returns:
+            str: Ключ для кеша
+        """
         msg = record.getMessage()
         return f"{record.name}:{msg[:100]}"
 
     def _cleanup_cache(self) -> None:
-        """Очистка кеша."""
+        """Очистка кеша от старых записей.
+
+        Удаляет записи, которые старше cache_ttl * 3.
+        """
         if len(self._error_cache) > 1000:
             now = datetime_now()
             expired = [
@@ -225,7 +313,14 @@ class LogHandlerService:
 
     @staticmethod
     def _determine_category(logger_name: str) -> ErrorCategory:
-        """Определение категории по имени логгера."""
+        """Определение категории по имени логгера.
+
+        Args:
+            logger_name: Имя логгера
+
+        Returns:
+            ErrorCategory: Категория ошибки
+        """
         logger_lower = logger_name.lower()
 
         category_map = {
@@ -245,7 +340,14 @@ class LogHandlerService:
 
     @staticmethod
     def _determine_severity(level: int) -> ErrorSeverity:
-        """Определение серьезности по уровню лога."""
+        """Определение серьёзности по уровню лога.
+
+        Args:
+            level: Уровень логирования
+
+        Returns:
+            ErrorSeverity: Серьёзность ошибки
+        """
         if level >= logging.CRITICAL:
             return ErrorSeverity.CRITICAL
         elif level >= logging.ERROR:
@@ -265,6 +367,9 @@ class LogHandlerService:
         - Jobs → топик Jobs
         - SyncFrom1C → топик SyncFrom1C
         - Unknown → основной чат (без топика)
+
+        Args:
+            error_model: Модель ошибки
         """
         if self._shutting_down or not self._initialized:
             app_logger.debug("ℹ️ Service is shutting down, skipping notification")
@@ -274,7 +379,6 @@ class LogHandlerService:
             chat_id = getattr(settings, "SUPPORT_CHAT_ID", 0)
             topic_mapping = getattr(settings, "SUPPORT_CHAT_TOPIC_IDS", {})
 
-            # Проверка настроек
             if not chat_id:
                 app_logger.warning("⚠️ SUPPORT_CHAT_ID not configured, skipping notification")
                 return
@@ -307,7 +411,6 @@ class LogHandlerService:
 
             bot_manager = get_bot_manager()
 
-            # Подготавка параметров к отправке
             send_kwargs = {
                 "chat_id": chat_id,
                 "text": message,
@@ -317,7 +420,6 @@ class LogHandlerService:
                 "lifetime_seconds": lifetime_seconds,
             }
 
-            # Добавление топика, если он найден
             if topic_id:
                 send_kwargs["message_thread_id"] = topic_id
                 app_logger.debug(f"📨 Sending notification to topic {topic_id} in chat {chat_id} (source: {source})")
@@ -353,7 +455,14 @@ class LogHandlerService:
 
     @staticmethod
     def _format_notification(error: Any) -> str:
-        """Форматирование сообщения для чата техподдержки (HTML)"""
+        """Форматирование сообщения для чата техподдержки (HTML).
+
+        Args:
+            error: Модель ошибки
+
+        Returns:
+            str: Отформатированное сообщение в HTML
+        """
         severity_emoji = {
             ErrorSeverity.CRITICAL: "🚨",
             ErrorSeverity.ERROR: "❌",
@@ -369,7 +478,6 @@ class LogHandlerService:
             ErrorStatus.REOPENED: "🔁",
         }.get(error.FStatus, "❌")
 
-        # Экранирование для HTML
         def escape_html(text: str) -> str:
             """Экранирование основных спецсимволов для HTML."""
             if not text:
@@ -382,7 +490,6 @@ class LogHandlerService:
                 .replace("'", "&#39;")
             )
 
-        # Экранируем только те поля, которые могут содержать спецсимволы
         error_code = escape_html(error.FErrorCode or "")
         error_message = escape_html(error.FErrorMessage[:300] if error.FErrorMessage else "")
         error_details = escape_html(error.FErrorDetails[:300] if error.FErrorDetails else "")
@@ -410,18 +517,20 @@ class LogHandlerService:
             message += f"🔄 <b>Повторов:</b> {error.FCountOccurrences}\n"
 
         message += f"\n📅 <b>Время:</b> {error.FLastOccurrence.strftime('%d.%m.%Y %H:%M:%S')}\n\n"
-        message += f"🔗 Используйте <code>/resolve_{error.FID}</code> для отметки как решенное"
+        message += f"🔗 Используйте <code>/resolve_{error.FID}</code> для отметки как решённое"
 
         return message
 
     async def shutdown(self) -> None:
-        """Корректное завершение сервиса."""
+        """Корректное завершение сервиса.
+
+        Останавливает воркер, очищает очередь и отключает обработчик от корневого логгера.
+        """
         app_logger.debug("🚀 Stopping LogHandlerService...")
 
         self._shutting_down = True
         self._initialized = False
 
-        # Удаление обработчика из корневого логгера
         if self._handler:
             try:
                 root_logger = logging.getLogger()
@@ -432,7 +541,6 @@ class LogHandlerService:
 
             self._handler = None
 
-        # Очистка очереди
         cleared = 0
         while not self._queue.empty():
             try:
@@ -445,7 +553,6 @@ class LogHandlerService:
         if cleared > 0:
             app_logger.debug(f"🧹 Cleared {cleared} pending log records")
 
-        # Остановка воркера
         if self._worker_task and not self._worker_task.done():
             app_logger.debug("⏳ Waiting for worker task to finish...")
             self._worker_task.cancel()
@@ -464,7 +571,6 @@ class LogHandlerService:
         self._worker_task = None
         self._is_worker_running = False
 
-        # Логирование финальной статистики
         app_logger.info(
             f"📊 LogHandlerService stats: "
             f"total_errors={self._notification_stats['total_errors']}, "
@@ -496,7 +602,14 @@ class LogHandlerService:
         """Получение статистики работы сервиса.
 
         Returns:
-            dict: Статистика
+            dict: Статистика с полями:
+                - total_errors: Всего перехваченных ошибок
+                - sent_notifications: Отправлено уведомлений
+                - failed_notifications: Неудачных отправок
+                - cache_hits: Попаданий в кеш (дедупликация)
+                - cache_size: Размер кеша
+                - queue_size: Размер очереди
+                - is_worker_running: Работает ли воркер
         """
         return {
             "total_errors": self._notification_stats.get("total_errors", 0),

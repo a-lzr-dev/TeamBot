@@ -1,3 +1,40 @@
+"""
+Репозиторий для работы с напоминаниями и делами пользователей.
+
+Назначение:
+    Предоставляет полный набор методов для управления напоминаниями и делами
+    пользователей: создание, завершение, получение списка, поиск, обновление
+    статуса, деактивация, удаление и статистика.
+
+Основные разделы:
+    1. Создание напоминаний (с поддержкой шифрования и общих дел)
+    2. Завершение дел (с отметкой успешности)
+    3. Получение списка дел (с фильтрацией и пагинацией)
+    4. Получение дела по ID
+    5. Поиск по кодовому слову
+    6. Активные напоминания (для фоновой отправки)
+    7. Обновление статуса (после отправки уведомления)
+    8. Деактивация и удаление (мягкое/жёсткое)
+    9. Статистика по делам
+    10. Форматирование дела (с расшифровкой)
+    11. Массовые операции (деактивация, удаление)
+
+Технические особенности:
+    - Все методы статические, используют AsyncSession
+    - Поддержка шифрования конфиденциальных данных через encrypt_data/decrypt_data
+    - Мягкое удаление (FIsDeleted) вместо физического удаления
+    - Общие дела через UserReminderShareModel
+    - Кодовые слова для быстрого поиска
+    - Поддержка повторяющихся напоминаний (интервал, максимальное количество)
+    - Автоматическое обновление времени последнего напоминания
+
+Архитектура:
+    - Работает с моделями UserReminderModel и UserReminderShareModel
+    - Использует cryptography для шифрования данных
+    - Интегрируется с reminder_service и reminder_notification_service
+    - Поддерживает как личные, так и групповые дела
+"""
+
 import json
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,7 +49,11 @@ from ...utils.decorators import log_exceptions
 
 
 class ReminderRepository:
-    """Репозиторий для работы с напоминаниями и делами."""
+    """Репозиторий для работы с напоминаниями и делами.
+
+    Предоставляет методы для управления напоминаниями пользователей.
+    Все методы асинхронны и принимают AsyncSession.
+    """
 
     # ==================== СОЗДАНИЕ ====================
 
@@ -37,18 +78,18 @@ class ReminderRepository:
         """Создание напоминания с поддержкой шифрования.
 
         Args:
-            session: Сессия БД
-            user_id: ID пользователя
-            title: Название
-            remind_at: Время напоминания
-            description: Описание
-            category: Категория
-            remind_until: Дата окончания оповещений
-            remind_interval: Интервал в минутах
-            max_remind_count: Максимальное количество оповещений
-            code_word: Кодовое слово
-            notification_type: Тип уведомления
-            chat_id: ID чата
+            session: Асинхронная сессия SQLAlchemy
+            user_id: ID пользователя-владельца
+            title: Название напоминания
+            remind_at: Время первого напоминания
+            description: Описание (опционально)
+            category: Категория (опционально)
+            remind_until: Дата окончания оповещений (опционально)
+            remind_interval: Интервал между напоминаниями в минутах (опционально)
+            max_remind_count: Максимальное количество оповещений (опционально)
+            code_word: Кодовое слово для поиска (опционально)
+            notification_type: Тип уведомления (private, group, both)
+            chat_id: ID чата для групповых уведомлений
             shared_with: Список ID пользователей для общего дела
             encrypt: Шифровать данные
 
@@ -57,13 +98,11 @@ class ReminderRepository:
         """
         db_logger.debug(f"🆕 [create_reminder] Creating reminder for user {user_id}: {title[:50]}...")
 
-        # Подготовка данных
         encrypted_data = None
         is_encrypted = False
 
         if encrypt:
             try:
-                # Шифруем конфиденциальные данные
                 data_to_encrypt = json.dumps(
                     {"title": title, "description": description, "category": category}, ensure_ascii=False
                 )
@@ -75,7 +114,6 @@ class ReminderRepository:
                 is_encrypted = False
                 encrypted_data = None
 
-        # Создание дела
         if is_encrypted:
             reminder = UserReminderModel(
                 FK_User=user_id,
@@ -114,7 +152,6 @@ class ReminderRepository:
         session.add(reminder)
         await session.flush()
 
-        # Создание связей с пользователями (для общих дел)
         if shared_with:
             for shared_user_id in shared_with:
                 share = UserReminderShareModel(FK_Reminder=reminder.FID, FK_User=shared_user_id)
@@ -136,17 +173,16 @@ class ReminderRepository:
         """Завершение дела.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_id: ID напоминания
-            user_id: ID пользователя
+            user_id: ID пользователя, завершающего дело
             successful: Успешно ли выполнено
 
         Returns:
-            Tuple[bool, str | None]: (успех, сообщение об ошибке)
+            tuple[bool, str | None]: (успех, сообщение об ошибке)
         """
         db_logger.debug(f"✅ [complete_reminder] Completing reminder #{reminder_id} for user {user_id}")
 
-        # Проверка владельца
         stmt = select(UserReminderModel).where(
             UserReminderModel.FID == reminder_id,
             or_(
@@ -168,12 +204,10 @@ class ReminderRepository:
             )
             return False, "Reminder not found or no permission"
 
-        # Обновление
         reminder.FIsCompleted = True
         reminder.FIsSuccessful = successful
         reminder.FCompletedAt = datetime_now()
 
-        # Обновление общих дел
         if reminder.FIsGroupReminder:
             update_stmt = (
                 update(UserReminderShareModel)
@@ -206,20 +240,19 @@ class ReminderRepository:
         """Получение списка дел пользователя.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
-            date: Фильтр по дате
-            category: Фильтр по категории
-            include_completed: Включать завершенные
-            limit: Лимит записей
+            date: Фильтр по дате (опционально)
+            category: Фильтр по категории (опционально)
+            include_completed: Включать завершённые дела
+            limit: Лимит записей (опционально)
             offset: Смещение
 
         Returns:
-            List[ReminderModel]: Список напоминаний
+            list[UserReminderModel]: Список напоминаний
         """
         db_logger.debug(f"📋 [get_reminders] Getting reminders for user {user_id}")
 
-        # Базовый запрос
         stmt = select(UserReminderModel).where(
             or_(
                 UserReminderModel.FK_User == user_id,
@@ -230,7 +263,6 @@ class ReminderRepository:
             UserReminderModel.FIsDeleted.is_(False),
         )
 
-        # Фильтр по дате
         if date:
             start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = date.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -268,7 +300,7 @@ class ReminderRepository:
         """Получение напоминания по ID.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_id: ID напоминания
 
         Returns:
@@ -304,14 +336,14 @@ class ReminderRepository:
         """Поиск дел по кодовому слову.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
-            code_word: Кодовое слово
-            chat_id: ID чата (опционально)
-            include_completed: Включать завершенные
+            code_word: Кодовое слово для поиска
+            chat_id: ID чата для фильтрации (опционально)
+            include_completed: Включать завершённые дела
 
         Returns:
-            List[ReminderModel]: Список найденных напоминаний
+            list[UserReminderModel]: Список найденных напоминаний
         """
         db_logger.debug(f"🔍 [find_by_code_word] Finding reminders by code word: {code_word} for user {user_id}")
 
@@ -356,13 +388,13 @@ class ReminderRepository:
         """Получение активных напоминаний, время которых наступило.
 
         Args:
-            session: Сессия БД
-            before_time: Время, до которого проверять (по умолчанию - сейчас)
+            session: Асинхронная сессия SQLAlchemy
+            before_time: Время, до которого проверять (по умолчанию — сейчас)
             limit: Лимит записей
             offset: Смещение
 
         Returns:
-            List[ReminderModel]: Список активных напоминаний
+            list[UserReminderModel]: Список активных напоминаний
         """
         db_logger.debug(f"🔍 [get_active_reminders] Getting active reminders before {before_time or 'now'}")
 
@@ -407,7 +439,7 @@ class ReminderRepository:
         """Обновление статуса напоминания после отправки уведомления.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_id: ID напоминания
             remind_count: Количество отправленных уведомлений
             last_reminded: Время последнего уведомления
@@ -461,7 +493,7 @@ class ReminderRepository:
         """Деактивация напоминания.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_id: ID напоминания
 
         Returns:
@@ -490,12 +522,12 @@ class ReminderRepository:
     @staticmethod
     @log_exceptions(db_logger)
     async def delete_reminder(session: AsyncSession, reminder_id: int, soft: bool = True) -> bool:
-        """Удаление напоминания (мягкое или жесткое).
+        """Удаление напоминания (мягкое или жёсткое).
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_id: ID напоминания
-            soft: Мягкое удаление (пометить как удаленное) или жесткое
+            soft: Мягкое удаление (пометить как удалённое) или жёсткое
 
         Returns:
             bool: Успешно ли удалено
@@ -513,14 +545,12 @@ class ReminderRepository:
 
             result = await session.execute(update_stmt)
         else:
-            # Удаление связей
             delete_stmt = delete(UserReminderShareModel).where(UserReminderShareModel.FK_Reminder == reminder_id)
 
             db_logger.debug(f"📝 SQL (delete shares): {delete_stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             await session.execute(delete_stmt)
 
-            # Удаление напоминания
             delete_stmt_msg = delete(UserReminderModel).where(UserReminderModel.FID == reminder_id)
 
             db_logger.debug(
@@ -552,29 +582,26 @@ class ReminderRepository:
         """Получение статистики по делам пользователя.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя
             period: Период (day, week, month, year)
 
         Returns:
-            dict: Статистика
+            dict: Статистика по делам
         """
         db_logger.debug(f"📊 [get_stats] Getting reminder stats for user {user_id}, period={period}")
 
         now = datetime_now()
 
-        # Определение периода
-        start_date: datetime
         if period == "day":
             start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
         elif period == "week":
             start_date = now - timedelta(days=7)
         elif period == "month":
             start_date = now - timedelta(days=30)
-        else:  # year
+        else:
             start_date = now - timedelta(days=365)
 
-        # Статистика по делам
         stmt = select(
             func.count(UserReminderModel.FID).label("total"),
             func.count(UserReminderModel.FID).filter(UserReminderModel.FIsCompleted.is_(True)).label("completed"),
@@ -599,7 +626,6 @@ class ReminderRepository:
         result = await session.execute(stmt)
         stats = result.first()
 
-        # Детальная статистика по дням
         daily_stmt = (
             select(
                 func.date(UserReminderModel.FCompletedAt).label("date"),
@@ -678,7 +704,6 @@ class ReminderRepository:
 
         if reminder.FIsEncrypted and reminder.FEncryptedData:
             try:
-                # Расшифровка
                 decrypted = decrypt_data(reminder.FEncryptedData)
                 data = json.loads(decrypted)
                 result["title"] = data.get("title", "🔒 Зашифровано")
@@ -707,7 +732,7 @@ class ReminderRepository:
         """Массовая деактивация напоминаний.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_ids: Список ID напоминаний
 
         Returns:
@@ -741,12 +766,12 @@ class ReminderRepository:
         """Массовое удаление напоминаний.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             reminder_ids: Список ID напоминаний
-            soft: Мягкое или жесткое удаление
+            soft: Мягкое или жёсткое удаление
 
         Returns:
-            int: Количество удаленных напоминаний
+            int: Количество удалённых напоминаний
         """
         if not reminder_ids:
             db_logger.debug("ℹ️ [bulk_delete] No reminder IDs provided")
@@ -765,14 +790,12 @@ class ReminderRepository:
 
             result = await session.execute(update_stmt)
         else:
-            # Удаление связей
             delete_stmt = delete(UserReminderShareModel).where(UserReminderShareModel.FK_Reminder.in_(reminder_ids))
 
             db_logger.debug(f"📝 SQL (delete shares): {delete_stmt.compile(compile_kwargs={'literal_binds': True})}")
 
             await session.execute(delete_stmt)
 
-            # Удаление напоминаний
             delete_stmt_msg = delete(UserReminderModel).where(UserReminderModel.FID.in_(reminder_ids))
 
             db_logger.debug(

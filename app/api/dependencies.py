@@ -1,7 +1,33 @@
-"""Модуль зависимостей для внедрения в FastAPI приложение.
+"""
+Модуль зависимостей для внедрения в FastAPI приложение.
 
-Этот модуль предоставляет функции для получения экземпляров сервисов и менеджеров приложения через систему зависимостей
-FastAPI.
+Назначение:
+    Предоставляет функции для получения экземпляров сервисов и менеджеров
+    приложения через систему зависимостей FastAPI. Обеспечивает единую точку
+    доступа к ключевым компонентам системы.
+
+Основные разделы:
+    1.  Получение сессии базы данных:
+        - get_session: асинхронная сессия SQLAlchemy
+        - Автоматическое управление жизненным циклом сессии
+        - Использование контекстного менеджера db_manager
+
+    2.  Получение менеджера API:
+        - get_api_manager: глобальный экземпляр APIManager
+        - Проверка инициализации перед возвратом
+        - Использование паттерна Singleton
+
+Технические особенности:
+    - Использование TYPE_CHECKING для предотвращения циклических импортов
+    - Ленивый импорт внутри функций для избежания зависимостей
+    - Поддержка асинхронных генераторов для управления сессией
+    - Проверка инициализации менеджеров с поднятием RuntimeError
+    - Интеграция с системой зависимостей FastAPI через Depends()
+
+Архитектура:
+    - Единая точка доступа к ключевым компонентам
+    - Используется в API роутерах и сервисах
+    - Поддержка инъекции зависимостей в FastAPI
 """
 
 from collections.abc import AsyncGenerator
@@ -22,6 +48,12 @@ async def get_session() -> AsyncGenerator[AsyncSession]:
 
     Yields:
         AsyncSession: Асинхронная сессия SQLAlchemy для работы с БД
+
+    Пример использования в FastAPI:
+        @router.get("/users")
+        async def get_users(session: AsyncSession = Depends(get_session)):
+            users = await user_repo.get_all(session)
+            return users
     """
     from ..db import db_manager
 
@@ -37,6 +69,14 @@ def get_api_manager() -> "APIManager":
 
     Returns:
         APIManager: Экземпляр менеджера API
+
+    Raises:
+        RuntimeError: Если APIManager не инициализирован
+
+    Пример использования в FastAPI:
+        @router.get("/api/status")
+        async def get_api_status(api_manager: APIManager = Depends(get_api_manager)):
+            return await api_manager.get_status()
     """
     from ..api import api_manager
 

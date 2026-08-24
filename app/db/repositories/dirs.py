@@ -1,3 +1,47 @@
+"""
+Репозитории для работы со справочными данными Avanpost.
+
+Назначение:
+    Предоставляет набор методов для управления справочными данными,
+    используемыми в системе Avanpost: языки (TAvanpostDirLanguages)
+    и группы контактов (TAvanpostDirContactsGroups).
+
+Основные разделы:
+    1. DirLanguageRepository - репозиторий для работы с языками:
+        - get_by_id: Получение языка по ID (например, 'RU', 'EN').
+        - get_all: Получение всех языков (опционально только язык по умолчанию).
+        - get_default_language: Получение языка по умолчанию.
+        - exists: Проверка существования языка.
+        - create: Создание нового языка.
+        - create_or_update: Создание или обновление языка (UPSERT).
+        - ensure_language: Проверка существования языка и создание при необходимости.
+        - delete: Удаление языка.
+        - get_language_codes: Получение списка всех кодов языков.
+
+    2. DirContactGroupRepository - репозиторий для работы с группами контактов:
+        - get_by_id: Получение группы контактов по ID.
+        - get_all: Получение всех групп контактов (опционально только активные).
+        - get_by_name: Получение группы контактов по имени.
+        - create: Создание новой группы контактов.
+        - create_or_update: Создание или обновление группы контактов (UPSERT).
+        - ensure_group: Проверка существования группы и создание при необходимости.
+        - delete: Удаление группы контактов.
+        - get_group_ids: Получение списка всех ID групп контактов.
+        - exists: Проверка существования группы контактов.
+
+Технические особенности:
+    - Все методы статические и асинхронные.
+    - Используют SQLAlchemy Core (select, insert) и ORM.
+    - Поддерживают UPSERT-операции через `INSERT ... ON CONFLICT DO UPDATE` (PostgreSQL).
+    - Предоставляют детальное логирование каждого шага для отладки.
+    - Методы `ensure_*` являются удобными обертками, объединяющими проверку и создание.
+
+Архитектура:
+    - Используются в сервисах инициализации и синхронизации (AvanpostSeedService, AvanpostSyncService).
+    - Работают с моделями AvanpostDirLanguageModel и AvanpostDirContactGroupModel.
+    - Являются частью слоя репозиториев для доступа к справочным данным Avanpost.
+"""
+
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession

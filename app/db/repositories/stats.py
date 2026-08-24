@@ -1,15 +1,36 @@
-"""Репозиторий для получения статистики системы.
+"""
+Репозиторий для получения статистики системы.
 
-Содержит методы для получения статистики по всем компонентам системы:
-- Полная статистика
-- Чаты
-- Пользователи
-- Сообщения
-- Ошибки
-- Напоминания
-- Заявки на автоматизацию
-- Системная статистика
-- Статистика таблиц БД
+Назначение:
+    Предоставляет методы для сбора и агрегации статистики по всем компонентам
+    системы: чаты, пользователи, сообщения, ошибки, напоминания, заявки на
+    автоматизацию, системная информация и статистика таблиц БД.
+
+Основные разделы:
+    1. Полная статистика - агрегированные данные по всем компонентам
+    2. Статистика чатов - количество, активность, распределение по типам
+    3. Статистика пользователей - всего, авторизованные, активные за 24ч
+    4. Статистика сообщений - по типам, дням, удалённые, с временем жизни
+    5. Статистика ошибок - по статусам, категориям, серьёзности
+    6. Статистика напоминаний - всего, активные, завершённые, зашифрованные
+    7. Статистика автоматизации - по статусам и приоритетам
+    8. Системная статистика - версия, Python, платформа, uptime
+    9. Статистика таблиц БД - количество записей в каждой таблице
+
+Технические особенности:
+    - Все методы статические, используют AsyncSession
+    - Использование SQLAlchemy ORM и Core для оптимизации запросов
+    - Агрегация через func.count(), func.sum()
+    - Пагинация через limit/offset
+    - Автоматическое форматирование дат в ISO формат
+    - Логирование с уровнями DEBUG/INFO
+    - Обработка ошибок с логированием предупреждений
+
+Архитектура:
+    - Работает со всеми основными моделями приложения
+    - Используется в API роутерах для отображения статистики
+    - Используется в боте для команды /stats
+    - Интегрируется с ApplicationManager для системной статистики
 """
 
 from datetime import timedelta
@@ -49,7 +70,7 @@ class StatsRepository:
         Включает:
         - Чаты (всего, активные, неактивные)
         - Пользователи (всего, авторизованные, активные за 24ч)
-        - Сообщения (всего, по типам, по дням, удаленные, с временем жизни)
+        - Сообщения (всего, по типам, по дням, удалённые, с временем жизни)
         - Топ-5 чатов по количеству сообщений
 
         Returns:
@@ -103,7 +124,7 @@ class StatsRepository:
             )
             messages_by_type[msg_type.value] = count
 
-        # Удаленные сообщения
+        # Удалённые сообщения
         deleted_messages = (
             await session.scalar(
                 select(func.count()).select_from(ChatMessageModel).where(ChatMessageModel.FFlagDeleted.is_(True))
@@ -119,7 +140,7 @@ class StatsRepository:
             or 0
         )
 
-        # Истекшие, но не удаленные
+        # Истекшие, но не удалённые
         expired_not_deleted = (
             await session.scalar(
                 select(func.count())
@@ -281,7 +302,7 @@ class StatsRepository:
         """Получение статистики по сообщениям.
 
         Returns:
-            dict: Статистика по сообщениям (всего, по типам, по дням, удаленные, с временем жизни)
+            dict: Статистика по сообщениям (всего, по типам, по дням, удалённые, с временем жизни)
         """
         db_logger.info("📊 [get_messages_stats] Getting messages statistics")
 
@@ -300,7 +321,7 @@ class StatsRepository:
 
         total = sum(messages_by_type.values())
 
-        # Удаленные сообщения
+        # Удалённые сообщения
         deleted = (
             await session.scalar(
                 select(func.count()).select_from(ChatMessageModel).where(ChatMessageModel.FFlagDeleted.is_(True))
@@ -316,7 +337,7 @@ class StatsRepository:
             or 0
         )
 
-        # Истекшие, но не удаленные
+        # Истекшие, но не удалённые
         expired = (
             await session.scalar(
                 select(func.count())
@@ -370,7 +391,7 @@ class StatsRepository:
         """Получение статистики по ошибкам.
 
         Returns:
-            dict: Статистика по ошибкам (всего, по статусам, по категориям, по серьезности)
+            dict: Статистика по ошибкам (всего, по статусам, по категориям, по серьёзности)
         """
         db_logger.info("📊 [get_errors_stats] Getting errors statistics")
 
@@ -399,7 +420,7 @@ class StatsRepository:
             )
             category_stats[category.value] = count
 
-        # По серьезности
+        # По серьёзности
         severity_stats = {}
         for severity in ErrorSeverity:
             count = (
@@ -413,7 +434,7 @@ class StatsRepository:
         # Всего повторений
         total_occurrences = await session.scalar(select(func.sum(ErrorModel.FCountOccurrences))) or 0
 
-        # Решенные
+        # Решённые
         resolved = status_stats.get("resolved", 0)
 
         return {
@@ -438,7 +459,7 @@ class StatsRepository:
         """Получение статистики по напоминаниям.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя (опционально, для фильтрации)
 
         Returns:
@@ -488,7 +509,7 @@ class StatsRepository:
         """Получение статистики по заявкам на автоматизацию.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             user_id: ID пользователя (опционально, для фильтрации)
 
         Returns:
@@ -502,7 +523,6 @@ class StatsRepository:
         if user_id:
             conditions.append(UserRequestAutomationModel.FK_User == user_id)
 
-        # Общая статистика
         total = (
             await session.scalar(
                 select(func.count()).select_from(UserRequestAutomationModel).where(*conditions)

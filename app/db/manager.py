@@ -1,4 +1,35 @@
-# app/db/manager.py
+"""
+Менеджер базы данных для управления подключениями к нескольким БД.
+
+Назначение:
+    Обеспечивает централизованное управление подключениями к базам данных
+    в асинхронном приложении. Поддерживает работу с несколькими БД
+    одновременно (основная PostgreSQL и внешняя MSSQL).
+
+Основные функции:
+    1. Регистрация и управление несколькими базами данных
+    2. Создание асинхронных движков SQLAlchemy с настраиваемыми пулами
+    3. Управление жизненным циклом сессий (создание, коммит, откат, закрытие)
+    4. Инициализация таблиц через SQLAlchemy metadata
+    5. Заполнение системных данных (seed)
+    6. Синхронизация данных с Avanpost
+    7. Проверка подключения и получение статистики
+    8. Graceful shutdown с закрытием всех соединений
+
+Технические особенности:
+    - Реализация паттерна Singleton (единственный экземпляр)
+    - Поддержка SQLite, PostgreSQL и MSSQL через SQLAlchemy
+    - Асинхронные движки с пулами соединений (pool_size, max_overflow)
+    - Автоматическое переподключение (pool_pre_ping)
+    - Контекстный менеджер для безопасной работы с сессиями
+    - Поддержка разных моделей для разных БД (BaseModel для main, None для avanpost)
+
+Архитектура:
+    - DBEngine: обёртка для движка SQLAlchemy с конфигурацией
+    - DBManager: синглтон для управления всеми движками
+    - db_manager: глобальный экземпляр для использования во всём приложении
+    - Две зарегистрированные БД: "main" (PostgreSQL) и "avanpost" (MSSQL)
+"""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -18,7 +49,10 @@ from ..utils.decorators import log_exceptions
 
 
 class DBType(StrEnum):
-    """Типы поддерживаемых БД."""
+    """Типы поддерживаемых баз данных.
+
+    Определяет тип СУБД для настройки подключения и пула соединений.
+    """
 
     SQLITE = "sqlite"
     MSSQL = "mssql"
@@ -27,7 +61,18 @@ class DBType(StrEnum):
 
 @dataclass
 class DBConfig:
-    """Конфигурация для подключения к БД."""
+    """Конфигурация для подключения к базе данных.
+
+    Attributes:
+        url (str): URL подключения к БД
+        echo (bool): Включить логирование SQL-запросов
+        pool_size (int): Размер пула соединений
+        max_overflow (int): Максимальное количество дополнительных соединений
+        pool_pre_ping (bool): Проверять соединение перед использованием
+        pool_recycle (int): Время жизни соединения в секундах
+        is_primary (bool): Является ли БД основной
+        models (type[BaseModel] | None): Модели SQLAlchemy для этой БД
+    """
 
     url: str
     echo: bool = False
@@ -40,6 +85,11 @@ class DBConfig:
 
     @property
     def db_type(self) -> DBType:
+        """Определение типа СУБД по URL.
+
+        Returns:
+            DBType: Тип базы данных
+        """
         if "sqlite" in self.url.lower():
             return DBType.SQLITE
         elif "mssql" in self.url.lower() or "sqlserver" in self.url.lower():
@@ -50,9 +100,24 @@ class DBConfig:
 
 
 class DBEngine:
-    """Обертка для движка БД."""
+    """Обёртка для движка базы данных.
+
+    Управляет жизненным циклом движка SQLAlchemy: создание, инициализация,
+    проверка подключения, закрытие.
+
+    Attributes:
+        config (DBConfig): Конфигурация БД
+        _engine (AsyncEngine | None): Асинхронный движок SQLAlchemy
+        _session_factory (async_sessionmaker | None): Фабрика сессий
+        _initialized (bool): Флаг инициализации
+    """
 
     def __init__(self, config: DBConfig):
+        """Инициализация обёртки движка.
+
+        Args:
+            config (DBConfig): Конфигурация БД
+        """
         self.config = config
         self._engine: AsyncEngine | None = None
         self._session_factory: async_sessionmaker | None = None
@@ -60,22 +125,51 @@ class DBEngine:
 
     @property
     def engine(self) -> AsyncEngine:
+        """Получение асинхронного движка.
+
+        Returns:
+            AsyncEngine: Движок SQLAlchemy
+
+        Raises:
+            RuntimeError: Если движок не инициализирован
+        """
         if not self._engine:
             raise RuntimeError("Engine not initialized")
         return self._engine
 
     @property
     def session_factory(self) -> async_sessionmaker:
+        """Получение фабрики сессий.
+
+        Returns:
+            async_sessionmaker: Фабрика сессий
+
+        Raises:
+            RuntimeError: Если фабрика не инициализирована
+        """
         if not self._session_factory:
             raise RuntimeError("Session factory not initialized")
         return self._session_factory
 
     @property
     def is_initialized(self) -> bool:
+        """Проверка инициализации движка.
+
+        Returns:
+            bool: True если движок инициализирован
+        """
         return self._initialized
 
     async def initialize(self) -> None:
-        """Инициализация движка."""
+        """Инициализация движка.
+
+        Создаёт асинхронный движок SQLAlchemy с настройками из конфигурации.
+        Для SQLite используется NullPool, для остальных БД — пул соединений.
+        Выполняет проверку подключения запросом SELECT 1.
+
+        Raises:
+            Exception: При ошибке подключения к БД
+        """
         if self._initialized:
             return
 
@@ -119,7 +213,10 @@ class DBEngine:
         self._initialized = True
 
     async def dispose(self) -> None:
-        """Закрытие движка."""
+        """Закрытие движка и освобождение ресурсов.
+
+        Закрывает все соединения и очищает пул.
+        """
         if self._engine:
             await self._engine.dispose()
             self._initialized = False
@@ -127,16 +224,31 @@ class DBEngine:
 
 
 class DBManager:
-    """Универсальный менеджер для работы с несколькими БД."""
+    """Универсальный менеджер для работы с несколькими базами данных.
+
+    Реализует паттерн Singleton для централизованного управления всеми
+    подключениями к БД в приложении.
+
+    Attributes:
+        _engines (dict[str, DBEngine]): Словарь движков {имя: DBEngine}
+        _primary_name (str | None): Имя основной БД
+        _session_counter (int): Счётчик созданных сессий
+        _initialized (bool): Флаг инициализации менеджера
+    """
 
     _instance: Optional["DBManager"] = None
 
     def __new__(cls) -> "DBManager":
+        """Создание единственного экземпляра (Singleton)."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self) -> None:
+        """Инициализация менеджера БД.
+
+        Создаёт пустые структуры для хранения движков и статистики.
+        """
         if hasattr(self, "_initialized"):
             return
 
@@ -146,7 +258,22 @@ class DBManager:
         self._initialized = False
 
     def register_database(self, name: str, config: DBConfig) -> "DBManager":
-        """Регистрация новой БД."""
+        """Регистрация новой базы данных.
+
+        Создаёт обёртку DBEngine для конфигурации и добавляет её в словарь.
+        Первая зарегистрированная БД с is_primary=True становится основной.
+
+        Args:
+            name (str): Уникальное имя БД
+            config (DBConfig): Конфигурация подключения
+
+        Returns:
+            DBManager: Ссылка на себя для цепочки вызовов
+
+        Note:
+            При повторной регистрации существующей БД выводится предупреждение
+            и конфигурация обновляется.
+        """
         if name in self._engines:
             db_logger.warning(f"⚠️ Database '{name}' already registered, updating...")
 
@@ -161,16 +288,43 @@ class DBManager:
 
     @property
     def primary(self) -> DBEngine:
+        """Получение движка основной БД.
+
+        Returns:
+            DBEngine: Движок основной БД
+
+        Raises:
+            RuntimeError: Если основная БД не зарегистрирована
+        """
         if not self._primary_name or self._primary_name not in self._engines:
             raise RuntimeError("No primary database registered")
         return self._engines[self._primary_name]
 
     def get_engine(self, name: str) -> DBEngine:
+        """Получение движка по имени БД.
+
+        Args:
+            name (str): Имя БД
+
+        Returns:
+            DBEngine: Движок БД
+
+        Raises:
+            KeyError: Если БД с таким именем не зарегистрирована
+        """
         if name not in self._engines:
             raise KeyError(f"Database '{name}' not registered")
         return self._engines[name]
 
     def get_engine_by_type(self, db_type: DBType) -> DBEngine | None:
+        """Поиск движка по типу СУБД.
+
+        Args:
+            db_type (DBType): Тип СУБД
+
+        Returns:
+            DBEngine | None: Движок или None, если не найден
+        """
         for engine in self._engines.values():
             if engine.config.db_type == db_type:
                 return engine
@@ -178,6 +332,11 @@ class DBManager:
 
     @property
     def is_initialized(self) -> bool:
+        """Проверка инициализации менеджера.
+
+        Returns:
+            bool: True если все БД инициализированы
+        """
         return self._initialized
 
     @asynccontextmanager
@@ -186,7 +345,18 @@ class DBManager:
         db_name: str | None = None,
         show_logs: bool = True,
     ) -> AsyncGenerator[AsyncSession]:
-        """Получение сессии для указанной БД."""
+        """Получение асинхронной сессии для указанной БД.
+
+        Используется как контекстный менеджер для безопасной работы
+        с сессией. Автоматически выполняет коммит при успехе или откат при ошибке.
+
+        Args:
+            db_name (str | None): Имя БД (по умолчанию основная)
+            show_logs (bool): Логировать создание и закрытие сессии
+
+        Yields:
+            AsyncSession: Асинхронная сессия SQLAlchemy
+        """
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -220,7 +390,11 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def initialize_all(self) -> None:
-        """Инициализация всех зарегистрированных БД."""
+        """Инициализация всех зарегистрированных баз данных.
+
+        Последовательно инициализирует каждый движок.
+        При ошибке инициализации одной БД остальные всё равно инициализируются.
+        """
         if self._initialized:
             return
 
@@ -238,7 +412,15 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def init_tables(self, db_name: str | None = None, drop_first: bool = False) -> None:
-        """Инициализация таблиц для БД."""
+        """Инициализация таблиц для базы данных.
+
+        Создаёт все таблицы, определённые в моделях SQLAlchemy.
+        При drop_first=True удаляет существующие таблицы перед созданием.
+
+        Args:
+            db_name (str | None): Имя БД (по умолчанию основная)
+            drop_first (bool): Удалить существующие таблицы перед созданием
+        """
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -259,7 +441,11 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def seed_tables(self) -> None:
-        """Заполнение таблиц данными."""
+        """Заполнение таблиц системными данными (seed).
+
+        Вызывает сервис avanpost_seed_service для заполнения системных таблиц
+        Avanpost (типы данных, пользователи, записи синхронизации).
+        """
         from app.services.seed_service import avanpost_seed_service
 
         db_logger.debug("🔍 Seeding Avanpost system data types...")
@@ -277,11 +463,21 @@ class DBManager:
     async def sync_avanpost(self, force: bool = False) -> dict[str, Any]:
         """Синхронизация данных Avanpost с выводом статистики только при изменениях.
 
+        Выполняет синхронизацию базовых справочных данных из Avanpost.
+        Статистика выводится только при наличии изменений или ошибок.
+
         Args:
-            force: Принудительная полная синхронизация (игнорировать кеш)
+            force (bool): Принудительная полная синхронизация (игнорировать кеш)
 
         Returns:
             dict: Результат синхронизации с информацией о статусе и статистикой
+                - success: bool
+                - message: str
+                - status: dict
+                - stats: dict
+                - has_changes: bool
+                - has_errors: bool
+                - force: bool
         """
         db_logger.info(f"🔄 Starting Avanpost data sync (force={force})...")
 
@@ -349,8 +545,11 @@ class DBManager:
     async def sync_avanpost_async(self, force: bool = False) -> asyncio.Task:
         """Запуск синхронизации Avanpost в фоновом режиме.
 
+        Создаёт асинхронную задачу для выполнения синхронизации без блокировки
+        основного потока.
+
         Args:
-            force: Принудительная полная синхронизация
+            force (bool): Принудительная полная синхронизация
 
         Returns:
             asyncio.Task: Задача фоновой синхронизации
@@ -391,7 +590,10 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def close_all(self) -> None:
-        """Закрытие всех соединений."""
+        """Закрытие всех соединений к базам данных.
+
+        Последовательно закрывает все движки и освобождает ресурсы.
+        """
         for name, engine in self._engines.items():
             try:
                 await engine.dispose()
@@ -404,7 +606,16 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def check_connection(self, db_name: str | None = None) -> bool:
-        """Проверка подключения к БД."""
+        """Проверка подключения к базе данных.
+
+        Выполняет простой запрос SELECT 1 для проверки доступности БД.
+
+        Args:
+            db_name (str | None): Имя БД (по умолчанию основная)
+
+        Returns:
+            bool: True если подключение успешно
+        """
         engine = self.get_engine(db_name) if db_name else self.primary
 
         if not engine.is_initialized:
@@ -421,7 +632,18 @@ class DBManager:
 
     @log_exceptions(db_logger)
     async def get_stats(self) -> dict:
-        """Получение статистики всех БД."""
+        """Получение статистики всех баз данных.
+
+        Возвращает информацию о каждой зарегистрированной БД:
+        тип, состояние инициализации, является ли основной.
+
+        Returns:
+            dict: Статистика БД с полями:
+                - databases: dict[str, dict] - информация по каждой БД
+                - primary: str - имя основной БД
+                - session_counter: int - количество созданных сессий
+                - total_databases: int - общее количество БД
+        """
         return {
             "databases": {
                 name: {
@@ -442,6 +664,7 @@ class DBManager:
 
 db_manager = DBManager()
 
+# Регистрация основной БД (PostgreSQL)
 db_manager.register_database(
     "main",
     DBConfig(
@@ -454,6 +677,7 @@ db_manager.register_database(
     ),
 )
 
+# Регистрация БД Avanpost (MSSQL)
 if settings.DB_AVANPOST_URL:
     db_manager.register_database(
         "avanpost",

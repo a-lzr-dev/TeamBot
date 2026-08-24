@@ -1,20 +1,76 @@
-"""Репозиторий для работы с данными пользователей Avanpost.
+"""
+Репозиторий для работы с данными пользователей Avanpost.
 
-Содержит методы для получения данных о пользователях, их заказах, чатах,
-транспорте, контактах и других связанных сущностях.
+Назначение:
+    Предоставляет полный набор методов для получения данных о пользователях
+    и связанных с ними сущностях из системы Avanpost: заказы, чаты, транспорт,
+    контакты, сообщения и точки маршрута.
 
-Группы методов:
-1. Список пользователей (get_avanpost_users_page)
-2. Заказы заказчиков пользователя (get_user_orders, get_user_orders_page) - FK_Type=8
-3. Чаты пользователя (get_user_chats, get_user_chats_page) - FK_Type=9
-4. Транспорт пользователя (get_user_vehicles, get_user_vehicles_page) - FK_Type=10
-5. Заказы перевозчика (get_carrier_orders_page) - FK_Type=11
-6. Сообщения чата (get_chat_messages_page) с фильтрацией по направлению - FK_Type=3
-7. Контакты пользователя (get_user_contacts_page) - FK_Type=6
-8. Контактная информация (get_contact_details_page) - FK_Type=7
-9. Точки маршрута (get_mission_items_page) - FK_Type=4
-10. Детали точки маршрута (get_mission_item_details) - FK_Type=4 (детали)
-11. Вспомогательные методы (get_contact_name, get_contact_by_id, get_message_by_id)
+Основные разделы:
+    1. СПИСОК ПОЛЬЗОВАТЕЛЕЙ:
+        - get_avanpost_users_page: Получение списка пользователей Avanpost
+          с пагинацией, поиском и приоритизацией (из AVANPOST_AUTO_ADD_USERS_IDS_ON_START).
+
+    2. ЗАКАЗЫ ЗАКАЗЧИКОВ (FK_Type=8):
+        - get_user_orders: Получение списка заказов пользователя.
+        - get_user_orders_page: Получение списка заказов с пагинацией и поиском.
+
+    3. ЧАТЫ ПОЛЬЗОВАТЕЛЯ (FK_Type=9):
+        - get_user_chats: Получение списка чатов пользователя.
+        - get_user_chats_page: Получение списка чатов с пагинацией и поиском.
+
+    4. ТРАНСПОРТ ПОЛЬЗОВАТЕЛЯ (FK_Type=10):
+        - get_user_vehicles: Получение списка транспорта пользователя.
+        - get_user_vehicles_page: Получение списка транспорта с пагинацией и поиском.
+
+    5. ЗАКАЗЫ ПЕРЕВОЗЧИКА (FK_Type=11):
+        - get_carrier_orders_page: Получение списка заказов перевозчика
+          с пагинацией и поиском.
+
+    6. СООБЩЕНИЯ ЧАТА (FK_Type=3):
+        - get_chat_messages_page: Получение списка сообщений в чате
+          с пагинацией и фильтрацией по направлению (исключение контрольных сообщений).
+
+    7. КОНТАКТЫ ПОЛЬЗОВАТЕЛЯ (FK_Type=6):
+        - get_user_contacts_page: Получение списка контактов пользователя
+          с пагинацией и поиском.
+
+    8. КОНТАКТНАЯ ИНФОРМАЦИЯ (FK_Type=7):
+        - get_contact_details_page: Получение контактной информации
+          (телефоны, email и т.д.) с пагинацией.
+
+    9. ТОЧКИ МАРШРУТА (FK_Type=4):
+        - get_mission_items_page: Получение списка точек маршрута
+          с пагинацией и поиском.
+        - get_mission_item_details: Получение детальной информации о точке маршрута.
+
+    10. ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ:
+        - get_contact_name: Получение имени контакта по ID.
+        - get_contact_by_id: Получение контакта по ID с именем.
+        - get_message_by_id: Получение сообщения по ID из TAvanpostContactsMsgs.
+
+Цепочки связей для FK_Type:
+    - FK_Type=6 (Контакты): TAvanpostUsersLinksContacts -> TAvanpostContacts -> TAvanpostContactsLangs
+    - FK_Type=7 (Контактная информация): TAvanpostContactsLinks -> TAvanpostDirContactsLinksTypes
+    - FK_Type=8 (Заказы заказчика): TAvanpostUsersOrders -> TAvanpostUsersOrdersLangs
+    - FK_Type=9 (Чаты): TAvanpostUsersChats -> TAvanpostUsersChatsLangs
+    - FK_Type=10 (Транспорт): TAvanpostUsersVehicles -> TAvanpostContacts -> TAvanpostContactsLangs
+    - FK_Type=11 (Заказы перевозчика): TAvanpostUsersOrders -> TAvanpostUsersOrdersLinksMissions -> TAvanpostUsersMissions -> TAvanpostUsersMissionsLangs
+    - FK_Type=3 (Сообщения чата): TAvanpostUsersLinksChatsContactsMsgs -> TAvanpostContactsMsgs -> TAvanpostMsgs
+    - FK_Type=4 (Точки маршрута): TAvanpostUsersMissionsItems -> TAvanpostUsersMissionsItemsLangs
+
+Технические особенности:
+    - Все методы статические и асинхронные.
+    - Используют SQLAlchemy Core (select, func) и ORM (selectinload).
+    - Поддерживают пагинацию (page, page_size) и поиск (search_query).
+    - Поддерживают локализацию через lang_code (по умолчанию "RU").
+    - Приоритизация пользователей из настроек (AVANPOST_AUTO_ADD_USERS_IDS_ON_START).
+    - Предоставляют детальное логирование каждого шага для отладки.
+
+Архитектура:
+    - Используется в обработчиках бота для отображения списков (users, orders, chats, etc.).
+    - Используется в сервисах для получения данных пользователей.
+    - Является основным источником данных о пользователях Avanpost для бота и API.
 """
 
 from typing import Any
@@ -828,8 +884,7 @@ class AvanpostUserRepository:
 
         Args:
             session: Сессия БД
-            avanpost_user_id: ID пользователя в Avanpost
-            order_id: ID заказа
+            avanpost_user_id: ID пользователя в Avanpost            order_id: ID заказа
             page: Номер страницы
             page_size: Размер страницы
             search_query: Поисковый запрос

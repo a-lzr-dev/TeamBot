@@ -1,3 +1,28 @@
+"""
+Репозиторий для работы с настройками уведомлений в чатах.
+
+Назначение:
+    Предоставляет методы для управления настройками уведомлений для каждого чата.
+    Настройки определяют, какие типы ошибок и событий должны отправляться в чат,
+    уровень серьёзности, режим тишины, группировку ошибок и автоматические отчёты.
+
+Основные функции:
+    1. Получение настроек уведомлений для чата по ID
+    2. Создание новых настроек с параметрами по умолчанию
+    3. Обновление существующих настроек
+
+Технические особенности:
+    - Все методы статические, используют AsyncSession
+    - Поддержка обновления через **kwargs для гибкости
+    - Логирование всех операций с уровнями DEBUG/INFO/WARNING
+    - Использование ErrorSeverity для уровня уведомлений
+
+Архитектура:
+    - Работает с моделью ChatNotificationSettingsModel
+    - Используется в notification_service для проверки настроек
+    - Интегрируется с системой уведомлений об ошибках
+"""
+
 from typing import Any
 
 from sqlalchemy import select
@@ -9,7 +34,11 @@ from ...utils.decorators import log_exceptions
 
 
 class NotificationSettingsRepository:
-    """Репозиторий для работы с настройками уведомлений."""
+    """Репозиторий для работы с настройками уведомлений в чатах.
+
+    Предоставляет методы для CRUD операций с настройками уведомлений.
+    Все методы асинхронны и принимают AsyncSession.
+    """
 
     @staticmethod
     @log_exceptions(db_logger)
@@ -17,11 +46,11 @@ class NotificationSettingsRepository:
         """Получение настроек уведомлений для чата.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             chat_id: ID чата
 
         Returns:
-            ChatNotificationSettingsModel | None: Настройки или None
+            ChatNotificationSettingsModel | None: Настройки или None, если не найдены
         """
         db_logger.info(f"🔍 [get_by_chat_id] Getting notification settings for chat {chat_id}")
 
@@ -62,22 +91,22 @@ class NotificationSettingsRepository:
         """Создание новых настроек уведомлений для чата.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             chat_id: ID чата
-            silence_start: Начало тишины (HH:MM)
-            silence_end: Конец тишины (HH:MM)
-            silence_enabled: Включить тишину
+            silence_start: Начало режима тишины (формат HH:MM)
+            silence_end: Конец режима тишины (формат HH:MM)
+            silence_enabled: Включить режим тишины
             notify_errors: Уведомлять об ошибках
             notify_periodic_tasks: Уведомлять о периодических задачах
             notify_task_execution: Уведомлять о выполнении задач
             notify_system: Уведомлять о системных событиях
-            notification_level: Уровень уведомлений
-            grouping_enabled: Группировать ошибки
+            notification_level: Минимальный уровень серьёзности для уведомлений
+            grouping_enabled: Группировать схожие ошибки
             grouping_window_minutes: Окно группировки в минутах
-            auto_reports_enabled: Включить автоматические отчеты
-            auto_report_interval: Интервал отчетов в минутах
-            auto_report_hour_start: Начало рабочего времени
-            auto_report_hour_end: Конец рабочего времени
+            auto_reports_enabled: Включить автоматические отчёты
+            auto_report_interval: Интервал отправки отчётов в минутах
+            auto_report_hour_start: Начало рабочего времени для отчётов (час)
+            auto_report_hour_end: Конец рабочего времени для отчётов (час)
 
         Returns:
             ChatNotificationSettingsModel: Созданные настройки
@@ -113,12 +142,12 @@ class NotificationSettingsRepository:
         """Обновление настроек уведомлений для чата.
 
         Args:
-            session: Сессия БД
+            session: Асинхронная сессия SQLAlchemy
             chat_id: ID чата
-            **kwargs: Поля для обновления
+            **kwargs: Поля для обновления (любые поля модели)
 
         Returns:
-            ChatNotificationSettingsModel | None: Обновленные настройки или None
+            ChatNotificationSettingsModel | None: Обновлённые настройки или None
         """
         db_logger.info(f"🔄 [update] Updating notification settings for chat {chat_id}")
 
