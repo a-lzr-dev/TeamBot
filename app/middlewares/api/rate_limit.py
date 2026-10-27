@@ -164,13 +164,17 @@ class APIRateLimitMiddleware(BaseHTTPMiddleware):
             4. Если лимит превышен — возврат 429 с заголовками
             5. Иначе — передача запроса дальше с добавлением заголовков
         """
+        if request.scope["type"] == "websocket":
+            return await call_next(request)
+
         # 1. Проверка, нужно ли пропустить
         if self._is_excluded(request.url.path):
             return await call_next(request)
 
-        # 2. Получение ключа (IP + метод + путь)
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"{client_ip}:{request.method}:{request.url.path}"
+        client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+        # X-Forwarded-For может содержать цепочку IP, берём первый
+        client_ip = client_ip.split(",")[0].strip()
+        key = f"{client_ip}:{request.method}"  # Убрали path
 
         # 3. Контекст для проверки исключений
         context = {"path": request.url.path, "method": request.method, "client_ip": client_ip}

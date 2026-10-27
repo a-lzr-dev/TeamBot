@@ -92,6 +92,9 @@ class APILoggingMiddleware(BaseHTTPMiddleware):
             6. Добавление заголовка X-Process-Time
             7. Возврат ответа
         """
+        if request.scope["type"] == "websocket":
+            return await call_next(request)
+
         # 1. Информация о запросе
         client_ip = request.client.host if request.client else "unknown"
         method = request.method

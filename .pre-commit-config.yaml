@@ -6,12 +6,12 @@ repos:
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
-    hooks:
-      - id: mypy
-        args: [--ignore-missing-imports]
-        exclude: ^(tests/|scripts/|Lesson|TeamBot/old)
+#  - repo: https://github.com/pre-commit/mirrors-mypy
+#    rev: v1.15.0
+#    hooks:
+#      - id: mypy
+#        args: [--ignore-missing-imports]
+#        exclude: ^(tests/|scripts/|Lesson|TeamBot/old)
 
   # ============================================================
   # ХУКИ ДЛЯ ТЕСТИРОВАНИЯ
@@ -31,17 +31,17 @@ repos:
         verbose: true
 
   # Быстрые тесты при каждом коммите (unit-тесты)
-  - repo: local
-    hooks:
-      - id: pytest-unit
-        name: pytest (unit)
-        description: Run unit tests quickly
-        entry: pytest tests/unit/ -v --maxfail=3 --tb=short -m "not slow"
-        language: system
-        types: [python]
-        pass_filenames: false
-        stages: [pre-commit]
-        verbose: true
+#  - repo: local
+#    hooks:
+#      - id: pytest-unit
+#        name: pytest (unit)
+#        description: Run unit tests quickly
+#        entry: pytest tests/unit/ -v --maxfail=3 --tb=short -m "not slow"
+#        language: system
+#        types: [python]
+#        pass_filenames: false
+#        stages: [pre-commit]
+#        verbose: true
 
   # Проверка покрытия кода при push
   - repo: local

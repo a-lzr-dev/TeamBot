@@ -94,6 +94,9 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             6. Ограничение размера хранимых данных
             7. Возврат ответа
         """
+        if request.scope["type"] == "websocket":
+            return await call_next(request)
+
         start_time = time.perf_counter()
         path = request.url.path
         method = request.method

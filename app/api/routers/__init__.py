@@ -8,6 +8,8 @@ from .errors import router as errors_router
 from .reminders import router as reminders_router
 from .stats import router as stats_router
 from .sync import router as sync_router
+from .teamdroid import router as teamdroid_router
+from .utils import router as utils_router
 
 __all__ = [
     "admin_router",
@@ -20,4 +22,6 @@ __all__ = [
     "broadcast_router",
     "stats_router",
     "sync_router",
+    "teamdroid_router",
+    "utils_router",
 ]

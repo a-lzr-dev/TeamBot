@@ -4,6 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,9 +19,6 @@ class Settings(BaseSettings):
     DB_MAIN_PASSWORD: str = "password"
     DB_MAIN_HOST: str = "localhost"
     DB_MAIN_PORT: str = "5432"
-    DB_MAIN_URL: str = (
-        f"postgresql+asyncpg://{DB_MAIN_USER}:{DB_MAIN_PASSWORD}@{DB_MAIN_HOST}:{DB_MAIN_PORT}/{DB_MAIN_NAME}"
-    )
     DB_MAIN_ECHO: bool = False
     DB_MAIN_POOL_SIZE: int = 10
     DB_MAIN_MAX_OVERFLOW: int = 20
@@ -31,7 +29,7 @@ class Settings(BaseSettings):
     DB_AVANPOST_PASSWORD: str = "password"
     DB_AVANPOST_HOST: str = "localhost"
     DB_AVANPOST_PORT: str = "5432"
-    DB_AVANPOST_URL: str = f"mssql+aioodbc://{DB_AVANPOST_USER}:{DB_AVANPOST_PASSWORD}@{DB_AVANPOST_HOST}:{DB_AVANPOST_PORT}/{DB_AVANPOST_NAME}?driver=ODBC+Driver+17+for+SQL+Server"
+    DB_AVANPOST_DRIVER: str = "ODBC Driver 17 for SQL Server"
     DB_AVANPOST_ECHO: bool = False
     DB_AVANPOST_POOL_SIZE: int = 5
     DB_AVANPOST_MAX_OVERFLOW: int = 10
@@ -64,7 +62,7 @@ class Settings(BaseSettings):
     # Требовать успешную синхронизацию для старта приложения
     AVANPOST_SYNC_REQUIRED: bool = False
 
-    # Таймаут синхронизации в секундах (0 - без ограничения)
+    # Тайм-аут синхронизации в секундах (0 - без ограничения)
     AVANPOST_SYNC_TIMEOUT: int = 300
 
     # Размер чанка для синхронизации (количество типов данных за один запрос)
@@ -86,6 +84,61 @@ class Settings(BaseSettings):
     USER_PHONE: str = "+375336391519"
     USER_SESSION_NAME: str = "user_session"
 
+    # ============ TEAMDROID ============
+
+    # Teamdroid gRPC
+    TEAMDROID_HOST: str = "localhost:16060"
+    TEAMDROID_HTTP_UPLOAD_URL: str = "http://localhost:6060/v0/file/u"
+    TEAMDROID_API_KEY: str = "apikey"
+    TEAMDROID_USERNAME: str = "user"
+    TEAMDROID_PASSWORD: str = "password"
+
+    # Teamdroid protocol
+    TEAMDROID_GRPC_MAX_MESSAGE: int = 16 * 1024 * 1024
+    TEAMDROID_CTRL_TIMEOUT: int = 10
+
+    # ============ SQL SERVER (для Teamdroid файлов) ============
+
+    TEAMDROID_SQL_SERVER: str = "localhost"
+    TEAMDROID_SQL_DATABASE: str = "SrvService"
+    TEAMDROID_SQL_USERNAME: str = "user"
+    TEAMDROID_SQL_PASSWORD: str = "password"
+    TEAMDROID_SQL_TIMEOUT: int = 10
+    TEAMDROID_SQL_PROC_AUTH_START: str = "ext.PA_mbl_AuthStart_Exec"
+    TEAMDROID_SQL_PROC_AUTH_FINISH: str = "ext.PA_mbl_AuthFinish_Exec"
+
+    # ============ PUSH NOTIFICATIONS (WebSocket) ============
+
+    # Включить push-сервер (WS-уведомления)
+    WS_NOTIFY_ENABLED: bool = True
+
+    # Путь WebSocket-эндпоинта (без префикса /api/v1)
+    WS_NOTIFY_PATH: str = "/ws/notify"
+
+    # Режим проверки токена: "trust" | "grpc" (Вариант A | Вариант B)
+    WS_NOTIFY_TOKEN_VERIFY_MODE: str = "trust"
+
+    # TTL кэша проверки токена при mode="grpc" (сек)
+    WS_NOTIFY_TOKEN_CACHE_TTL: int = 300
+
+    # Максимум одновременных WS-соединений на пользователя
+    WS_NOTIFY_MAX_CONNECTIONS_PER_USER: int = 10
+
+    # Интервал heartbeat (ping) для обнаружения мёртвых соединений (сек)
+    WS_NOTIFY_HEARTBEAT_INTERVAL: int = 30
+
+    # Тайм-аут отправки одного уведомления (сек)
+    WS_NOTIFY_SEND_TIMEOUT: float = 5.0
+
+    # Auth token expected from the Go myrelay adapter in Authorization header.
+    # Must match `auth_token` in tinode.conf. Leave empty to disable auth
+    # (development only!).
+    WS_RELAY_AUTH_TOKEN: str = ""
+
+    # Where the relay ingest is mounted. Must be consistent with the endpoint
+    # configured on the Go side ("endpoint" in tinode.conf).
+    WS_RELAY_INGEST_PATH: str = "/internal/push"
+
     # ============ API ============
 
     # API
@@ -100,6 +153,17 @@ class Settings(BaseSettings):
     APP_DEBUG: bool = False
     API_RELOAD: bool = False
     API_WORKERS: int = 1
+
+    # Безопасность
+    API_TRUSTED_HOSTS: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.1",
+            "::1",
+            "172.17.0.1",
+            "192.168.12.1",
+        ],
+        description="Список доверенных IP/подсетей",
+    )
 
     # ============ ЛОГИРОВАНИЕ ============
 
@@ -250,7 +314,7 @@ class Settings(BaseSettings):
     # --- Настройки логирования ---
 
     LOG_QUEUE_MAX_SIZE: int = 1000  # Максимальный размер очереди логов
-    LOG_WORKER_TIMEOUT: float = 0.3  # Таймаут ожидания записи в очереди
+    LOG_WORKER_TIMEOUT: float = 0.3  # Тайм-аут ожидания записи в очереди
 
     # --- Настройки сообщений бота ---
 
@@ -280,6 +344,28 @@ class Settings(BaseSettings):
 
     API_DEFAULT_PAGE_SIZE: int = 50  # Размер страницы по умолчанию
     API_STATS_DAYS: int = 7  # Период статистики в днях
+
+    # ============ СВОЙСТВА ДЛЯ URL БАЗ ДАННЫХ ============
+
+    @property
+    def db_main_url(self) -> str:
+        """Собирает URL для основной БД (PostgreSQL) из отдельных переменных."""
+        return (
+            f"postgresql+asyncpg://{self.DB_MAIN_USER}:"
+            f"{quote_plus(self.DB_MAIN_PASSWORD)}@"
+            f"{self.DB_MAIN_HOST}:{self.DB_MAIN_PORT}/{self.DB_MAIN_NAME}"
+        )
+
+    @property
+    def db_avanpost_url(self) -> str:
+        """Собирает URL для вторичной БД (MSSQL) из отдельных переменных."""
+        return (
+            f"mssql+aioodbc://{self.DB_AVANPOST_USER}:"
+            f"{quote_plus(self.DB_AVANPOST_PASSWORD)}@"
+            f"{self.DB_AVANPOST_HOST}:{self.DB_AVANPOST_PORT}/"
+            f"{self.DB_AVANPOST_NAME}?driver={quote_plus(self.DB_AVANPOST_DRIVER)}"
+            f"&TrustServerCertificate=yes"
+        )
 
     # ============ ВАЛИДАТОРЫ ============
 
@@ -388,16 +474,12 @@ class Settings(BaseSettings):
     @classmethod
     def validate_auto_add_vehicles(cls, v: bool | str | None) -> bool:
         """Валидация и преобразование флага загрузки транспорта."""
-        # Обработка None
         if v is None:
             return False
-        # Если уже bool, возвращаем как есть
         if isinstance(v, bool):
             return v
-        # Если строка, приводим к нижнему регистру и проверяем на истинность
         if isinstance(v, str):
             return v.lower() in ("true", "1", "yes", "on")
-        # Для всех остальных типов возвращаем False
         return False
 
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")
@@ -410,12 +492,10 @@ class Settings(BaseSettings):
             return {str(k): int(v) for k, v in v.items()}
         if isinstance(v, str):
             try:
-                # Если словарь
                 if v.startswith("{") and v.endswith("}"):
                     result = ast.literal_eval(v)
                     if isinstance(result, dict):
                         return {str(k): int(v) for k, v in result.items()}
-                # Если через запятую (ключ:значение, ключ:значение)
                 elif "," in v and ":" in v:
                     parts = v.split(",")
                     parsed_dict: dict[str, int] = {}
@@ -453,7 +533,6 @@ class Settings(BaseSettings):
                     return [v.strip().lower()]
             except (ValueError, SyntaxError):
                 return [".doc", ".docx"]
-        # Эта ветка никогда не должна достигаться, но mypy требует возврата
         return [".doc", ".docx"]  # pragma: no cover
 
     @field_validator("AUTOMATION_CONVERSION_METHOD")
@@ -469,16 +548,16 @@ class Settings(BaseSettings):
     @classmethod
     def validate_max_file_size(cls, v: int) -> int:
         """Валидация максимального размера файла."""
-        if v < 1024 * 1024:  # Меньше 1 MB
+        if v < 1024 * 1024:
             raise ValueError("AUTOMATION_MAX_FILE_SIZE must be at least 1 MB")
-        if v > 500 * 1024 * 1024:  # Больше 500 MB
+        if v > 500 * 1024 * 1024:
             raise ValueError("AUTOMATION_MAX_FILE_SIZE must not exceed 500 MB")
         return v
 
     @field_validator("AUTOMATION_CONVERSION_TIMEOUT")
     @classmethod
     def validate_timeout(cls, v: int) -> int:
-        """Валидация таймаута конвертации."""
+        """Валидация тайм-аута конвертации."""
         if v < 5:
             raise ValueError("AUTOMATION_CONVERSION_TIMEOUT must be at least 5 seconds")
         if v > 300:
@@ -491,7 +570,7 @@ class Settings(BaseSettings):
         """Валидация времени жизни сообщений."""
         if v < 10:
             raise ValueError("MESSAGE_LIFETIME_DEFAULT_SECONDS must be at least 10 seconds")
-        if v > 86400:  # 24 часа
+        if v > 86400:
             raise ValueError("MESSAGE_LIFETIME_DEFAULT_SECONDS must not exceed 24 hours (86400 seconds)")
         return v
 
@@ -514,6 +593,30 @@ class Settings(BaseSettings):
         if v > 1000:
             raise ValueError("API_DEFAULT_PAGE_SIZE must not exceed 1000")
         return v
+
+    @field_validator("API_TRUSTED_HOSTS", mode="before")
+    @classmethod
+    def parse_trusted_hosts(cls, v: str | list[str] | None) -> list[str]:
+        """Парсинг списка доверенных хостов из строки в список."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            # JSON-массив
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    result = ast.literal_eval(v)
+                    if isinstance(result, list):
+                        return [str(x).strip() for x in result if str(x).strip()]
+                except (ValueError, SyntaxError):
+                    pass
+            # Строка через запятую
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return []
 
     @field_validator("TELEGRAM_MAX_RETRIES")
     @classmethod
@@ -538,7 +641,7 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_TIMEOUT")
     @classmethod
     def validate_sync_timeout(cls, v: int) -> int:
-        """Валидация таймаута синхронизации."""
+        """Валидация тайм-аута синхронизации."""
         if v < 0:
             raise ValueError("AVANPOST_SYNC_TIMEOUT must be >= 0")
         return v
@@ -584,14 +687,13 @@ class Settings(BaseSettings):
             except ImportError:
                 pass
 
-        # LibreOffice доступен на всех платформах
         try:
             libreoffice_cmds = ["soffice", "libreoffice"]
             for cmd in libreoffice_cmds:
                 if shutil.which(cmd) is not None:
                     methods.append("libreoffice")
                     break
-        except Exception:
+        except (OSError, TypeError, ValueError):
             pass
 
         return methods
@@ -603,51 +705,36 @@ class Settings(BaseSettings):
 
     @property
     def automation_best_method(self) -> str | None:
-        """Определение лучшего метода для текущей платформы.
-
-        Возвращает Optional[str], так как метод может быть не найден.
-        """
-        # Если пользователь указал конкретный метод
+        """Определение лучшего метода для текущей платформы."""
         if (
             self.AUTOMATION_CONVERSION_METHOD != "auto"
             and self.AUTOMATION_CONVERSION_METHOD in self.automation_supported_methods
         ):
             return self.AUTOMATION_CONVERSION_METHOD
 
-        # Автовыбор на Windows
         if self.is_windows:
             if "pywin32" in self.automation_supported_methods:
                 return "pywin32"
             elif "comtypes" in self.automation_supported_methods:
                 return "comtypes"
 
-        # LibreOffice (кроссплатформенный)
         if "libreoffice" in self.automation_supported_methods:
             return "libreoffice"
 
-        # Если ничего не найдено
         return None
 
     @property
     def automation_get_notification_chats(self) -> list[int]:
-        """Получение списка чатов для уведомлений о заявках.
-
-        Возвращает список с одним чатом (SUPPORT_CHAT_ID) или пустой список.
-        """
+        """Получение списка чатов для уведомлений о заявках."""
         if self.AUTOMATION_NOTIFICATION_CHAT_IDS:
             return self.AUTOMATION_NOTIFICATION_CHAT_IDS
-        # Возвращение списка с одним чатом, если он настроен
         if self.SUPPORT_CHAT_ID:
             return [self.SUPPORT_CHAT_ID]
         return []
 
     @property
     def automation_get_notification_topic(self) -> int | None:
-        """Получение ID топика для уведомлений о заявках.
-
-        Возвращает ID топика для "Jobs" или None, если не настроен.
-        """
-        # Заявки на автоматизацию отправляем в топик Jobs
+        """Получение ID топика для уведомлений о заявках."""
         return self.SUPPORT_CHAT_TOPIC_IDS.get("Jobs")
 
     @property
@@ -667,14 +754,25 @@ class Settings(BaseSettings):
 
     @property
     def avanpost_sync_user_ids(self) -> list[int]:
-        """Получение списка пользователей для синхронизации.
-
-        Возвращает список ID пользователей или пустой список.
-        """
+        """Получение списка пользователей для синхронизации."""
         return self.AVANPOST_SYNC_USER_IDS
 
+    @property
+    def ws_notify_enabled(self) -> bool:
+        return self.WS_NOTIFY_ENABLED
+
+    @property
+    def ws_notify_verify_mode(self) -> str:
+        mode = (self.WS_NOTIFY_TOKEN_VERIFY_MODE or "trust").lower()
+        if mode not in ("trust", "grpc"):
+            return "trust"
+        return mode
+
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent.parent / ".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=Path(__file__).parent.parent / ".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
     )
 
 

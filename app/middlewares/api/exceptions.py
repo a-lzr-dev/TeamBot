@@ -78,6 +78,9 @@ class ExceptionHandlerMiddleware(BaseHTTPMiddleware):
             4. Перехват и обработка неожиданных ошибок
             5. Возврат структурированного JSONResponse
         """
+        if request.scope["type"] == "websocket":
+            return await call_next(request)
+
         try:
             return await call_next(request)
 

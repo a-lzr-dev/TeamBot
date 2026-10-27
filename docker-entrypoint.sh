@@ -1,3 +1,4 @@
+#!/bin/sh
 # Скрипт входа в контейнер с поддержкой миграций
 
 set -e
@@ -10,10 +11,11 @@ echo ""
 if [ "${SKIP_MIGRATIONS:-false}" != "true" ]; then
     echo "🔄 Running database migrations..."
 
-    # Проверка наличия Alembic
-    if command -v alembic >/dev/null 2>&1; then
-        # Применение миграций с обработкой ошибок
-        if alembic upgrade head; then
+    # Проверка наличия Alembic через Python-интерпретатор из venv
+    # (shebang в /app/.venv/bin/alembic сломан, поэтому используем python -m)
+    if /app/.venv/bin/python -c "import alembic" 2>/dev/null; then
+        # Применение миграций через python -m alembic
+        if /app/.venv/bin/python -m alembic upgrade head; then
             echo "✅ Migrations applied successfully"
         else
             echo "❌ Migrations failed!"
@@ -25,7 +27,7 @@ if [ "${SKIP_MIGRATIONS:-false}" != "true" ]; then
             fi
         fi
     else
-        echo "⚠️  Alembic not found, skipping migrations"
+        echo "⚠️  Alembic not found in Python environment, skipping migrations"
     fi
 else
     echo "⏭️  Migrations skipped (SKIP_MIGRATIONS=true)"
@@ -34,5 +36,5 @@ fi
 echo ""
 echo "🚀 Starting application..."
 
-# Запуск приложения с переданными аргументами
-exec python run.py "$@"
+# Запуск приложения через Python из venv
+exec /app/.venv/bin/python run.py "$@"

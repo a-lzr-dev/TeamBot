@@ -162,7 +162,7 @@ async def convert_doc_to_pdf(
         - Максимальный размер файла берется из settings.AUTOMATION_MAX_FILE_SIZE
         - При успехе возвращается бинарный PDF с заголовком Content-Disposition для скачивания
     """
-    api_logger.info(f"📄 Converting DOC to PDF: {file.filename} (user={user_id})")
+    api_logger.info(f"📄 Converting DOC to PDF: {file.filename or ''} (user={user_id or ''})")
 
     # Проверка наличия имени файла
     if not file.filename:
@@ -261,7 +261,7 @@ async def convert_doc_to_pdf_base64(request: ConvertDocRequest) -> JSONResponse:
     """
     import base64
 
-    api_logger.info(f"📄 Converting DOC to PDF (base64): {request.filename} (user={request.user_id})")
+    api_logger.info(f"📄 Converting DOC to PDF (base64): {request.filename} (user={request.user_id or ''})")
 
     # Проверка наличия документа в запросе
     if not request.doc_base64:
@@ -457,7 +457,7 @@ async def get_automation_requests(
         - Статусы: new, in_progress, completed, cancelled, rejected
         - Заявки возвращаются отсортированными по дате создания (новые сверху)
     """
-    api_logger.info(f"📋 Getting automation requests (user={user_id}, status={status})")
+    api_logger.info(f"📋 Getting automation requests (user={user_id or ''}, status={status or ''})")
 
     try:
         # Получение заявок через сервис с фильтрацией

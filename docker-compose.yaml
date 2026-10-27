@@ -1,11 +1,3 @@
-# ============================================================
-# TeamBot Docker Compose - Внешняя PostgreSQL (ПО УМОЛЧАНИЮ)
-# ============================================================
-# Запуск: docker-compose up -d
-# Остановка: docker-compose down
-# Выполнение миграций: docker-compose run --rm app-migrate
-# ============================================================
-
 services:
   # ============ Приложение (использует внешнюю БД) ============
   app:
@@ -52,6 +44,13 @@ services:
       AUTOMATION_TEMP_DIR: /app/temp/automation
       # Alembic (для миграций)
       ALEMBIC_CONFIG: /app/alembic.ini
+      # WS Notify
+      WS_NOTIFY_ENABLED: ${WS_NOTIFY_ENABLED:-true}
+      # В production не должно быть "trust" — APIManager падает.
+      WS_NOTIFY_TOKEN_VERIFY_MODE: ${WS_NOTIFY_TOKEN_VERIFY_MODE:-grpc}
+      # Обязателен в production — APIManager падает, если пусто.
+      # Должен совпадать с tinode.conf -> push -> myrelay -> auth_token.
+      WS_RELAY_AUTH_TOKEN: ${WS_RELAY_AUTH_TOKEN:?set WS_RELAY_AUTH_TOKEN}
     volumes:
       - ./logs:/app/logs
       - ./temp:/app/temp
@@ -107,6 +106,10 @@ services:
       SUPPORT_CHAT_TOPIC_IDS: ${SUPPORT_CHAT_TOPIC_IDS:-{}}
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-dummy_secret_for_migrations}
       ALEMBIC_CONFIG: /app/alembic.ini
+      # WS Notify — нужны для APIManager.initialize(), если он вызывается при импорте
+      WS_NOTIFY_ENABLED: ${WS_NOTIFY_ENABLED:-false}
+      WS_NOTIFY_TOKEN_VERIFY_MODE: ${WS_NOTIFY_TOKEN_VERIFY_MODE:-grpc}
+      WS_RELAY_AUTH_TOKEN: ${WS_RELAY_AUTH_TOKEN:-dummy_relay_token_for_migrations}
     volumes:
       - ./migrations:/app/migrations:ro
       - ./alembic.ini:/app/alembic.ini:ro
@@ -149,6 +152,10 @@ services:
       SUPPORT_CHAT_TOPIC_IDS: ${SUPPORT_CHAT_TOPIC_IDS:-{}}
       ENCRYPTION_SECRET: ${ENCRYPTION_SECRET:-dummy_secret_for_migrations}
       ALEMBIC_CONFIG: /app/alembic.ini
+      # WS Notify — нужны для APIManager.initialize(), если он вызывается при импорте
+      WS_NOTIFY_ENABLED: ${WS_NOTIFY_ENABLED:-false}
+      WS_NOTIFY_TOKEN_VERIFY_MODE: ${WS_NOTIFY_TOKEN_VERIFY_MODE:-grpc}
+      WS_RELAY_AUTH_TOKEN: ${WS_RELAY_AUTH_TOKEN:-dummy_relay_token_for_migrations}
     volumes:
       - ./migrations:/app/migrations:ro
       - ./alembic.ini:/app/alembic.ini:ro

@@ -1,11 +1,17 @@
 *
 
 !app/
+!proto/
 !run.py
 !run.sh
 !requirements.txt
 !pyproject.toml
 !uv.lock
+
+!alembic.ini
+!migrations/
+!docker-entrypoint.sh
+!scripts/
 
 **/__pycache__/
 **/*.py[cod]

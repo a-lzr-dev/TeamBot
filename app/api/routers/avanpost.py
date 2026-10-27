@@ -239,7 +239,7 @@ async def check_user_by_phone(
         exists = user_id is not None
 
         api_logger.info(
-            f"✅ User check completed: phone={phone}, exists={exists}, user_id={user_id}, group_id={group_id}"
+            f"✅ User check completed: phone={phone}, exists={exists}, user_id={user_id or ''}, group_id={group_id or ''}"
         )
 
         return JSONResponse(
@@ -367,7 +367,7 @@ async def get_menu_items(
         - Пункты содержат флаг has_subitems для определения наличия дочерних элементов
         - Все названия возвращаются на русском языке (lang_code="RU")
     """
-    api_logger.info(f"📋 Getting menu items for group {group_id}, parent={parent_item_id}")
+    api_logger.info(f"📋 Getting menu items for group {group_id}, parent={parent_item_id or ''}")
 
     _validate_group_id(group_id)
 

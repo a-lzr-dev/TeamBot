@@ -10,6 +10,8 @@ from .routers import (
     errors_router,
     reminders_router,
     sync_router,
+    teamdroid_router,
+    utils_router,
 )
 
 __all__ = [
@@ -26,6 +28,8 @@ __all__ = [
     "bot_sync_router",
     "broadcast_router",
     "sync_router",
+    "teamdroid_router",
+    "utils_router",
     # Зависимости
     "get_api_manager",
 ]

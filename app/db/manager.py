@@ -668,7 +668,7 @@ db_manager = DBManager()
 db_manager.register_database(
     "main",
     DBConfig(
-        url=settings.DB_MAIN_URL,
+        url=settings.db_main_url,
         echo=settings.DB_MAIN_ECHO,
         pool_size=getattr(settings, "DB_MAIN_POOL_SIZE", 10),
         max_overflow=getattr(settings, "DB_MAIN_MAX_OVERFLOW", 20),
@@ -678,12 +678,12 @@ db_manager.register_database(
 )
 
 # Регистрация БД Avanpost (MSSQL)
-if settings.DB_AVANPOST_URL:
+if settings.db_avanpost_url:
     db_manager.register_database(
         "avanpost",
         DBConfig(
-            url=settings.DB_AVANPOST_URL,
-            echo=settings.DB_AVANPOST_ECHO,
+            url=settings.db_avanpost_url,
+            echo=getattr(settings, "DB_AVANPOST_ECHO", False),
             pool_size=getattr(settings, "DB_AVANPOST_POOL_SIZE", 5),
             max_overflow=getattr(settings, "DB_AVANPOST_MAX_OVERFLOW", 10),
             is_primary=False,

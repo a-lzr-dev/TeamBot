@@ -29,7 +29,7 @@
     4.  Управление остановкой:
         - Graceful shutdown с корректным завершением всех задач
         - Аварийная остановка (emergency_stop) при критических ошибках
-        - Отмена фоновых задач с таймаутом
+        - Отмена фоновых задач с тайм-аутом
 
     5.  Мониторинг и диагностика:
         - Получение статуса всех компонентов (get_status)
@@ -42,7 +42,7 @@
 Технические особенности:
     - Реализация паттерна Singleton (единственный экземпляр)
     - Асинхронная архитектура на базе asyncio
-    - Graceful shutdown с таймаутами для фоновых задач
+    - Graceful shutdown с тайм-аутами для фоновых задач
     - Подавление debug-логов в синхронизации (@suppress_debug_logs)
     - Логирование исключений (@log_exceptions)
     - Поддержка выборочного запуска компонентов (db, api, bot)
@@ -51,16 +51,36 @@
 
 Архитектура:
     - Композиция: ApplicationManager содержит экземпляры DBManager, APIManager, BotManager
-    - Использование asyncio.Task для фоновых операций
-    - Событийная модель с asyncio.Event для управления остановкой
+    - Использование asyncio. Task для фоновых операций
+    - Событийная модель с asyncio. Event для управления остановкой
     - Разделение ответственности: каждый компонент управляется своим менеджером
     - Единая точка входа для всего приложения (app_manager)
     - Интеграция с сервисами через зависимости (DI)
+
+Политика исключений:
+    В ряде мест намеренно используется ``except Exception`` (подавляется
+    инспекцией PyCharm через ``# noinspection PyBroadException`` и правилом
+    ruff ``BLE001`` через ``# noqa``):
+
+    - При graceful shutdown: отказ одного компонента не должен блокировать
+      остановку остальных (``_stop_*``, ``_emergency_stop``).
+    - В фоновых задачах (``_sequential_sync``, ``_reminder_check_loop``,
+      ``_sync_avanpost_users_in_background``): ошибка не должна ронять
+      event loop.
+    - В health-check / status: любая ошибка компонента = «нездоров», но
+      сам health-check не падает.
+    - При необязательных операциях (sync, логи): ошибка логируется, но
+      не прерывает запуск, если операция не помечена как required.
+
+    ``asyncio.CancelledError`` (наследник ``BaseException``) при этом не
+    подавляется — отмена задач обрабатывается отдельно.
 """
 
 import asyncio
+import inspect
+from collections.abc import Awaitable, Callable, Coroutine
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ..api.manager import api_manager
 from ..bot.manager import bot_manager
@@ -77,10 +97,45 @@ from ..services.reminder_notification_service import reminder_notification_servi
 from ..utils.decorators import log_exceptions, suppress_debug_logs
 
 
+def _get_async_method(obj: Any, name: str) -> Callable[..., Awaitable[Any]] | None:
+    """Безопасно получить асинхронный метод у объекта.
+
+    Возвращает корутинную функцию, если атрибут существует и является
+    async-функцией, иначе None. Подходит для мест, где результат сразу
+    ``await``-ится.
+
+    Используется ``inspect.iscoroutinefunction`` (а не deprecated
+    ``asyncio.iscoroutinefunction``), который корректно распознаёт
+    ``functools.partial``, ``functools.partialmethod`` и обёртки.
+    """
+    method = getattr(obj, name, None)
+    if method is None or not callable(method):
+        return None
+    if not inspect.iscoroutinefunction(method):
+        return None
+    return cast("Callable[..., Awaitable[Any]]", method)
+
+
+def _get_coroutine_method(obj: Any, name: str) -> Callable[..., Coroutine[Any, Any, Any]] | None:
+    """Безопасно получить корутинный метод у объекта.
+
+    Аналогично ``_get_async_method``, но возвращает тип, совместимый с
+    ``asyncio.create_task`` (который требует именно ``Coroutine``, а не
+    произвольный ``Awaitable``). ``inspect.iscoroutinefunction`` гарантирует,
+    что вызов метода вернёт корутину, поэтому ``cast`` здесь безопасен.
+    """
+    method = getattr(obj, name, None)
+    if method is None or not callable(method):
+        return None
+    if not inspect.iscoroutinefunction(method):
+        return None
+    return cast("Callable[..., Coroutine[Any, Any, Any]]", method)
+
+
 class AppState(StrEnum):
     """Состояния жизненного цикла приложения.
 
-    INITIALIZED -> STARTING -> RUNNING -> STOPPING -> STOPPED                                 | v ERROR
+    INITIALIZED -> STARTING -> RUNNING -> STOPPING -> STOPPED | ERROR
     """
 
     INITIALIZED = "initialized"  # Приложение создано, но не запущено
@@ -119,9 +174,9 @@ class ApplicationManager:
         if hasattr(self, "_initialized"):
             return
 
-        self._state = AppState.INITIALIZED
+        self._state: AppState = AppState.INITIALIZED
         self._tasks: list[asyncio.Task[Any]] = []
-        self._stop_event = asyncio.Event()
+        self._stop_event: asyncio.Event = asyncio.Event()
         self._start_time: float | None = None
 
         # Компоненты приложения
@@ -132,9 +187,9 @@ class ApplicationManager:
         # Репозитории
         self._reminder_repo = ReminderRepository()
 
-        # Настройки из конфига с значениями по умолчанию
-        self.REMINDER_CHECK_INTERVAL = getattr(settings, "REMINDER_CHECK_INTERVAL", 60)
-        self.REMINDER_BATCH_SIZE = getattr(settings, "REMINDER_BATCH_SIZE", 100)
+        # Настройки из конфига
+        self.REMINDER_CHECK_INTERVAL: int = getattr(settings, "REMINDER_CHECK_INTERVAL", 60)
+        self.REMINDER_BATCH_SIZE: int = getattr(settings, "REMINDER_BATCH_SIZE", 100)
 
         self._initialized = True
         app_logger.debug("✅ ApplicationManager created")
@@ -227,7 +282,7 @@ class ApplicationManager:
             self._state = AppState.RUNNING
             app_logger.info(f"✅ Application started successfully (components: {', '.join(to_start)})")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — пробрасываем наверх, но с логом и emergency_stop
             self._state = AppState.ERROR
             app_logger.error(f"❌ Application start failed: {e}", exc_info=True)
             await self._emergency_stop()
@@ -270,10 +325,11 @@ class ApplicationManager:
         app_logger.info("✅ Database tables created")
 
         # 3. Заполнение системных данных (SEED)
+        # noinspection PyBroadException
         try:
             await self.db.seed_tables()
             app_logger.info("✅ Seed data completed")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — оборачиваем в RuntimeError
             app_logger.error(f"❌ Failed to seed data: {e}", exc_info=True)
             raise RuntimeError(f"Seed failed: {e}") from e
 
@@ -294,6 +350,7 @@ class ApplicationManager:
         if not getattr(settings, "AVANPOST_AUTO_SYNC_ON_START", True):
             return
 
+        # noinspection PyBroadException
         try:
             sync_force = getattr(settings, "AVANPOST_SYNC_FORCE", False)
             sync_timeout = getattr(settings, "AVANPOST_SYNC_TIMEOUT", 300)
@@ -313,7 +370,7 @@ class ApplicationManager:
                     raise TimeoutError(error_msg) from err
                 app_logger.error(f"❌ {error_msg}")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — sync не должен ронять запуск, если не required
             app_logger.error(f"❌ Avanpost base sync error: {e}", exc_info=True)
             if getattr(settings, "AVANPOST_SYNC_REQUIRED", False):
                 raise
@@ -324,6 +381,7 @@ class ApplicationManager:
 
         async def _sequential_sync() -> None:
             """Последовательное выполнение синхронизаций в фоне."""
+            # noinspection PyBroadException
             try:
                 # 1. Синхронизация общих данных
                 if getattr(settings, "AVANPOST_SYNC_USERS_BASE", False):
@@ -345,20 +403,21 @@ class ApplicationManager:
             except asyncio.CancelledError:
                 app_logger.debug("ℹ️ Avanpost Users Data Sync cancelled")
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — фоновая задача, не роняем loop
                 app_logger.error(f"❌ Avanpost Users Data Sync failed: {e}", exc_info=True)
 
         # Запуск как отдельную фоновую задачу
-        task = asyncio.create_task(_sequential_sync(), name="avanpost_users_sync")
+        task: asyncio.Task[None] = asyncio.create_task(_sequential_sync(), name="avanpost_users_sync")
         self._tasks.append(task)
         app_logger.info("🚀 Starting Avanpost Users Data Sync in background (sequential)")
 
     @staticmethod
     async def _init_log_handler() -> None:
         """Инициализация сервиса обработки логов."""
+        # noinspection PyBroadException
         try:
             await log_handler_service.initialize()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — инициализация логов не критична для старта
             app_logger.error(f"❌ Failed to initialize LogHandlerService: {e}", exc_info=True)
 
     # ==================== СИНХРОНИЗАЦИЯ ДАННЫХ ====================
@@ -372,6 +431,7 @@ class ApplicationManager:
             force: Принудительная синхронизация (игнорировать кеш),
             show_logs: Отображение подробного логирования
         """
+        # noinspection PyBroadException
         try:
             app_logger.debug(f"🔄 Syncing Avanpost base data (force={force})...")
             sync_service = AvanpostSyncService()
@@ -393,7 +453,7 @@ class ApplicationManager:
         except ImportError as e:
             app_logger.warning(f"⚠️ Sync service not available: {e}")
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — пробрасываем наверх, но с логом
             app_logger.error(f"❌ Failed to sync base data: {e}", exc_info=True)
             raise
 
@@ -416,6 +476,7 @@ class ApplicationManager:
                      Если None или пустой - синхронизируются ВСЕ пользователи.
             show_logs: Отображение подробного логирования
         """
+        # noinspection PyBroadException
         try:
             mode_name = "base" if mode == 1 else "details"
             app_logger.debug(f"👤 Syncing Avanpost user {mode_name} data (force={force})...")
@@ -432,7 +493,7 @@ class ApplicationManager:
 
         except ImportError as e:
             app_logger.warning(f"⚠️ Sync service not available: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — пробрасываем наверх, но с логом
             app_logger.error(f"❌ Failed to sync users: {e}", exc_info=True)
             raise
 
@@ -452,6 +513,7 @@ class ApplicationManager:
             show_logs: Отображение подробного логирования (Debug уровень)
         """
         mode_name = "base" if mode == 1 else "details"
+        # noinspection PyBroadException
         try:
             app_logger.info(f"👤 Starting Avanpost users {mode_name} sync in background...")
 
@@ -461,7 +523,7 @@ class ApplicationManager:
         except asyncio.CancelledError:
             app_logger.debug(f"ℹ️ Avanpost users {mode_name} sync cancelled")
             raise
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — фоновая синхронизация, не роняем loop
             app_logger.error(f"❌ Avanpost users {mode_name} background sync failed: {e}", exc_info=True)
 
     # ==================== ЗАПУСК: API ====================
@@ -470,19 +532,19 @@ class ApplicationManager:
         """Запуск API компонента."""
         app_logger.debug("🌐 Starting API...")
 
-        if hasattr(self.api, "initialize") and callable(self.api.initialize):
-            await self.api.initialize()
+        initialize = _get_async_method(self.api, "initialize")
+        if initialize is not None:
+            await initialize()
         else:
             app_logger.debug("ℹ️ API initialize not needed or not available")
 
         # Создание задачи для запуска API
-        if hasattr(self.api, "start") and callable(self.api.start):
-            api_start_coro = self.api.start()
-            if asyncio.iscoroutine(api_start_coro):
-                task: asyncio.Task[Any] = asyncio.create_task(api_start_coro, name="api_server")
-                self._tasks.append(task)
-            else:
-                app_logger.warning("⚠️ API start is not a coroutine, skipping")
+        start = _get_coroutine_method(self.api, "start")
+        if start is not None:
+            task: asyncio.Task[Any] = asyncio.create_task(start(), name="api_server")
+            self._tasks.append(task)
+        else:
+            app_logger.warning("⚠️ API start is not an async method, skipping")
 
     # ==================== ЗАПУСК: БОТ ====================
 
@@ -491,22 +553,24 @@ class ApplicationManager:
         app_logger.debug("🤖 Starting Bot...")
 
         # Запуск бота
-        if hasattr(self.bot, "start") and callable(self.bot.start):
-            bot_start_coro = self.bot.start()
-            if asyncio.iscoroutine(bot_start_coro):
-                task: asyncio.Task[Any] = asyncio.create_task(bot_start_coro, name="bot_main")
-                self._tasks.append(task)
+        start = _get_coroutine_method(self.bot, "start")
+        if start is not None:
+            task: asyncio.Task[Any] = asyncio.create_task(start(), name="bot_main")
+            self._tasks.append(task)
 
         # Запуск проверки напоминаний
         await asyncio.sleep(2)
         await self._start_reminder_checker()
 
         # Запуск сервиса времени жизни сообщений
-        try:
-            await message_lifetime_service.start()
-            app_logger.info("✅ MessageLifetimeService started")
-        except Exception as e:
-            app_logger.error(f"❌ Failed to start MessageLifetimeService: {e}")
+        lifetime_start = _get_async_method(message_lifetime_service, "start")
+        if lifetime_start is not None:
+            # noinspection PyBroadException
+            try:
+                await lifetime_start()
+                app_logger.info("✅ MessageLifetimeService started")
+            except Exception as e:  # noqa: BLE001 — сервис не критичен для старта бота
+                app_logger.error(f"❌ Failed to start MessageLifetimeService: {e}")
 
         app_logger.info("✅ Bot started")
 
@@ -516,7 +580,7 @@ class ApplicationManager:
         """Запуск фоновой проверки напоминаний."""
         app_logger.debug("⏰ Starting reminder checker...")
 
-        task: asyncio.Task[Any] = asyncio.create_task(self._reminder_check_loop(), name="reminder_checker")
+        task: asyncio.Task[None] = asyncio.create_task(self._reminder_check_loop(), name="reminder_checker")
         self._tasks.append(task)
         app_logger.info(
             f"✅ Reminder checker started (interval: {self.REMINDER_CHECK_INTERVAL}s, "
@@ -528,6 +592,7 @@ class ApplicationManager:
         app_logger.debug("🔄 Reminder check loop started")
 
         while self.is_running:
+            # noinspection PyBroadException
             try:
                 await self._check_and_send_reminders()
 
@@ -542,7 +607,7 @@ class ApplicationManager:
                 app_logger.debug("⏰ Reminder checker cancelled")
                 break
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — цикл должен продолжаться
                 app_logger.error(f"❌ Reminder checker error: {e}", exc_info=True)
                 await asyncio.sleep(self.REMINDER_CHECK_INTERVAL)
 
@@ -550,6 +615,7 @@ class ApplicationManager:
 
     async def _check_and_send_reminders(self) -> None:
         """Проверка и отправка наступивших напоминаний."""
+        # noinspection PyBroadException
         try:
             now = datetime_now()
             app_logger.debug(f"⏰ Checking reminders at {now}")
@@ -568,17 +634,18 @@ class ApplicationManager:
 
                 # Преобразование модели в DTO и отправка уведомлений
                 for reminder in reminders:
+                    # noinspection PyBroadException
                     try:
                         reminder_dto = ReminderNotificationDTO.from_model(reminder)
                         await reminder_notification_service.send_notification(
                             reminder=reminder_dto,
                             session=session,
                         )
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 — одно уведомление не должно ломать пачку
                         app_logger.error(f"❌ Failed to process reminder {reminder.FID}: {e}", exc_info=True)
                         continue
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — пробрасываем наверх, но с логом
             app_logger.error(f"❌ Failed to check reminders: {e}", exc_info=True)
             raise
 
@@ -602,7 +669,7 @@ class ApplicationManager:
             return
 
         self._state = AppState.STOPPING
-        app_logger.debug("🚀 Application Stopped starting...")
+        app_logger.debug("🚀 Application stopping starting...")
 
         to_stop = self._validate_components(components)
         app_logger.debug(f"📋 Components to stop: {to_stop}")
@@ -626,7 +693,7 @@ class ApplicationManager:
             self._start_time = None
             app_logger.debug(f"✅ Application stopped successfully (components: {', '.join(to_stop)})")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — пробрасываем наверх, но с логом
             self._state = AppState.ERROR
             app_logger.error(f"❌ Application stop failed: {e}", exc_info=True)
             raise
@@ -651,67 +718,99 @@ class ApplicationManager:
     async def _stop_log_handler(graceful: bool = True) -> None:
         """Остановка LogHandlerService."""
         app_logger.debug("🚀 Stopping LogHandlerService...")
+        # noinspection PyBroadException
         try:
-            if hasattr(log_handler_service, "set_shutting_down"):
-                await log_handler_service.set_shutting_down(True)
+            set_shutting_down = _get_async_method(log_handler_service, "set_shutting_down")
+            if set_shutting_down is not None:
+                await set_shutting_down(True)
 
-            if hasattr(log_handler_service, "shutdown") and callable(log_handler_service.shutdown):
-                await log_handler_service.shutdown()
+            shutdown = _get_async_method(log_handler_service, "shutdown")
+            if shutdown is not None:
+                await shutdown()
 
             app_logger.info("⛔ LogHandlerService stopped")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — намеренно: отказ логов не должен ломать shutdown
             app_logger.error(f"❌ Failed to stop LogHandlerService: {e}")
             if not graceful:
                 raise
 
     async def _stop_api(self, graceful: bool = True) -> None:
         """Остановка API компонента."""
-        app_logger.debug("🚀 API Stopped starting...")
+        app_logger.debug("🚀 API stopping starting...")
+        # noinspection PyBroadException
         try:
-            if hasattr(self.api, "is_running") and self.api.is_running:
-                if hasattr(self.api, "stop") and callable(self.api.stop):
-                    await self.api.stop()
+            if getattr(self.api, "is_running", False):
+                stop = _get_async_method(self.api, "stop")
+                if stop is not None:
+                    await stop()
             else:
                 app_logger.debug("ℹ️ API was not running")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — намеренно: отказ API не должен ломать shutdown
             app_logger.error(f"❌ Failed to stop API: {e}")
             if not graceful:
                 raise
 
     async def _stop_bot(self, graceful: bool = True) -> None:
         """Остановка Bot компонента."""
-        app_logger.debug("🚀 Bot Stopped starting...")
+        app_logger.debug("🚀 Bot stopping starting...")
 
-        # 1. Остановка сервиса времени жизни сообщений
+        # 1. Остановка push-сервиса (ПЕРВЫМ — прекращаем отправку уведомлений)
+        # noinspection PyBroadException
         try:
-            if hasattr(message_lifetime_service, "stop") and callable(message_lifetime_service.stop):
-                await message_lifetime_service.stop()
-                app_logger.info("⛔ MessageLifetimeService stopped")
-        except Exception as e:
-            app_logger.error(f"❌ Failed to stop MessageLifetimeService: {e}")
+            from ..ws import push_notification_service
 
-        # 2. Остановка бота
-        try:
-            if hasattr(self.bot, "stop") and callable(self.bot.stop):
-                await self.bot.stop()
-                app_logger.info("⛔ Bot stopped")
-        except Exception as e:
-            app_logger.error(f"❌ Failed to stop Bot: {e}")
+            if getattr(push_notification_service, "is_running", False):
+                stop = _get_async_method(push_notification_service, "stop")
+                if stop is not None:
+                    await stop()
+                    app_logger.info("⛔ PushNotificationService stopped")
+                else:
+                    app_logger.warning("⚠️ PushNotificationService.stop is not async, skipping")
+            else:
+                app_logger.debug("ℹ️ PushNotificationService was not running")
+        except Exception as e:  # noqa: BLE001 — намеренно: не блокирует остановку бота
+            app_logger.error(f"❌ Failed to stop PushNotificationService: {e}")
             if not graceful:
                 raise
+
+        # 2. Остановка сервиса времени жизни сообщений
+        lifetime_stop = _get_async_method(message_lifetime_service, "stop")
+        if lifetime_stop is not None:
+            # noinspection PyBroadException
+            try:
+                await lifetime_stop()
+                app_logger.info("⛔ MessageLifetimeService stopped")
+            except Exception as e:  # noqa: BLE001 — намеренно: не блокирует остановку бота
+                app_logger.error(f"❌ Failed to stop MessageLifetimeService: {e}")
+                if not graceful:
+                    raise
+
+        # 3. Остановка бота
+        bot_stop = _get_async_method(self.bot, "stop")
+        if bot_stop is not None:
+            # noinspection PyBroadException
+            try:
+                await bot_stop()
+                app_logger.info("⛔ Bot stopped")
+            except Exception as e:  # noqa: BLE001 — намеренно: не блокирует shutdown
+                app_logger.error(f"❌ Failed to stop Bot: {e}")
+                if not graceful:
+                    raise
 
     async def _stop_database(self, graceful: bool = True) -> None:
         """Остановка базы данных."""
         app_logger.debug("🚀 Stopping database starting...")
+        # noinspection PyBroadException
         try:
             # Останавливаем LogHandlerService перед закрытием БД
             await self._stop_log_handler(graceful)
 
-            if hasattr(self.db, "close_all") and callable(self.db.close_all):
-                await self.db.close_all()
+            close_all = _get_async_method(self.db, "close_all")
+            if close_all is not None:
+                await close_all()
 
             app_logger.info("⛔ Database stopped")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — намеренно: не блокирует общий shutdown
             app_logger.error(f"❌ Failed to stop database: {e}")
             if not graceful:
                 raise
@@ -723,16 +822,18 @@ class ApplicationManager:
         app_logger.warning("🚨 Emergency stop initiated...")
 
         # Останавливаем LogHandlerService в первую очередь
+        # noinspection PyBroadException
         try:
             await self._stop_log_handler(graceful=False)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — аварийный путь: логируем и идём дальше
             app_logger.error(f"❌ Emergency stop failed for LogHandlerService: {e}")
 
         # Останавливаем все компоненты
         for component in self.COMPONENT_ORDER_STOP:
+            # noinspection PyBroadException
             try:
                 await self._stop_component(component, graceful=False)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — аварийный путь: логируем и идём дальше
                 app_logger.error(f"❌ Emergency stop failed for {component}: {e}")
 
         # Принудительно отменяем все задачи
@@ -807,27 +908,33 @@ class ApplicationManager:
             dict: Статус всех компонентов
         """
         # Получение статуса базы данных
-        db_status = {}
-        if hasattr(self.db, "get_stats") and callable(self.db.get_stats):
+        db_status: dict[str, Any] = {}
+        get_stats = _get_async_method(self.db, "get_stats")
+        if get_stats is not None:
+            # noinspection PyBroadException
             try:
-                db_status = await self.db.get_stats()
-            except Exception:
+                db_status = await get_stats()
+            except Exception:  # noqa: BLE001 — статус не должен падать из-за одного компонента
                 db_status = {"error": "Failed to get stats"}
 
         # Получение статуса API
-        api_status = {}
-        if hasattr(self.api, "get_status") and callable(self.api.get_status):
+        api_status: dict[str, Any] = {}
+        api_get_status = _get_async_method(self.api, "get_status")
+        if api_get_status is not None:
+            # noinspection PyBroadException
             try:
-                api_status = await self.api.get_status()
-            except Exception:
+                api_status = await api_get_status()
+            except Exception:  # noqa: BLE001 — статус не должен падать из-за одного компонента
                 api_status = {"error": "Failed to get status"}
 
         # Получение статуса бота
-        bot_status = {}
-        if hasattr(self.bot, "get_status") and callable(self.bot.get_status):
+        bot_status: dict[str, Any] = {}
+        bot_get_status = _get_async_method(self.bot, "get_status")
+        if bot_get_status is not None:
+            # noinspection PyBroadException
             try:
-                bot_status = await self.bot.get_status()
-            except Exception:
+                bot_status = await bot_get_status()
+            except Exception:  # noqa: BLE001 — статус не должен падать из-за одного компонента
                 bot_status = {"error": "Failed to get status"}
 
         # Получение статуса LogHandler
@@ -857,32 +964,33 @@ class ApplicationManager:
         """
         # Проверка базы данных
         db_health = False
-        if hasattr(self.db, "check_connection") and callable(self.db.check_connection):
+        db_check = _get_async_method(self.db, "check_connection")
+        if db_check is not None:
+            # noinspection PyBroadException
             try:
-                db_health = await self.db.check_connection()
-            except Exception:
+                db_health = bool(await db_check())
+            except Exception:  # noqa: BLE001 — health-check: любая ошибка => нездоров
                 db_health = False
 
         # Проверка API
-        api_health = False
-        if hasattr(self.api, "is_running"):
-            api_health = bool(self.api.is_running)
+        api_health = bool(getattr(self.api, "is_running", False))
 
         # Проверка бота
-        bot_health = False
-        if hasattr(self.bot, "health_check") and callable(self.bot.health_check):
+        bot_health_check = _get_async_method(self.bot, "health_check")
+        if bot_health_check is not None:
+            # noinspection PyBroadException
             try:
-                result = await self.bot.health_check()
+                result = await bot_health_check()
                 if isinstance(result, dict):
-                    bot_health = result.get("is_running", False) or result.get("manager_running", False)
+                    bot_health = bool(result.get("is_running", False) or result.get("manager_running", False))
                 else:
                     bot_health = bool(result)
-            except Exception:
+            except Exception:  # noqa: BLE001 — health-check: любая ошибка => нездоров
                 bot_health = False
-        elif hasattr(self.bot, "is_running"):
-            bot_health = bool(self.bot.is_running)
+        else:
+            bot_health = bool(getattr(self.bot, "is_running", False))
 
-        log_handler_health = getattr(log_handler_service, "_initialized", False)
+        log_handler_health = bool(getattr(log_handler_service, "_initialized", False))
 
         return {
             "app": self.is_running,
@@ -906,8 +1014,8 @@ class ApplicationManager:
     # ==================== ПРЕДСТАВЛЕНИЕ ====================
 
     def __repr__(self) -> str:
-        """Строковое представление для отладки."""
-        uptime_str = f"{self.uptime:.1f}s" if self.uptime is not None else "N/A"
+        uptime = self.uptime
+        uptime_str = f"{uptime:.1f}s" if uptime is not None else "N/A"
         return f"<ApplicationManager state={self._state.value} tasks={len(self._tasks)} uptime={uptime_str}>"
 
 
