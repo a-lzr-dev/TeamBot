@@ -1,60 +1,44 @@
-"""Модуль роутера для интеграции с Teamdroid.
+"""
+Модуль роутера для интеграции с Teamdroid.
 
-Предоставляет API эндпоинты для:
-- Отправки файлов из SQL Server в Teamdroid
-- Отправки текстовых сообщений
-- Удаления сообщений из топиков
-- Управления правами доступа к топикам
-- Проверки статуса подключения к Teamdroid
-- Генерации Teamdroid user id (usrXXXX) из числового ID
-- Запуска хранимых процедур SQL Server для отправки и проверки кода
+Эндпоинты:
+    * POST /send-code   — запуск хранимой процедуры SQL Server (отправка кода).
+    * POST /verify-code — запуск хранимой процедуры SQL Server (проверка кода).
+    * POST /note        — пересылка {note} (recv/read/kp) в Tinode через gRPC
+                          и сохранение recv/read в Teamdroid SQL Server.
+    * POST /send-files  — отправка файлов из SQL Server в Teamdroid.
+    * POST /send-text   — отправка текстового сообщения в Teamdroid.
+    * POST /delete-messages — удаление сообщений в топике Teamdroid.
+    * POST /grant-user  — выдача прав пользователю в топике.
+    * GET  /acs/{topic} — получение ACS топика.
+    * GET  /user-id/{id_val} — генерация Teamdroid user id (usrXXXX).
+    * GET  /health      — проверка доступности Teamdroid.
 
-Все эндпоинты используют общий префикс /teamdroid.
+SQL Server (CHANGED):
+    Все четыре хранимые процедуры (AuthStart, AuthFinish, VerifyToken,
+    MsgsDeliveryStatus) ходят через ЕДИНОЕ singleton-соединение,
+    которое теперь живёт в app.db.manager (get_teamdroid_sql_conn /
+    teamdroid_sql_cursor) и конфигурируется переменными TEAMDROID_SQL_*.
 
-Маршруты:
-    POST /send-files - Отправка файлов из SQL Server в Teamdroid
-    POST /send-text - Отправка текстового сообщения
-    POST /delete-messages - Удаление сообщений топика
-    POST /grant-user - Выдача прав пользователю в топике
-    GET /acs/{topic} - Получение метаданных топика
-    GET /user-id/{id_val} - Генерация Teamdroid user id из числового ID
-    GET /health - Проверка доступности Teamdroid
-    POST /send-code - Запуск хранимой процедуры отправки кода
-    POST /verify-code - Запуск хранимой процедуры проверки кода
+    Вызовы процедур инкапсулированы в
+    app.db.repositories.TeamdroidProcedureRepository — роутер
+    больше не работает с pyodbc напрямую (кроме _load_files, которому
+    нужно отдельное соединение для длительного чтения файлов).
 
-Технические особенности:
-    - Все блокирующие gRPC/HTTP/ODBC-вызовы выполняются через asyncio.to_thread,
-      чтобы не блокировать event loop FastAPI.
-    - TeamdroidClient — singleton: один gRPC-канал на всё приложение.
-      Клиент не закрывается после каждого запроса, что устраняет ошибки
-      `context canceled` на сервере Teamdroid.
-    - Клиент автоматически переподключается при падении канала.
-    - Клиент помнит список подписанных топиков (subscriptions set).
-    - Ожидание CTRL-ответов реализовано через per-request queue.Queue,
-      что позволяет безопасно обрабатывать параллельные запросы без потери
-      сообщений.
-    - HTTP-загрузка файлов использует requests.Session с retry-политикой.
-    - Валидация topic/sender/ACS выполняется на уровне Pydantic-моделей.
-    - send_code/verify_code обогащают @Params информацией о клиенте
-      (client_ip, client_app) из заголовков запроса и/или тела.
-    - Текст сообщений (send-files/send-text) парсится в Drafty
-      (``drafty_parse``): ссылки, @mentions и #hashtags становятся
-      кликабельными на клиенте Teamdroid. Вложения в send-files
-      добавляются на новой строке после текста (BR).
+Метаданные клиента:
+    Сервер САМ извлекает IP клиента из стандартных заголовков,
+    проставленных nginx (X-Forwarded-For / X-Real-IP). Клиент НЕ
+    передаёт X-App-*, X-Device-*, X-OS-*, User-Agent — сервер
+    их не принимает и в хранимые процедуры не передаёт.
 
-Жизненный цикл singleton-клиента:
-    - При старте приложения ничего не делаем (lazy init).
-    - Первый запрос к любому эндпоинту создаёт клиент через get_teamdroid_client().
-    - При shutdown приложения вызвать shutdown_teamdroid_client()
-      из lifespan FastAPI.
+    ВАЖНО: из X-Forwarded-For берётся ПОСЛЕДНИЙ адрес (добавленный
+    доверенным прокси nginx), а не первый — первый может быть подделан
+    клиентом.
 
-Диагностика CTRL-ответов:
-    _wait_ctrl больше НЕ бросает RuntimeError на code >= 400, а возвращает
-    CTRL как есть. Проверка кода выполняется вызывающим кодом через
-    _ctrl_error(), что позволяет залогировать точный code/text/params
-    от Tinode вместо безликого RuntimeError. Это критично для отладки
-    login_with_token (WS-токены), т.к. раньше любая ошибка схлопывалась
-    в `return None` без деталей.
+Идентичность пользователя:
+    В /note идентификатор пользователя передаётся в ТЕЛЕ запроса
+    (поле user_id) и является ОБЯЗАТЕЛЬНЫМ. Сервер не принимает
+    клиентскую идентичность из заголовков.
 """
 
 from __future__ import annotations
@@ -69,7 +53,6 @@ import re
 import struct
 import threading
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
 from typing import Any, cast
 
 import grpc
@@ -89,6 +72,8 @@ except ImportError:  # pragma: no cover
     Message = None  # type: ignore[assignment]
 
 from ...config import settings
+from ...db.manager import build_teamdroid_sql_conn_str, close_teamdroid_sql
+from ...db.repositories import TeamdroidProcedureRepository  # NEW
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
 from ...utils.decorators import log_exceptions
@@ -122,8 +107,8 @@ _USER_PREFIX = "usr"
 
 _USER_ID_RE = re.compile(r"^usr[A-Za-z0-9_\-]{10,}$")
 
-# Разрешённые символы в имени хранимой процедуры SQL Server (защита от инъекции).
-_PROC_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+# Допустимые значения what для /note.
+_NOTE_WHAT_ALLOWED = frozenset({"recv", "read", "kp"})
 
 # MIME-типы для офисных форматов.
 _EXTRA_MIME: dict[str, str] = {
@@ -349,30 +334,104 @@ class ErrorResponse(BaseModel):
     timestamp: str = Field(..., description="Время ошибки")
 
 
-# ============================================================
-# SQL SERVER
-# ============================================================
+# ------------------------------------------------------------------
+# Модели для /note (recv/read/kp)
+# ------------------------------------------------------------------
 
 
-@contextmanager
-def _sql_conn() -> Iterator[pyodbc.Connection]:
-    """Контекстный менеджер для соединения с SQL Server."""
-    conn_str = (
-        "DRIVER={ODBC Driver 18 for SQL Server};"
-        f"SERVER={settings.TEAMDROID_SQL_SERVER};"
-        f"DATABASE={settings.TEAMDROID_SQL_DATABASE};"
-        f"UID={settings.TEAMDROID_SQL_USERNAME};"
-        f"PWD={settings.TEAMDROID_SQL_PASSWORD};"
-        "TrustServerCertificate=yes;"
+class NoteRelayRequest(BaseModel):
+    """Запрос от мобильного клиента: {note} для пересылки в Tinode.
+
+    Поле ``user_id`` (Tinode user ID ``usrXXX``) — это одновременно и
+    ``usi`` (хэш пользователя Teamdroid). Они совпадают: ``usrXXX``
+    формируется XTEA-шифрованием числового ID пользователя (см.
+    ``make_teamdroid_user_id``), и это же значение хранится в
+    ``TRSAppUsersValues.FValue`` (FK_Link=4) как хэш пользователя.
+
+    Хранимая процедура ``ext.PA_mbl_MsgsDeliveryStatus_Edit`` ищет
+    пользователя по ``uv.FValue = jsn.UserHash`` (FK_Link=4), поэтому
+    в ``usi`` передаётся тот же ``usrXXX``, что и в ``user_id``.
+
+    Поддержка старых клиентов (без ``user_id``) удалена: запрос без
+    ``user_id`` отклоняется на этапе валидации Pydantic (HTTP 422).
+    """
+
+    topic: str = Field(
+        ...,
+        description="Tinode topic (usrXXX/grpXXX/p2pXXX)",
+        min_length=1,
+        max_length=64,
     )
-    conn = pyodbc.connect(conn_str, timeout=settings.TEAMDROID_SQL_TIMEOUT)
-    try:
-        yield conn
-    finally:
-        try:
-            conn.close()
-        except Exception as close_exc:
-            api_logger.warning(f"Failed to close SQL connection: {close_exc}")
+    what: str = Field(..., description="Тип note: recv | read | kp", min_length=1, max_length=8)
+    seq: int = Field(..., description="Seq ID сообщения", ge=0)
+    user_id: str = Field(
+        ...,
+        description=(
+            "Tinode user ID (usrXXX). Одновременно является usi — "
+            "хэшем пользователя Teamdroid (FValue из TRSAppUsersValues, "
+            "FK_Link=4)."
+        ),
+        max_length=32,
+    )
+    tinode_server: str | None = Field(
+        None,
+        description="Origin Tinode-сервера (для совместимости с мобильным клиентом; игнорируется)",
+        max_length=255,
+    )
+
+    @field_validator("topic")
+    @classmethod
+    def validate_topic(cls, v: str) -> str:
+        v = v.strip()
+        if not any(v.startswith(p) for p in _TOPIC_PREFIXES):
+            raise ValueError(f"Topic must start with one of: {', '.join(_TOPIC_PREFIXES)}")
+        if not re.fullmatch(r"[A-Za-z0-9_\-:.]+", v):
+            raise ValueError("Topic contains invalid characters")
+        return v
+
+    @field_validator("what")
+    @classmethod
+    def validate_what(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in _NOTE_WHAT_ALLOWED:
+            raise ValueError(f"what must be one of: {', '.join(sorted(_NOTE_WHAT_ALLOWED))}, got {v!r}")
+        return v
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, v: str) -> str:
+        v = v.strip()
+        if not _USER_ID_RE.match(v):
+            raise ValueError(f"user_id must match usr[A-Za-z0-9_-]+, got {v!r}")
+        return v
+
+
+class NoteRelayResponse(BaseModel):
+    """Ответ на /note: подтверждение пересылки в Tinode."""
+
+    success: bool = Field(True, description="Успешность операции")
+    topic: str = Field(..., description="Tinode topic")
+    what: str = Field(..., description="Тип note (recv/read/kp)")
+    seq: int = Field(..., description="Seq ID сообщения")
+    user_id: str = Field(..., description="ID пользователя, от имени которого отправлен note")
+    ctrl_code: int | None = Field(None, description="Код CTRL-ответа Tinode (200 = OK)")
+    ctrl_text: str | None = Field(None, description="Текст CTRL-ответа Tinode")
+    teamdroid_saved: bool = Field(False, description="Факт recv/read сохранён в Teamdroid SQL Server")
+    timestamp: str = Field(..., description="Время операции")
+
+
+# ============================================================
+# SQL SERVER — FILE LOADING (отдельное соединение)
+# ============================================================
+#
+# CHANGED: singleton-соединение и _run_json_proc переехали в
+# app.db.manager и app.db.repositories.teamdroid. Роутер больше
+# не держит SQL-connection для процедур.
+#
+# Единственное, что осталось здесь — _load_files: чтение больших
+# файлов может занимать секунды/минуты, поэтому использует
+# ОТДЕЛЬНОЕ соединение (build_teamdroid_sql_conn_str), чтобы не
+# блокировать singleton на время загрузки.
 
 
 def _guess_mime(file_name: str, extension: str) -> str:
@@ -431,85 +490,30 @@ def get_file(conn: pyodbc.Connection, fid: int) -> dict[str, Any]:
 
 
 def _load_files(fids: list[int]) -> list[dict[str, Any]]:
-    """Синхронно загружает файлы из SQL Server по списку FID."""
-    with _sql_conn() as conn:
+    """Синхронно загружает файлы из SQL Server по списку FID.
+
+    Использует ОТДЕЛЬНОЕ соединение, а не singleton: чтение файлов
+    может занимать секунды/минуты, и держать на это время
+    блокировку singleton-соединения (которое нужно AuthStart/
+    VerifyToken) недопустимо.
+    """
+    conn = pyodbc.connect(
+        build_teamdroid_sql_conn_str(),
+        timeout=getattr(settings, "TEAMDROID_SQL_TIMEOUT", 10),
+    )
+    try:
         return [get_file(conn, fid) for fid in fids]
-
-
-def _validate_proc_name(proc_name: str) -> None:
-    """Проверяет имя хранимой процедуры на допустимые символы."""
-    if not _PROC_NAME_RE.match(proc_name):
-        raise ValueError(f"Invalid procedure name: {proc_name!r}")
-
-
-def _run_json_proc(proc_name: str, params: dict[str, Any]) -> dict[str, Any]:
-    """Запускает хранимую процедуру SQL Server, передавая ей JSON."""
-    _validate_proc_name(proc_name)
-    params_json = json.dumps(params, ensure_ascii=False)
-
-    with _sql_conn() as conn:
-        cur = conn.cursor()
-        cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
-
-        result_obj: Any = None
-        raw_cell: Any = None
-
+    finally:
         try:
-            if cur.description is not None:
-                row = cur.fetchone()
-                if row is not None:
-                    raw_cell = row[0]
-                    if isinstance(raw_cell, (str, bytes)):
-                        text = raw_cell.decode("utf-8", errors="replace") if isinstance(raw_cell, bytes) else raw_cell
-                        try:
-                            result_obj = json.loads(text)
-                        except (ValueError, TypeError):
-                            result_obj = None
-                    else:
-                        result_obj = raw_cell
-        except pyodbc.Error:
-            raw_cell = None
-            result_obj = None
-
-        conn.commit()
-
-        rows_affected = cur.rowcount if cur.rowcount is not None else -1
-
-        return {
-            "success": True,
-            "proc": proc_name,
-            "result": result_obj,
-            "raw": raw_cell,
-            "rows_affected": rows_affected,
-            "timestamp": get_timestamp(),
-        }
+            conn.close()
+        except Exception as close_exc:
+            api_logger.warning(f"[teamdroid] failed to close file-load connection: {close_exc!r}")
 
 
 # ============================================================
 # ПАРСИНГ ТЕКСТА В DRAFTY (порт Drafty.parse из Android-клиента)
 # ============================================================
-#
-# Android-клиент Teamdroid парсит plain-text в Drafty при отправке
-# сообщения (см. tinodesdk/model/Drafty.java). Если текст приходит
-# на клиент как сырая строка в {"txt": ...}, ссылки, @mentions и
-# #hashtags не распознаются → URLSpan не создаётся → ссылки
-# некликабельны.
-#
-# Здесь реализован минимально достаточный порт: inline-стили
-# (*bold*, _italic_, ~strike~, `code`), сущности LN/MN/HT и переносы
-# строк как BR. Поведение согласовано с Android-клиентом.
-#
-# ВАЖНО про регулярки:
-#   Python re НЕ поддерживает look-behind переменной длины, поэтому
-#   (?<=^|[\W_]) вызывает ошибку "look-behind requires fixed-width pattern".
-#   Заменяем его на захватывающую группу (^|[\W_]) и работаем с группой 2
-#   (группа 1 — префиксный разделитель, группа 2 — содержимое).
-#   Look-ahead (?=$|[\W_]) в Python допустим (zero-width), его оставляем.
-#   \p{L}/\p{N} в стандартном re не работают — используем эквивалентные
-#   классы: [^\W\d_] — буква, \d — цифра.
 
-# Inline-стили: имя, регулярка. Порядок совпадает с клиентом.
-# Группа 1 — префиксный разделитель, группа 2 — содержимое стиля.
 _DRAFTY_INLINE_STYLES: list[tuple[str, re.Pattern[str]]] = [
     ("ST", re.compile(r"(^|[\W_])\*([^*]+[^\s*])\*(?=$|[\W_])")),
     ("EM", re.compile(r"(^|\W)_([^_]+[^\s_])_(?=$|\W)")),
@@ -517,8 +521,6 @@ _DRAFTY_INLINE_STYLES: list[tuple[str, re.Pattern[str]]] = [
     ("CO", re.compile(r"(^|\W)`([^`]+)`(?=$|\W)")),
 ]
 
-# Сущности: имя, регулярка, функция упаковки data.
-# Группа 1 — префиксный разделитель, группа 2 — сама сущность.
 _DRAFTY_ENTITIES: list[tuple[str, re.Pattern[str], Any]] = [
     (
         "LN",
@@ -551,12 +553,6 @@ _DRAFTY_ENTITIES: list[tuple[str, re.Pattern[str], Any]] = [
 
 
 def _spannify(text: str, pattern: re.Pattern[str], style: str) -> list[dict[str, Any]]:
-    """Находит все вхождения inline-стиля в строке (порт Drafty.spannify).
-
-    Регулярки используют захватывающую группу для префиксного разделителя,
-    поэтому содержимое стиля — группа 2 (а не 1), а позиции считаются
-    по group(2), иначе сместятся на один символ.
-    """
     spans: list[dict[str, Any]] = []
     for m in pattern.finditer(text):
         spans.append(
@@ -572,7 +568,6 @@ def _spannify(text: str, pattern: re.Pattern[str], style: str) -> list[dict[str,
 
 
 def _chunkify(line: str, start: int, end: int, spans: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
-    """Пересобирает линейный список спанов в дерево (порт Drafty.chunkify)."""
     if not spans:
         return None
 
@@ -597,7 +592,6 @@ def _chunkify(line: str, start: int, end: int, spans: list[dict[str, Any]] | Non
 
 
 def _to_span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
-    """Строит дерево спанов, отбрасывая частично пересекающиеся (порт Drafty.toSpanTree)."""
     if not spans:
         return None
 
@@ -610,7 +604,6 @@ def _to_span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
             last = curr
         elif curr["end"] < last["end"]:
             last.setdefault("children", []).append(curr)
-        # частично пересекающиеся игнорируются
 
     for s in tree:
         s["children"] = _to_span_tree(s.get("children") or [])
@@ -618,7 +611,6 @@ def _to_span_tree(spans: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
 
 
 def _draftify(chunks: list[dict[str, Any]] | None, start_at: int) -> dict[str, Any] | None:
-    """Собирает txt и fmt из дерева chunks (порт Drafty.draftify)."""
     if not chunks:
         return None
 
@@ -648,11 +640,6 @@ def _draftify(chunks: list[dict[str, Any]] | None, start_at: int) -> dict[str, A
 
 
 def _extract_entities(line: str) -> list[dict[str, Any]]:
-    """Извлекает сущности LN/MN/HT из строки (порт Drafty.extractEntities).
-
-    Регулярки используют группу 1 — префиксный разделитель,
-    группу 2 — саму сущность. Позиции и длина считаются по group(2).
-    """
     extracted: list[dict[str, Any]] = []
     for tp, pattern, pack in _DRAFTY_ENTITIES:
         for m in pattern.finditer(line):
@@ -668,21 +655,10 @@ def _extract_entities(line: str) -> list[dict[str, Any]]:
 
 
 def drafty_parse(text: str) -> dict[str, Any]:
-    """Порт Drafty.parse(): plain-text -> Drafty dict.
-
-    Поддерживает:
-      - inline-стили: *bold*, _italic_, ~strike~, `code`
-      - сущности: LN (ссылки), MN (@mentions), HT (#hashtags)
-      - переносы строк как BR.
-
-    Возвращает dict вида ``{"txt": ..., "fmt": [...], "ent": [...]}``,
-    который можно напрямую сериализовать в JSON и отдать в ClientPub.
-    """
+    """Порт Drafty.parse(): plain-text -> Drafty dict."""
     if text is None:
         text = ""
 
-    # Убираем NULL_VALUE, чтобы клиент случайно не интерпретировал его
-    # как «удалить поле».
     text = text.replace("\u2421", "")
 
     lines = re.split(r"\r?\n", text)
@@ -703,7 +679,6 @@ def drafty_parse(text: str) -> dict[str, Any]:
         else:
             block = {"txt": line, "fmt": None}
 
-        # Извлекаем сущности из уже очищенного от разметки текста.
         for ent in _extract_entities(block.get("txt") or ""):
             key = ent["data"]["url"] if ent["tp"] == "LN" else ent["data"]["val"]
             idx = entity_map.get(key)
@@ -720,7 +695,6 @@ def drafty_parse(text: str) -> dict[str, Any]:
 
         blocks.append(block)
 
-    # Объединяем строки: между строками вставляем " " и BR.
     txt = ""
     fmt: list[dict[str, Any]] = []
     if blocks:
@@ -767,7 +741,7 @@ class TeamdroidClient:
     Клиент не закрывается после каждого запроса — это устраняет ошибки
     `context canceled` на стороне сервера Teamdroid.
 
-    Реализует базовый протокол Teamdroid: HI, LOGIN, SUB, GET, SET, PUB, DEL.
+    Реализует базовый протокол Teamdroid: HI, LOGIN, SUB, GET, SET, PUB, DEL, NOTE.
     Поддерживает загрузку файлов через HTTP-эндпоинт Teamdroid.
     """
 
@@ -788,12 +762,9 @@ class TeamdroidClient:
         self._id = 0
         self._lock = threading.Lock()
 
-        # Per-request очереди для CTRL-ответов: request_id -> queue.Queue.
         self._ctrl_waiters: dict[str, queue.Queue[Any]] = {}
         self._ctrl_waiters_lock = threading.Lock()
 
-        # Множество топиков, на которые клиент уже подписан.
-        # Нужно, чтобы не подписываться повторно на каждом запросе.
         self._subscribed: set[str] = set()
         self._subscribed_lock = threading.Lock()
 
@@ -801,8 +772,6 @@ class TeamdroidClient:
         with self._lock:
             self._id += 1
             return str(self._id)
-
-    # ---------------- CONNECT ----------------
 
     def connect(self) -> None:
         pb_mod, pb_grpc_mod = _require_pb()
@@ -846,8 +815,6 @@ class TeamdroidClient:
         except grpc.RpcError as rpc_exc:
             if self.running:
                 api_logger.error(f"[teamdroid] gRPC stream error: {rpc_exc}", exc_info=True)
-                # Канал упал — сбрасываем состояние, чтобы следующий
-                # запрос пересоздал клиент.
                 self.running = False
         except Exception as stream_exc:
             if self.running:
@@ -865,9 +832,6 @@ class TeamdroidClient:
             else:
                 ctrl_code = getattr(ctrl, "code", None)
                 ctrl_text = getattr(ctrl, "text", None)
-                # ВАЖНО: это может быть гонка — CTRL пришёл раньше, чем
-                # _wait_ctrl успел зарегистрировать waiter. Поднимаем
-                # уровень до WARNING, чтобы это было видно в логах.
                 api_logger.warning(
                     "[teamdroid] unsolicited ctrl id=%r code=%r text=%r pending_waiters=%s (race?)",
                     request_id,
@@ -876,7 +840,6 @@ class TeamdroidClient:
                     len(self._ctrl_waiters),
                 )
             return
-        # Остальные типы сообщений (data, pres, info, meta) пока игнорируются.
         return
 
     def _send(self, msg: Any) -> None:
@@ -884,25 +847,9 @@ class TeamdroidClient:
             raise RuntimeError("Teamdroid client is not running")
         self.tx_queue.put(msg)
 
-    # ---------------- CTRL HELPERS ----------------
-
     @staticmethod
     def _ctrl_error(ctrl: Any) -> str | None:
-        """Возвращает описание ошибки, если ctrl.code >= 400, иначе None.
-
-        Используется после `_wait_ctrl`, который больше НЕ бросает
-        исключение на code >= 400, а возвращает CTRL как есть. Это
-        позволяет вызывающему коду залогировать точный code/text/params
-        от Tinode вместо безликого RuntimeError.
-
-        Args:
-            ctrl: protobuf-сообщение ServerCtrl.
-
-        Returns:
-            str | None: "code=NNN text='...'" при ошибке; None если OK.
-        """
         code = getattr(ctrl, "code", 0)
-        # code == 0 — не инициализирован (protobuf default), считаем OK
         if not code or code < 400:
             return None
         text = getattr(ctrl, "text", "") or ""
@@ -910,7 +857,6 @@ class TeamdroidClient:
 
     @staticmethod
     def _ctrl_summary(ctrl: Any) -> str:
-        """Короткая строка для логов: code/text/params_keys."""
         code = getattr(ctrl, "code", None)
         text = getattr(ctrl, "text", None)
         try:
@@ -921,15 +867,6 @@ class TeamdroidClient:
         return f"code={code!r} text={text!r} params_keys={keys}"
 
     def _wait_ctrl(self, request_id: str, timeout: int | None = None) -> Any:
-        """Ожидает CTRL-ответ с указанным id.
-
-        ВАЖНО: НЕ бросает исключение на code >= 400 — возвращает CTRL
-        как есть, чтобы вызывающий код мог залогировать точный
-        code/text/params. Проверка выполняется через _ctrl_error().
-
-        Raises:
-            TimeoutError: если CTRL не пришёл за timeout секунд.
-        """
         if timeout is None:
             timeout = settings.TEAMDROID_CTRL_TIMEOUT
         waiter: queue.Queue[Any] = queue.Queue(maxsize=1)
@@ -950,11 +887,7 @@ class TeamdroidClient:
             with self._ctrl_waiters_lock:
                 self._ctrl_waiters.pop(request_id, None)
 
-        # НЕ бросаем на code >= 400 — это делает вызывающий код
-        # через _ctrl_error(), чтобы сохранить code/text/params.
         return ctrl
-
-    # ---------------- PROTOCOL ----------------
 
     def hi(self) -> None:
         pb_mod, _ = _require_pb()
@@ -964,8 +897,8 @@ class TeamdroidClient:
             user_agent="teambot-teamdroid-grpc",
             ver="0.25",
             lang="ru",
-            device_id="\u2421",  # NULL_VALUE — сброс device_id на сервере
-            platform="",  # явно пустая платформа
+            device_id="\u2421",
+            platform="",
             background=False,
         )
         self._send(pb_mod.ClientMsg(hi=hi))
@@ -992,34 +925,16 @@ class TeamdroidClient:
             raise RuntimeError(f"LOGIN failed: {err}")
 
     def login_with_token(self, token: str) -> dict[str, Any] | None:
-        """Выполняет вход по токену и возвращает распарсенный CTRL.
-
-        Используется для проверки WS-токенов мобильных клиентов
-        (см. app/ws/auth.py). Клиент должен быть уже подключён
-        (connect() + hi()), но не обязательно залогинен — мы
-        намеренно используем отдельную сессию Tinode для проверки
-        токенов, чтобы не затирать root-сессию клиента.
-
-        Args:
-            token: Токен, полученный от мобильного клиента
-                (значение параметра ``token`` в WS-запросе).
-
-        Returns:
-            Словарь с параметрами CTRL (включая ``user`` — id пользователя
-            в формате ``usrXXX``) при успешной проверке; ``None`` при
-            ошибке (невалидный/просроченный токен, сетевая ошибка и т.п.).
-        """
+        """Выполняет вход по токену и возвращает распарсенный CTRL."""
         pb_mod, _ = _require_pb()
         msg_id = self.next_id()
 
-        # В Tinode токен передаётся как secret для схемы "token".
         login = pb_mod.ClientLogin(
             id=msg_id,
             scheme="token",
             secret=token.encode("utf-8"),
         )
 
-        # --- ДИАГНОСТИКА: состояние клиента перед отправкой ---
         api_logger.info(
             "[teamdroid] login_with_token SEND: msg_id=%s running=%s "
             "stream_alive=%s timeout=%s token_len=%d pending_waiters=%d",
@@ -1036,7 +951,6 @@ class TeamdroidClient:
         try:
             ctrl = self._wait_ctrl(msg_id, timeout=settings.TEAMDROID_CTRL_TIMEOUT)
         except (TimeoutError, RuntimeError) as exc:
-            # --- ДИАГНОСТИКА: таймаут/ошибка ожидания CTRL ---
             api_logger.warning(
                 "[teamdroid] login_with_token _wait_ctrl failed: %r running=%s timeout=%s pending_waiters=%d",
                 exc,
@@ -1046,7 +960,6 @@ class TeamdroidClient:
             )
             return None
 
-        # --- ДИАГНОСТИКА: что именно вернул Tinode ---
         code = getattr(ctrl, "code", None)
         text = getattr(ctrl, "text", None)
         params = _params_to_dict(getattr(ctrl, "params", None))
@@ -1057,7 +970,6 @@ class TeamdroidClient:
 
         err = self._ctrl_error(ctrl)
         if err:
-            # --- ДИАГНОСТИКА: не-200 ответ Tinode ---
             api_logger.warning(
                 "[teamdroid] login_with_token non-200: %s params=%r",
                 err,
@@ -1066,7 +978,6 @@ class TeamdroidClient:
             return None
 
         if not params.get("user"):
-            # --- ДИАГНОСТИКА: 200, но без user в params ---
             api_logger.warning(
                 "[teamdroid] login_with_token code=200 but no 'user' in params: %r",
                 params,
@@ -1095,12 +1006,6 @@ class TeamdroidClient:
             self._subscribed.add(topic)
 
     def ensure_subscribed(self, topic: str) -> None:
-        """Подписывается на топик, если ещё не подписан.
-
-        Потокобезопасно. Используется в _do_* функциях вместо
-        teamdroid_session(topic), чтобы не подписываться повторно
-        на каждом запросе.
-        """
         with self._subscribed_lock:
             if topic in self._subscribed:
                 return
@@ -1116,7 +1021,6 @@ class TeamdroidClient:
         )
         self._send(pb_mod.ClientMsg(get=get))
         ctrl = self._wait_ctrl(msg_id)
-        # Не бросаем — эндпоинт возвращает ctrl как есть.
         api_logger.debug(
             "[teamdroid] GET ACS topic=%r -> %s",
             topic,
@@ -1153,11 +1057,7 @@ class TeamdroidClient:
         return ctrl
 
     def send_text(self, topic: str, text: str, on_behalf_of: str = "") -> Any:
-        """Публикует текстовое сообщение в топик Teamdroid.
-
-        Текст парсится в Drafty (``drafty_parse``), поэтому ссылки,
-        @mentions и #hashtags становятся кликабельными на клиенте.
-        """
+        """Публикует текстовое сообщение в топик Teamdroid."""
         pb_mod, _ = _require_pb()
         msg_id = self.next_id()
 
@@ -1188,6 +1088,69 @@ class TeamdroidClient:
             self._ctrl_summary(ctrl),
         )
         return ctrl
+
+    def note(
+        self,
+        topic: str,
+        what: str,
+        seq: int,
+        on_behalf_of: str = "",
+    ) -> Any:
+        """Отправляет {note} (recv/read/kp) в Tinode.
+
+        ВАЖНО: в protobuf `ClientNote` НЕТ поля `id` (см. model_pb2.py:
+        ClientNote = topic, what, seq_id, unread, event, payload). Поэтому
+        сервер Tinode возвращает CTRL с пустым `id`, который не коррелируется
+        с запросом через `_wait_ctrl(msg_id)`. Раньше это приводило к таймауту
+        и 500 при каждом recv/read.
+
+        Решение:
+          - Отправляем note как fire-and-forget (не ждём CTRL по id).
+          - Возвращаем None (caller отдаст 200 без ctrl_code).
+          - Гарантируем, что клиент подписан на топик: Tinode обрабатывает
+            {note} только для активных подписок. Без подписки сервер
+            вернёт 403, и recvseqid/readseqid не обновятся.
+
+        Returns:
+            None (fire-and-forget).
+        """
+        pb_mod, _ = _require_pb()
+
+        what_lc = (what or "").strip().lower()
+        if what_lc not in _NOTE_WHAT_ALLOWED:
+            raise ValueError(f"what must be one of: {', '.join(sorted(_NOTE_WHAT_ALLOWED))}, got {what!r}")
+
+        self.ensure_subscribed(topic)
+
+        if what_lc == "read":
+            info_note = pb_mod.InfoNote.READ
+        elif what_lc == "recv":
+            info_note = pb_mod.InfoNote.RECV
+        else:  # kp
+            info_note = pb_mod.InfoNote.KP
+
+        seq_id = int(seq) if what_lc != "kp" else 0
+
+        note = pb_mod.ClientNote(
+            topic=topic,
+            what=info_note,
+            seq_id=seq_id,
+        )
+
+        msg = pb_mod.ClientMsg(note=note)
+        if on_behalf_of:
+            msg.extra.on_behalf_of = on_behalf_of
+
+        api_logger.info(
+            "[teamdroid] NOTE SEND (fire-and-forget): topic=%r what=%s seq=%s on_behalf_of=%r",
+            topic,
+            what_lc,
+            seq_id,
+            on_behalf_of or "",
+        )
+
+        self._send(msg)
+        return None
 
     def delete_messages(
         self,
@@ -1231,8 +1194,6 @@ class TeamdroidClient:
         )
         return ctrl
 
-    # ---------------- FILE UPLOAD ----------------
-
     def upload_file(self, file: dict[str, Any], topic: str) -> str:
         """Загружает файл в Teamdroid через HTTP и возвращает ref."""
         try:
@@ -1274,8 +1235,6 @@ class TeamdroidClient:
 
         return file_ref
 
-    # ---------------- PUBLISH FILES ----------------
-
     def publish_files(
         self,
         topic: str,
@@ -1283,32 +1242,20 @@ class TeamdroidClient:
         text: str,
         on_behalf_of: str = "",
     ) -> Any:
-        """Публикует сообщение с несколькими файлами в Teamdroid.
-
-        Если ``text`` содержит URL/@mentions/#hashtags, они парсятся
-        в Drafty (LN/MN/HT), чтобы на клиенте ссылки были кликабельными.
-        Вложения (EX) добавляются на новой строке после текста (через BR),
-        чтобы не накладываться на текст.
-        """
+        """Публикует сообщение с несколькими файлами в Teamdroid."""
         pb_mod, _ = _require_pb()
         pub_id = self.next_id()
 
-        # 1. Парсим текст в Drafty: получаем txt, fmt (стили + LN/MN/HT), ent.
         text_drafty = drafty_parse(text) if text else {"txt": "", "fmt": None, "ent": None}
 
         txt: str = text_drafty.get("txt") or ""
         fmt: list[dict[str, Any]] = list(text_drafty.get("fmt") or [])
         ent: list[dict[str, Any]] = list(text_drafty.get("ent") or [])
 
-        # 2. Добавляем BR между текстом и вложениями, если текст непустой.
         if txt:
             fmt.append({"at": len(txt), "len": 1, "tp": "BR"})
             txt += " "
 
-        # 3. Добавляем EX-сущности для вложений.
-        #    key должен указывать на правильный индекс в общем ent:
-        #    текстовые сущности (LN/MN/HT) уже занимают индексы 0..N-1,
-        #    поэтому вложения продолжают нумерацию с len(ent).
         for file in files:
             ent.append(
                 {
@@ -1321,7 +1268,6 @@ class TeamdroidClient:
                     },
                 }
             )
-            # at=-1 — attachment-стиль (не привязан к тексту).
             fmt.append({"at": -1, "key": len(ent) - 1, "len": 1})
 
         drafty: dict[str, Any] = {"txt": txt, "fmt": fmt}
@@ -1359,14 +1305,8 @@ class TeamdroidClient:
         )
         return ctrl
 
-    # ---------------- CLOSE ----------------
-
     def close(self) -> None:
-        """Закрывает gRPC-канал и останавливает поток чтения.
-
-        Вызывать только при shutdown приложения. НЕ вызывать после
-        каждого запроса — иначе вернётся проблема context canceled.
-        """
+        """Закрывает gRPC-канал и останавливает поток чтения."""
         self.running = False
 
         try:
@@ -1408,30 +1348,20 @@ def _set_pub_mime(pub: Any, mime: str) -> None:
 
 
 # ============================================================
-# SINGLETON-КЛИЕНТ
+# SINGLETON-КЛИЕНТ (gRPC)
 # ============================================================
 
-# Глобальный singleton-клиент Teamdroid.
-# Создаётся лениво при первом обращении, живёт до shutdown приложения.
 _teamdroid_client: TeamdroidClient | None = None
 _teamdroid_client_lock = threading.RLock()
 
 
 def get_teamdroid_client() -> TeamdroidClient:
-    """Возвращает singleton-клиент Teamdroid.
-
-    Если клиент ещё не создан или канал упал — создаёт/пересоздаёт его
-    и выполняет HI + LOGIN.
-
-    Потокобезопасно. Вызывается из _do_* функций, которые работают
-    в пуле потоков через asyncio.to_thread.
-    """
+    """Возвращает singleton-клиент Teamdroid (gRPC)."""
     global _teamdroid_client
 
     with _teamdroid_client_lock:
         if _teamdroid_client is None or not _teamdroid_client.running:
             if _teamdroid_client is not None:
-                # Старый клиент упал — закрываем и создаём новый.
                 api_logger.warning("[teamdroid] client not running, recreating...")
                 try:
                     _teamdroid_client.close()
@@ -1459,9 +1389,11 @@ def get_teamdroid_client() -> TeamdroidClient:
 
 
 def shutdown_teamdroid_client() -> None:
-    """Закрывает singleton-клиент Teamdroid.
+    """Закрывает singleton-клиент Teamdroid и SQL-соединение.
 
-    Вызывать из lifespan FastAPI при shutdown приложения.
+    CHANGED: SQL-соединение теперь singleton в app.db.manager,
+    закрываем его через close_teamdroid_sql(). Это гарантирует, что
+    при shutdown приложения закрыты и gRPC-канал, и pyodbc-соединение.
     """
     global _teamdroid_client
 
@@ -1473,6 +1405,9 @@ def shutdown_teamdroid_client() -> None:
                 api_logger.warning(f"[teamdroid] failed to close singleton client: {close_exc!r}")
             _teamdroid_client = None
             api_logger.info("[teamdroid] singleton client closed")
+
+    # CHANGED: SQL-соединение живёт в db_manager.
+    close_teamdroid_sql()
 
 
 # ============================================================
@@ -1549,13 +1484,13 @@ def _ensure_pb_available() -> None:
 
 
 # ============================================================
-# КЛИЕНТСКИЕ МЕТАДАННЫЕ (IP + приложение)
+# КЛИЕНТСКИЕ МЕТАДАННЫЕ (только IP)
 # ============================================================
 
 _CLIENT_FIELD_MAX_LEN = 200
 
 
-def _truncate(value: str, max_len: int = _CLIENT_FIELD_MAX_LEN) -> str:
+def _truncate(value: str | None, max_len: int = _CLIENT_FIELD_MAX_LEN) -> str:
     """Обрезает строку до max_len символов (безопасно для None)."""
     if value is None:
         return ""
@@ -1564,12 +1499,17 @@ def _truncate(value: str, max_len: int = _CLIENT_FIELD_MAX_LEN) -> str:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Возвращает реальный IP клиента с учётом прокси."""
+    """Возвращает реальный IP клиента с учётом прокси.
+
+    Берём ПОСЛЕДНИЙ адрес из X-Forwarded-For (первый может быть
+    подделан клиентом, последний добавлен нашим доверенным прокси).
+    Если заголовка нет — X-Real-IP, затем request.client.host.
+    """
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return _truncate(first, 64)
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return _truncate(parts[-1], 64)
 
     xri = request.headers.get("x-real-ip")
     if xri:
@@ -1581,46 +1521,16 @@ def _get_client_ip(request: Request) -> str:
     return ""
 
 
-def _get_app_info(request: Request) -> dict[str, str]:
-    """Извлекает информацию о клиентском приложении из заголовков."""
-    return {
-        "user_agent": _truncate(request.headers.get("user-agent", "")),
-        "app_name": _truncate(request.headers.get("x-app-name", "")),
-        "app_version": _truncate(request.headers.get("x-app-version", ""), 50),
-        "app_build": _truncate(request.headers.get("x-app-build", ""), 50),
-        "device_id": _truncate(request.headers.get("x-device-id", "")),
-        "device_platform": _truncate(request.headers.get("x-device-platform", ""), 50),
-        "device_model": _truncate(request.headers.get("x-device-model", ""), 100),
-        "os_version": _truncate(request.headers.get("x-os-version", ""), 50),
-    }
-
-
 def _enrich_params_with_client(
     params: dict[str, Any],
     request: Request,
 ) -> None:
-    """Добавляет в params поля client_ip и client_app (in-place)."""
-    client_ip = _get_client_ip(request)
-    app_info = _get_app_info(request)
-
-    body_client = params.get("client") if isinstance(params.get("client"), dict) else {}
-    body_app = body_client.get("app") if isinstance(body_client.get("app"), dict) else {}
-
-    merged_app: dict[str, str] = dict(app_info)
-    for k, v in body_app.items():
-        if v is None:
-            continue
-        merged_app[str(k)] = _truncate(str(v))
-
-    body_ip = body_client.get("ip")
-    params["client_ip"] = _truncate(str(body_ip)) if body_ip else client_ip
-    params["client_app"] = merged_app
-
-    params.pop("client", None)
+    """Добавляет в params поле client_ip (in-place)."""
+    params["client_ip"] = _get_client_ip(request)
 
 
 # ============================================================
-# рекурсивная конвертация protobuf → JSON-safe
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ПАРСИНГА PROTOBUF → JSON
 # ============================================================
 
 
@@ -2070,7 +1980,7 @@ async def teamdroid_health() -> JSONResponse:
 
 
 # ============================================================
-# SEND-CODE / VERIFY-CODE (хранимые процедуры SQL Server)
+# SEND-CODE / VERIFY-CODE (через TeamdroidProcedureRepository)
 # ============================================================
 
 
@@ -2080,8 +1990,8 @@ async def teamdroid_health() -> JSONResponse:
     description=(
         "Принимает произвольный JSON, минимально валидирует поле phone (если оно есть) "
         "и запускает хранимую процедуру SQL Server, передавая ей весь входной JSON "
-        "в качестве параметра @Params. Дополнительно в @Params добавляются client_ip "
-        "и client_app (из заголовков запроса и/или из params['client']). "
+        "в качестве параметра @Params. Дополнительно в @Params добавляется client_ip "
+        "(из стандартных заголовков X-Forwarded-For / X-Real-IP, проставленных nginx). "
         "Имя процедуры задаётся в settings.TEAMDROID_SQL_PROC_AUTH_START "
         "(по умолчанию ext.PA_mbl_AuthStart_Exec). "
         "Процедура должна возвращать JSON-строку (одна колонка, одна строка)."
@@ -2089,7 +1999,10 @@ async def teamdroid_health() -> JSONResponse:
 )
 @log_exceptions(api_logger)
 async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
-    """Запуск хранимой процедуры SQL Server с JSON-параметром (отправка кода)."""
+    """Запуск хранимой процедуры SQL Server с JSON-параметром (отправка кода).
+
+    CHANGED: вызов инкапсулирован в TeamdroidProcedureRepository.auth_start.
+    """
     phone = params.get("phone")
     if isinstance(phone, str):
         phone_str = str(phone).strip()
@@ -2100,10 +2013,8 @@ async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
 
     _enrich_params_with_client(params, request)
 
-    proc_name = getattr(settings, "TEAMDROID_SQL_PROC_AUTH_START", "ext.PA_mbl_AuthStart_Exec")
-
     try:
-        result = await asyncio.to_thread(_run_json_proc, proc_name, params)
+        result = await asyncio.to_thread(TeamdroidProcedureRepository.auth_start, params)
     except Exception as proc_exc:
         api_logger.error(
             f"❌ [teamdroid] send_code procedure failed: {proc_exc}",
@@ -2114,12 +2025,7 @@ async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
             f"send_code_proc_failed: {type(proc_exc).__name__}: {proc_exc}",
         )
 
-    api_logger.debug(
-        f"✅ [teamdroid] send_code procedure executed: {proc_name} "
-        f"ip={params.get('client_ip')!r} "
-        f"app={params.get('client_app', {}).get('app_name')!r}/"
-        f"{params.get('client_app', {}).get('app_version')!r}"
-    )
+    api_logger.debug(f"✅ [teamdroid] send_code procedure executed: ip={params.get('client_ip')!r}")
 
     return JSONResponse(
         status_code=200,
@@ -2137,9 +2043,9 @@ async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
     description=(
         "Принимает произвольный JSON, минимально валидирует поля request_id и code "
         "(если они есть) и запускает хранимую процедуру SQL Server, передавая ей весь "
-        "входной JSON в качестве параметра @Params. Дополнительно в @Params добавляются "
-        "client_ip и client_app (из заголовков запроса и/или из params['client']). "
-        "Имя процедуры задаётся в settings.TEAMDROID_SQL_PROC_AUTH_FINISH "
+        "входной JSON в качестве параметра @Params. Дополнительно в @Params добавляется "
+        "client_ip (из стандартных заголовков X-Forwarded-For / X-Real-IP, проставленных "
+        "nginx). Имя процедуры задаётся в settings.TEAMDROID_SQL_PROC_AUTH_FINISH "
         "(по умолчанию ext.PA_mbl_AuthFinish_Exec). "
         "Процедура должна возвращать JSON-строку (одна колонка, одна строка), "
         "которая парсится и возвращается клиенту в поле result."
@@ -2147,7 +2053,10 @@ async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
 )
 @log_exceptions(api_logger)
 async def verify_code(params: dict[str, Any], request: Request) -> JSONResponse:
-    """Запуск хранимой процедуры SQL Server с JSON-параметром (проверка кода)."""
+    """Запуск хранимой процедуры SQL Server с JSON-параметром (проверка кода).
+
+    CHANGED: вызов инкапсулирован в TeamdroidProcedureRepository.auth_finish.
+    """
     request_id = params.get("request_id")
     code = params.get("code")
 
@@ -2162,10 +2071,8 @@ async def verify_code(params: dict[str, Any], request: Request) -> JSONResponse:
 
     _enrich_params_with_client(params, request)
 
-    proc_name = getattr(settings, "TEAMDROID_SQL_PROC_AUTH_FINISH", "ext.PA_mbl_AuthFinish_Exec")
-
     try:
-        result = await asyncio.to_thread(_run_json_proc, proc_name, params)
+        result = await asyncio.to_thread(TeamdroidProcedureRepository.auth_finish, params)
     except Exception as proc_exc:
         api_logger.error(
             f"❌ [teamdroid] verify_code procedure failed: {proc_exc}",
@@ -2177,7 +2084,7 @@ async def verify_code(params: dict[str, Any], request: Request) -> JSONResponse:
         )
 
     api_logger.debug(
-        f"✅ [teamdroid] send_code executed: proc={result.get('proc')} "
+        f"✅ [teamdroid] verify_code executed: proc={result.get('proc')} "
         f"rows={result.get('rows_affected')} raw={result.get('raw')!r}"
     )
 
@@ -2191,4 +2098,149 @@ async def verify_code(params: dict[str, Any], request: Request) -> JSONResponse:
     )
 
 
-__all__ = ["router", "get_teamdroid_client", "shutdown_teamdroid_client"]
+# ============================================================
+# NOTE RELAY (recv / read / kp)
+# ============================================================
+
+
+def _do_note(
+    topic: str,
+    what: str,
+    seq: int,
+    on_behalf_of: str,
+    client_ip: str,
+) -> tuple[dict[str, Any], bool]:
+    """Синхронная отправка {note} в Tinode и сохранение в Teamdroid SQL Server.
+
+    Args:
+        topic: имя топика Tinode.
+        what: "recv" | "read" | "kp".
+        seq: seq ID сообщения.
+        on_behalf_of: Tinode user ID (usrXXX) — от имени кого отправить
+            note. Он же используется как ``usi`` для Teamdroid SQL.
+        client_ip: IP клиента ($.cip).
+
+    Returns:
+        tuple[dict, bool]: (ctrl_dict, teamdroid_saved)
+
+    CHANGED: сохранение recv/read выполняется через
+    TeamdroidProcedureRepository.edit_msg_status_delivery.
+    """
+    client = get_teamdroid_client()
+
+    ctrl = client.note(
+        topic=topic,
+        what=what,
+        seq=seq,
+        on_behalf_of=on_behalf_of,
+    )
+    ctrl_dict = _ctrl_to_dict(ctrl) if ctrl is not None else {}
+
+    # Сохраняем факт recv/read в Teamdroid SQL Server.
+    # kp (key press) не сохраняем — эфемерное событие.
+    teamdroid_saved = False
+    if what in ("recv", "read"):
+        teamdroid_saved = TeamdroidProcedureRepository.edit_msg_status_delivery(
+            topic=topic,
+            what=what,
+            seq=seq,
+            user_id=on_behalf_of,  # usrXXX == usi
+            client_ip=client_ip,
+        )
+
+    return ctrl_dict, teamdroid_saved
+
+
+@router.post(
+    "/note",
+    summary="Переслать {note} (recv/read/kp) в Tinode",
+    description=(
+        "Принимает {note} от мобильного клиента (Teamdroid/TeamBot Android) "
+        "и пересылает его в Tinode через gRPC-клиент. "
+        "Дополнительно факт recv/read сохраняется в Teamdroid SQL Server "
+        "через хранимую процедуру settings.TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY. "
+        "Используется вместо прямой отправки {note} с мобильного клиента в Tinode, "
+        "чтобы обойти блокировку note-канала на сервере/клиенте. "
+        "Аутентификация — через X-API-Key (стандартный AuthMiddleware). "
+        "Идентификатор пользователя ОБЯЗАТЕЛЕН и берётся из поля user_id "
+        "в теле запроса (не из заголовков — клиент не передаёт свою "
+        "идентичность в headers)."
+    ),
+)
+@log_exceptions(api_logger)
+async def relay_note(
+    request: Request,
+    payload: NoteRelayRequest,
+) -> JSONResponse:
+    """Приём {note} от мобильного клиента и пересылка в Tinode."""
+    _ensure_pb_available()
+
+    user_id = payload.user_id
+    client_ip = _get_client_ip(request)
+
+    api_logger.info(
+        "📨 [teamdroid] note relay: topic=%r what=%s seq=%s user=%r ip=%r",
+        payload.topic,
+        payload.what,
+        payload.seq,
+        user_id,
+        client_ip,
+    )
+
+    try:
+        ctrl_dict, teamdroid_saved = await asyncio.to_thread(
+            _do_note,
+            payload.topic,
+            payload.what,
+            payload.seq,
+            user_id,
+            client_ip,
+        )
+    except HTTPException:
+        raise
+    except ValueError as val_exc:
+        api_logger.warning("[teamdroid] note relay validation error: %s", val_exc)
+        return _error_response(400, f"validation_error: {val_exc}")
+    except Exception as note_exc:
+        api_logger.error("❌ [teamdroid] note relay failed: %s", note_exc, exc_info=True)
+        return _error_response(500, f"{type(note_exc).__name__}: {note_exc}")
+
+    ctrl_code = ctrl_dict.get("code")
+    ctrl_text = ctrl_dict.get("text")
+
+    response = NoteRelayResponse(
+        success=True,
+        topic=payload.topic,
+        what=payload.what,
+        seq=payload.seq,
+        user_id=user_id,
+        ctrl_code=ctrl_code if isinstance(ctrl_code, int) else None,
+        ctrl_text=ctrl_text if isinstance(ctrl_text, str) else None,
+        teamdroid_saved=teamdroid_saved,
+        timestamp=get_timestamp(),
+    )
+
+    if isinstance(ctrl_code, int) and ctrl_code >= 400:
+        api_logger.warning(
+            "⚠️ [teamdroid] note relay: Tinode returned CTRL code=%s text=%r",
+            ctrl_code,
+            ctrl_text,
+        )
+        return JSONResponse(
+            status_code=502,
+            content={
+                **response.model_dump(),
+                "success": False,
+                "error": f"tinode_ctrl_error: code={ctrl_code} text={ctrl_text!r}",
+            },
+        )
+
+    return JSONResponse(status_code=200, content=response.model_dump())
+
+
+__all__ = [
+    "router",
+    "get_teamdroid_client",
+    "shutdown_teamdroid_client",
+    "TeamdroidClient",
+]

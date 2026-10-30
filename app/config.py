@@ -93,19 +93,30 @@ class Settings(BaseSettings):
     TEAMDROID_USERNAME: str = "user"
     TEAMDROID_PASSWORD: str = "password"
 
+    # AppID приложения Teamdroid (dir.TRSDirSysApps.FID).
+    # Передаётся в ext.PA_mbl_TokenVerify_Exec как $.api
+    # Передаётся в ext.PA_mbl_TokenFinish_Exec как $.api
+    # и используется для поиска устройства (TRSAppDataObjectsDevices.FK_App).
+    # Обязателен для WS-verify в режиме "avanpost".
+    TEAMDROID_APP_ID: int = 0
+
     # Teamdroid protocol
     TEAMDROID_GRPC_MAX_MESSAGE: int = 16 * 1024 * 1024
     TEAMDROID_CTRL_TIMEOUT: int = 10
 
-    # ============ SQL SERVER (для Teamdroid файлов) ============
-
-    TEAMDROID_SQL_SERVER: str = "localhost"
-    TEAMDROID_SQL_DATABASE: str = "SrvService"
-    TEAMDROID_SQL_USERNAME: str = "user"
-    TEAMDROID_SQL_PASSWORD: str = "password"
+    # ============ SQL SERVER (Teamdroid / Avanpost procedures) ============
+    TEAMDROID_SQL_SERVER: str = ""
+    TEAMDROID_SQL_DATABASE: str = ""
+    TEAMDROID_SQL_USERNAME: str = ""
+    TEAMDROID_SQL_PASSWORD: str = ""
     TEAMDROID_SQL_TIMEOUT: int = 10
+
+    # Процедуры на сервере
     TEAMDROID_SQL_PROC_AUTH_START: str = "ext.PA_mbl_AuthStart_Exec"
     TEAMDROID_SQL_PROC_AUTH_FINISH: str = "ext.PA_mbl_AuthFinish_Exec"
+    TEAMDROID_SQL_PROC_TOKEN_VERIFY: str = "ext.PA_mbl_TokenVerify_Exec"
+    TEAMDROID_SQL_PROC_TOKEN_FINISH: str = "ext.PA_mbl_TokenFinish_Exec"
+    TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY: str = "ext.PA_mbl_MsgsDeliveryStatus_Edit"
 
     # ============ PUSH NOTIFICATIONS (WebSocket) ============
 
@@ -115,8 +126,11 @@ class Settings(BaseSettings):
     # Путь WebSocket-эндпоинта (без префикса /api/v1)
     WS_NOTIFY_PATH: str = "/ws/notify"
 
-    # Режим проверки токена: "trust" | "grpc" (Вариант A | Вариант B)
-    WS_NOTIFY_TOKEN_VERIFY_MODE: str = "trust"
+    # Режим проверки токена: "trust" | "grpc" | "avanpost"
+    #   trust — принять user_id как есть (только development)
+    #   grpc — проверка через Tinode gRPC (legacy)
+    #   avanpost — проверка через MSSQL Avanpost (основной режим)
+    WS_NOTIFY_TOKEN_VERIFY_MODE: str = "avanpost"
 
     # TTL кэша проверки токена при mode="grpc" (сек)
     WS_NOTIFY_TOKEN_CACHE_TTL: int = 300
@@ -138,6 +152,25 @@ class Settings(BaseSettings):
     # Where the relay ingest is mounted. Must be consistent with the endpoint
     # configured on the Go side ("endpoint" in tinode.conf).
     WS_RELAY_INGEST_PATH: str = "/internal/push"
+
+    # Base64-ключ AES-256-GCM для расшифровки WS-токена мобильных клиентов.
+    # Должен совпадать с BuildConfig.WS_TOKEN_KEY в Android-клиенте.
+    WS_TOKEN_KEY_B64: str = ""
+
+    # FCM (Firebase Cloud Messaging) — для доставки, когда WS-клиента нет онлайн.
+    FCM_ENABLED: bool = True
+    FCM_CREDENTIALS_PATH: str = ""
+
+    # Режим отправки FCM:
+    #   "always" — всегда (WS + FCM одновременно) — соответствует ТЗ п.5
+    #                (помимо WS-оповещения отправляется FCM FID).
+    #   "fallback" — только если WS не доставил (для обычных сообщений),
+    #                для "sub" (приглашений в чат) — всегда.
+    #   "never" — только WS, FCM не отправляется.
+    FCM_SEND_MODE: str = "fallback"
+
+    # TTL записи FID -> user_id (на случай, если WS вообще не было, а FCM пришёл)
+    FCM_FID_TTL_SECONDS: int = 7 * 24 * 3600  # 7 дней
 
     # ============ API ============
 
@@ -646,6 +679,16 @@ class Settings(BaseSettings):
             raise ValueError("AVANPOST_SYNC_TIMEOUT must be >= 0")
         return v
 
+    @field_validator("TEAMDROID_APP_ID")
+    @classmethod
+    def validate_teamdroid_app_id(cls, v: int) -> int:
+        """AppID передаётся в процедуру как TINYINT (0..255)."""
+        if v < 0:
+            raise ValueError("TEAMDROID_APP_ID must be >= 0")
+        if v > 255:
+            raise ValueError("TEAMDROID_APP_ID must fit TINYINT (0..255)")
+        return v
+
     # ============ СВОЙСТВА ============
 
     @property
@@ -764,8 +807,16 @@ class Settings(BaseSettings):
     @property
     def ws_notify_verify_mode(self) -> str:
         mode = (self.WS_NOTIFY_TOKEN_VERIFY_MODE or "trust").lower()
-        if mode not in ("trust", "grpc"):
+        if mode not in ("trust", "grpc", "avanpost"):
             return "trust"
+        return mode
+
+    @field_validator("FCM_SEND_MODE")
+    @classmethod
+    def validate_fcm_send_mode(cls, v: str) -> str:
+        mode = (v or "fallback").lower()
+        if mode not in ("always", "fallback", "never"):
+            raise ValueError(f"FCM_SEND_MODE must be one of: always, fallback, never; got {v!r}")
         return mode
 
     model_config = SettingsConfigDict(

@@ -1,14 +1,16 @@
 """Менеджер WebSocket-соединений мобильных клиентов и рассылки push.
 
 Хранит активные соединения по user_id, обеспечивает:
-- регистрацию/удаление соединений;
+- регистрацию/удаление соединений (с привязкой к Firebase Installation ID — FID);
 - отправку JSON-сообщений через WS;
 - heartbeat (ping) для обнаружения мёртвых соединений;
 - дедупликацию пушей и батчей с ограниченным по размеру LRU-кэшем;
-- ограничение числа соединений на пользователя.
+- ограничение числа соединений на пользователя;
+- маршрутизацию push по FID (fcm_id) — на случай, если Go-адаптер
+  присылает адресата как FID, а не как usrXXX.
 
 Совместим с Go-адаптером server/push/myrelay: принимает snake_case JSON
-(user_id, event_id, ts, mime, aonly, want, given).
+(user_id, event_id, ts, mime, aonly, want, given), а также fcm_id.
 
 Формат сообщений, отправляемых мобильному клиенту (NotificationsWsService.java):
 
@@ -23,6 +25,11 @@
   // WebRTC-событие
   {"type": "call", "topic": "usrXXX", "title": "Call",
    "body": "started", "seq": 140, "aonly": false}
+
+Возвращаемое значение dispatch():
+  DeliveryStatus — статус доставки одного push. Используется
+  relay-обработчиком (app/ws/relay_handler.py) для подсчёта статистики
+  доставки батча.
 """
 
 from __future__ import annotations
@@ -31,7 +38,7 @@ import asyncio
 import json
 import time
 from collections import OrderedDict, defaultdict
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from fastapi import WebSocket
@@ -47,25 +54,43 @@ _SEEN_EVENTS_MAX = 10_000
 _SEEN_TTL_SECONDS = 300
 
 
-class DeliveryStatus(str, Enum):
-    """Результат доставки одного пуша через WS.
+class DeliveryStatus(StrEnum):
+    """Результат попытки доставить один push конкретному получателю.
 
-    str-подмешивание позволяет удобно сериализовать статус в JSON
-    (например, для диагностического ответа на /internal/push).
+    Используется в relay_handler для подсчёта статистики батча.
+
+    Attributes:
+        DELIVERED: push доставлен хотя бы на один активный сокет.
+        PARTIAL: push доставлен, но часть сокетов умерла при отправке.
+        NO_CONNECTIONS: получатель офлайн (нет активных сокетов) или
+            FID не удалось сопоставить с user_id.
+        FAILED: все попытки отправки завершились ошибкой.
+        SKIPPED_SILENT: push помечен silent=True, клиенту не показываем.
+        SKIPPED_TYPE: тип push не подлежит показу (read-квитанции,
+            неизвестные типы).
+        DUPLICATE: push уже был обработан ранее (дедупликация).
     """
 
-    DELIVERED = "delivered"  # доставлено хотя бы в один WS-сокет
-    PARTIAL = "partial"  # доставлено частично (часть сокетов упала)
-    NO_CONNECTIONS = "no_connections"  # нет активных WS-соединений (offline)
-    SKIPPED_SILENT = "skipped_silent"  # silent=true, показывать не надо
-    SKIPPED_TYPE = "skipped_type"  # тип read/recv или неизвестный — не показываем
-    DUPLICATE = "duplicate"  # уже был обработан (дедуп)
-    FAILED = "failed"  # все send_text() упали
+    DELIVERED = "delivered"
+    PARTIAL = "partial"
+    NO_CONNECTIONS = "no_connections"
+    FAILED = "failed"
+    SKIPPED_SILENT = "skipped_silent"
+    SKIPPED_TYPE = "skipped_type"
+    DUPLICATE = "duplicate"
 
 
 class PushNotificationService:
     def __init__(self) -> None:
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
+        # --- FID <-> user_id (CHANGED) ---
+        # fcm_id -> user_id: используется, если push приходит на FID.
+        self._fcm_to_user: dict[str, str] = {}
+        # user_id -> fcm_id: обратная связь, чтобы при unregister почистить FID.
+        # Один user может иметь несколько FID (несколько устройств) —
+        # храним множество.
+        self._user_to_fcms: dict[str, set[str]] = defaultdict(set)
+
         self._lock = asyncio.Lock()
         # OrderedDict обеспечивает O(1) popitem(last=False) для LRU-очистки.
         self._seen_pushes: OrderedDict[tuple, float] = OrderedDict()
@@ -78,12 +103,12 @@ class PushNotificationService:
             "pushes_dispatched": 0,
             "pushes_duplicate": 0,
             "pushes_skipped_silent": 0,
-            "pushes_skipped_type": 0,
             "pushes_no_connections": 0,
             "pushes_failed_send": 0,
-            "pushes_undelivered": 0,
             "batches_duplicate": 0,
             "batches_empty": 0,
+            "pushes_fid_resolved": 0,
+            "pushes_fid_unresolved": 0,
         }
 
     async def start(self) -> None:
@@ -108,6 +133,8 @@ class PushNotificationService:
         async with self._lock:
             conns = [ws for s in self._connections.values() for ws in s]
             self._connections.clear()
+            self._fcm_to_user.clear()
+            self._user_to_fcms.clear()
 
         close_tasks = [asyncio.wait_for(ws.close(code=1001, reason="server shutdown"), timeout=2.0) for ws in conns]
         if close_tasks:
@@ -115,13 +142,41 @@ class PushNotificationService:
 
         api_logger.info("push_service: stopped")
 
-    async def register(self, user_id: str, ws: WebSocket) -> None:
+    # ---------- регистрация / удаление ----------
+
+    async def register(
+        self,
+        user_id: str,
+        ws: WebSocket,
+        fcm_id: str | None = None,
+        *,
+        fcm_id_kw: str | None = None,
+    ) -> None:
+        """Регистрирует WS-соединение пользователя.
+
+        Args:
+            user_id: Tinode user ID (``usrXXX``).
+            ws: WebSocket-соединение.
+            fcm_id: Firebase Installation ID (FID) клиента, если известен.
+                Может быть передан как позиционно, так и по имени.
+            fcm_id_kw: алиас для совместимости со старыми вызовами
+                ``register(..., fcm_id=...)``; склеивается с ``fcm_id``.
+        """
         if not user_id or not user_id.startswith("usr"):
             raise ValueError(f"Invalid user_id: {user_id!r}")
+
+        # Поддержка обоих вариантов передачи FID.
+        effective_fcm = fcm_id or fcm_id_kw
+
         async with self._lock:
             user_conns = self._connections[user_id]
             if ws in user_conns:
+                # Соединение уже зарегистрировано — обновим FID, если он пришёл.
+                if effective_fcm:
+                    self._fcm_to_user[effective_fcm] = user_id
+                    self._user_to_fcms[user_id].add(effective_fcm)
                 return
+
             if len(user_conns) >= settings.WS_NOTIFY_MAX_CONNECTIONS_PER_USER:
                 oldest = next(iter(user_conns))
                 user_conns.discard(oldest)
@@ -132,10 +187,17 @@ class PushNotificationService:
                     )
                 except Exception:  # noqa: BLE001
                     pass
+
             user_conns.add(ws)
+
+            if effective_fcm:
+                self._fcm_to_user[effective_fcm] = user_id
+                self._user_to_fcms[user_id].add(effective_fcm)
+
         api_logger.debug(
-            "push_service: registered user=%s total=%d",
+            "push_service: registered user=%s fcm=%s total=%d",
             user_id,
+            (effective_fcm or "-")[-6:],
             len(self._connections[user_id]),
         )
 
@@ -147,6 +209,10 @@ class PushNotificationService:
             user_conns.discard(ws)
             if not user_conns:
                 del self._connections[user_id]
+                # Соединений у пользователя не осталось — чистим FID-связи.
+                fcms = self._user_to_fcms.pop(user_id, set())
+                for fcm in fcms:
+                    self._fcm_to_user.pop(fcm, None)
         api_logger.debug("push_service: unregistered user=%s", user_id)
 
     # ---------- дедупликация ----------
@@ -202,24 +268,48 @@ class PushNotificationService:
         self._seen_pushes[key] = now
         return False
 
+    # ---------- FID ----------
+
+    def resolve_fcm_id(self, fcm_id: str | None) -> str | None:
+        """Возвращает user_id по FID, если устройство онлайн."""
+        if not fcm_id:
+            return None
+        return self._fcm_to_user.get(fcm_id)
+
+    def get_fcms_for_user(self, user_id: str) -> set[str]:
+        """Возвращает множество FID, привязанных к пользователю."""
+        return set(self._user_to_fcms.get(user_id, ()))
+
+    def get_primary_fid(self, user_id: str) -> str | None:
+        """Возвращает один FID пользователя (для token_finish при disconnect).
+
+        Используется при разъединении WS-соединения, чтобы вызвать
+        ``ext.PA_mbl_TokenFinish_Exec``. ВАЖНО: вызывать ДО
+        ``unregister()`` — иначе FID уже будет удалён из словаря.
+
+        Args:
+            user_id: Tinode user ID (``usrXXX``).
+
+        Returns:
+            Один из FID пользователя или ``None``, если FID неизвестен.
+        """
+        fcms = self._user_to_fcms.get(user_id)
+        if fcms:
+            return next(iter(fcms))
+        return None
+
     # ---------- доставка ----------
 
     async def dispatch(self, push: RelayPush) -> DeliveryStatus:
         """Доставить один push всем активным WS-соединениям получателя.
 
-        Возвращает DeliveryStatus — что реально произошло:
-        - DELIVERED / PARTIAL — доставлено (все/часть сокетов);
-        - NO_CONNECTIONS     — у получателя нет активных WS;
-        - FAILED             — все send_text() упали;
-        - DUPLICATE          — push уже обрабатывался;
-        - SKIPPED_SILENT     — silent=true, показывать не надо;
-        - SKIPPED_TYPE       — тип read/recv/неизвестный, не показываем.
+        Returns:
+            DeliveryStatus — статус доставки. Используется relay-обработчиком
+            для подсчёта статистики батча.
         """
         self._stats["pushes_received"] += 1
 
-        # 1. Дубликат.
         if self._is_duplicate_push(push):
-            self._stats["pushes_duplicate"] += 1
             api_logger.info(
                 "push_service: duplicate user=%s type=%s seq=%s",
                 push.user_id,
@@ -228,53 +318,63 @@ class PushNotificationService:
             )
             return DeliveryStatus.DUPLICATE
 
-        # 2. Не подлежит показу (silent / read-receipt / неизвестный тип).
         payload = self._to_ws_message(push)
         if not payload:
+            # Определяем причину пропуска для точной статистики/логов.
             if push.silent:
                 self._stats["pushes_skipped_silent"] += 1
-                api_logger.info(
-                    "push_service: skipped user=%s type=%s topic=%s seq=%s "
-                    "from=%s reason=silent unread=%r delivered=%r webrtc=%r",
-                    push.user_id,
-                    push.type,
-                    push.topic,
-                    push.seq,
-                    push.from_id,
-                    push.unread,
-                    push.delivered,
-                    push.webrtc,
-                )
-                return DeliveryStatus.SKIPPED_SILENT
+                reason = "silent"
+                status = DeliveryStatus.SKIPPED_SILENT
+            else:
+                reason = "read-receipt" if push.type == "read" else "unknown-type"
+                status = DeliveryStatus.SKIPPED_TYPE
 
-            self._stats["pushes_skipped_type"] += 1
             api_logger.info(
-                "push_service: skipped user=%s type=%s seq=%s reason=type_not_showable",
+                "push_service: skipped user=%s type=%s seq=%s reason=%s",
                 push.user_id,
                 push.type,
                 push.seq,
+                reason,
             )
-            return DeliveryStatus.SKIPPED_TYPE
+            return status
 
-        # 3. Получатели.
+        # --- Разрешение адресата (CHANGED): ---
+        # Если push.user_id — это FID (начинается не с "usr", а, например,
+        # с короткого Firebase Installation ID), пробуем найти user_id
+        # по _fcm_to_user. Это позволяет Go-адаптеру шлать push прямо на
+        # FID устройства, не зная Tinode user_id.
+        target_user = push.user_id
+        if not target_user.startswith("usr"):
+            resolved = self.resolve_fcm_id(target_user)
+            if resolved is None:
+                self._stats["pushes_fid_unresolved"] += 1
+                api_logger.info(
+                    "push_service: fid unresolved fid=%s type=%s seq=%s",
+                    target_user,
+                    push.type,
+                    push.seq,
+                )
+                return DeliveryStatus.NO_CONNECTIONS
+            target_user = resolved
+            self._stats["pushes_fid_resolved"] += 1
+
         async with self._lock:
-            targets = list(self._connections.get(push.user_id, ()))
+            targets = list(self._connections.get(target_user, ()))
             online_users = len(self._connections)
 
         if not targets:
             self._stats["pushes_no_connections"] += 1
-            self._stats["pushes_undelivered"] += 1
             api_logger.info(
                 "push_service: dropped user=%s type=%s seq=%s reason=offline online_users=%d",
-                push.user_id,
+                target_user,
                 push.type,
                 push.seq,
                 online_users,
             )
             return DeliveryStatus.NO_CONNECTIONS
 
-        # 4. Рассылка.
         raw = json.dumps(payload, ensure_ascii=False)
+
         send_tasks = [
             asyncio.wait_for(
                 ws.send_text(raw),
@@ -294,7 +394,7 @@ class PushNotificationService:
             errors = [str(r) for r in results if isinstance(r, Exception)]
             api_logger.warning(
                 "push_service: partial delivery user=%s type=%s seq=%s failed=%d/%d errors=%s",
-                push.user_id,
+                target_user,
                 push.type,
                 push.seq,
                 len(dead),
@@ -302,34 +402,32 @@ class PushNotificationService:
                 errors,
             )
             async with self._lock:
-                user_conns = self._connections.get(push.user_id)
+                user_conns = self._connections.get(target_user)
                 if user_conns:
                     for ws in dead:
                         user_conns.discard(ws)
                     if not user_conns:
-                        del self._connections[push.user_id]
+                        del self._connections[target_user]
+                        fcms = self._user_to_fcms.pop(target_user, set())
+                        for fcm in fcms:
+                            self._fcm_to_user.pop(fcm, None)
 
         ok_count = len(targets) - len(dead)
+
         if ok_count > 0:
+            self._stats["pushes_dispatched"] += 1
             api_logger.info(
                 "push_service: delivered user=%s type=%s seq=%s sockets=%d/%d",
-                push.user_id,
+                target_user,
                 push.type,
                 push.seq,
                 ok_count,
                 len(targets),
             )
-            self._stats["pushes_dispatched"] += 1
-            return DeliveryStatus.PARTIAL if dead else DeliveryStatus.DELIVERED
+            if dead:
+                return DeliveryStatus.PARTIAL
+            return DeliveryStatus.DELIVERED
 
-        # ok_count == 0: все сокеты умерли.
-        self._stats["pushes_undelivered"] += 1
-        api_logger.warning(
-            "push_service: failed user=%s type=%s seq=%s reason=all_sockets_dead",
-            push.user_id,
-            push.type,
-            push.seq,
-        )
         return DeliveryStatus.FAILED
 
     @staticmethod
@@ -361,13 +459,11 @@ class PushNotificationService:
         Контракт (см. app/src/main/java/by/aps/teamdroid/services/NotificationsWsService.java):
             {"type": "...", "topic": "...", "title": "...", "body": "...", "seq": N}
         """
-        # Silent-пуши — не показываем. Логирование — в dispatch().
         if push.silent:
             return {}
 
         # --- Сообщение ---
         if push.type == "msg":
-            # WebRTC-событие: started / accepted / hang-up / ...
             if push.webrtc:
                 return {
                     "type": "call",
@@ -378,15 +474,10 @@ class PushNotificationService:
                     "aonly": bool(push.aonly),
                 }
 
-            # Обычное сообщение.
             return {
                 "type": "message",
                 "topic": push.topic,
-                # TODO: имя отправителя (push.from_id) — подтянуть из БД
-                # или расширить Go-адаптер полем sender_name.
-                "title": push.from_id or "New message",
-                "mime": push.mime,
-                "from": push.from_id,
+                "title": "New message",
                 "body": PushNotificationService._extract_text(push.content) or "New message",
                 "seq": push.seq or 0,
             }
@@ -401,7 +492,6 @@ class PushNotificationService:
                 "seq": 0,
             }
 
-        # read/recv-квитанции и всё прочее — не пробрасываем.
         return {}
 
     async def _heartbeat_loop(self) -> None:
@@ -422,18 +512,30 @@ class PushNotificationService:
             total_users = len(self._connections)
             total_conns = sum(len(s) for s in self._connections.values())
             per_user = {uid: len(s) for uid, s in self._connections.items()} if include_per_user else None
+            total_fcms = len(self._fcm_to_user)
+            per_user_fcms = {uid: sorted(s) for uid, s in self._user_to_fcms.items()} if include_per_user else None
+
         result: dict[str, Any] = {
             "running": self._running,
             "started_at": self._started_at,
             "total_users": total_users,
             "total_connections": total_conns,
+            "total_fcm_ids": total_fcms,
             "seen_pushes_cache_size": len(self._seen_pushes),
             "seen_events_cache_size": len(self._seen_events),
             "stats": self._stats,
         }
         if per_user is not None:
             result["per_user"] = per_user
+        if per_user_fcms is not None:
+            result["per_user_fcms"] = per_user_fcms
         return result
 
 
 push_notification_service = PushNotificationService()
+
+__all__ = [
+    "DeliveryStatus",
+    "PushNotificationService",
+    "push_notification_service",
+]

@@ -15,6 +15,8 @@
     6. Синхронизация данных с Avanpost
     7. Проверка подключения и получение статистики
     8. Graceful shutdown с закрытием всех соединений
+    9. Singleton-соединение к SQL Server Teamdroid (pyodbc) для
+       хранимых процедур ext.PA_mbl_* (см. TeamdroidProcedureRepository).
 
 Технические особенности:
     - Реализация паттерна Singleton (единственный экземпляр)
@@ -29,15 +31,19 @@
     - DBManager: синглтон для управления всеми движками
     - db_manager: глобальный экземпляр для использования во всём приложении
     - Две зарегистрированные БД: "main" (PostgreSQL) и "avanpost" (MSSQL)
+    - Отдельный singleton-соединение к Teamdroid SQL Server (pyodbc) —
+      используется только хранимыми процедурами ext.PA_mbl_*.
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+import threading
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Optional
 
+import pyodbc
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -471,13 +477,6 @@ class DBManager:
 
         Returns:
             dict: Результат синхронизации с информацией о статусе и статистикой
-                - success: bool
-                - message: str
-                - status: dict
-                - stats: dict
-                - has_changes: bool
-                - has_errors: bool
-                - force: bool
         """
         db_logger.info(f"🔄 Starting Avanpost data sync (force={force})...")
 
@@ -487,15 +486,11 @@ class DBManager:
             sync_service = AvanpostSyncService()
             await sync_service.initialize()
 
-            # Запуск синхронизации базовых данных с получением статистики
             stats = await sync_service.sync_base_data(force=force)
-
-            # Получение статуса после синхронизации
             status = await sync_service.get_status()
 
             stats_dict = stats.to_dict()
 
-            # Проверяем, были ли изменения или ошибки
             has_changes = (
                 stats_dict.get("total_inserted", 0) > 0
                 or stats_dict.get("total_updated", 0) > 0
@@ -592,7 +587,8 @@ class DBManager:
     async def close_all(self) -> None:
         """Закрытие всех соединений к базам данных.
 
-        Последовательно закрывает все движки и освобождает ресурсы.
+        Последовательно закрывает все движки, singleton-соединение
+        Teamdroid SQL и освобождает ресурсы.
         """
         for name, engine in self._engines.items():
             try:
@@ -600,6 +596,12 @@ class DBManager:
                 db_logger.debug(f"⛔ Database '{name}' closed")
             except Exception as e:
                 db_logger.error(f"❌ Failed to close '{name}': {e}")
+
+        # CHANGED: закрываем singleton-соединение Teamdroid SQL (pyodbc).
+        try:
+            close_teamdroid_sql()
+        except Exception as e:  # noqa: BLE001
+            db_logger.warning(f"⚠️ Failed to close Teamdroid SQL connection: {e}")
 
         self._initialized = False
         db_logger.info("✅ All databases closed")
@@ -636,13 +638,10 @@ class DBManager:
 
         Возвращает информацию о каждой зарегистрированной БД:
         тип, состояние инициализации, является ли основной.
+        Включает состояние Teamdroid SQL singleton.
 
         Returns:
-            dict: Статистика БД с полями:
-                - databases: dict[str, dict] - информация по каждой БД
-                - primary: str - имя основной БД
-                - session_counter: int - количество созданных сессий
-                - total_databases: int - общее количество БД
+            dict: Статистика БД
         """
         return {
             "databases": {
@@ -657,6 +656,11 @@ class DBManager:
             "primary": self._primary_name,
             "session_counter": self._session_counter,
             "total_databases": len(self._engines),
+            "teamdroid_sql": {
+                "connected": _teamdroid_sql_conn is not None,
+                "server": getattr(settings, "TEAMDROID_SQL_SERVER", "") or None,
+                "database": getattr(settings, "TEAMDROID_SQL_DATABASE", "") or None,
+            },
         }
 
 
@@ -690,10 +694,118 @@ if settings.db_avanpost_url:
         ),
     )
 
+
+# ==================== TEAMDROID SQL (pyodbc singleton) ====================
+#
+# Отдельное переиспользуемое соединение к SQL Server Teamdroid.
+# Используется хранимыми процедурами ext.PA_mbl_* через
+# app/db/repositories/teamdroid.py.
+#
+# Не является SQLAlchemy-движком: pyodbc не thread-safe, поэтому
+# доступ сериализуется через _teamdroid_sql_lock. Соединение лениво
+# создаётся, автоматически переподключается при разрыве и закрывается
+# в DBManager.close_all() / close_teamdroid_sql().
+
+_teamdroid_sql_conn: pyodbc.Connection | None = None
+_teamdroid_sql_lock = threading.RLock()
+
+
+def build_teamdroid_sql_conn_str() -> str:
+    """Строка подключения к SQL Server Teamdroid (ODBC Driver 18).
+
+    Публичная функция: используется также в app/api/routers/teamdroid.py
+    для _load_files (там нужно ОТДЕЛЬНОЕ соединение для длительного
+    чтения больших файлов).
+
+    Raises:
+        RuntimeError: если TEAMDROID_SQL_SERVER не задан.
+    """
+    if not getattr(settings, "TEAMDROID_SQL_SERVER", ""):
+        raise RuntimeError(
+            "TEAMDROID_SQL_SERVER is not configured. "
+            "Set TEAMDROID_SQL_SERVER/DATABASE/USERNAME/PASSWORD in .env "
+            "to use ext.PA_mbl_* procedures."
+        )
+    return (
+        "DRIVER={ODBC Driver 18 for SQL Server};"
+        f"SERVER={settings.TEAMDROID_SQL_SERVER};"
+        f"DATABASE={settings.TEAMDROID_SQL_DATABASE};"
+        f"UID={settings.TEAMDROID_SQL_USERNAME};"
+        f"PWD={settings.TEAMDROID_SQL_PASSWORD};"
+        "TrustServerCertificate=yes;"
+    )
+
+
+def get_teamdroid_sql_conn() -> pyodbc.Connection:
+    """Singleton-соединение к SQL Server Teamdroid.
+
+    Переподключается, если соединение разорвано (idle-timeout,
+    рестарт SQL Server и т.п.). Вызывающий ОБЯЗАН держать
+    _teamdroid_sql_lock на всё время работы с соединением —
+    используйте teamdroid_sql_cursor().
+    """
+    global _teamdroid_sql_conn
+
+    with _teamdroid_sql_lock:
+        if _teamdroid_sql_conn is not None:
+            try:
+                cur = _teamdroid_sql_conn.cursor()
+                cur.execute("SELECT 1")
+                cur.fetchone()
+                cur.close()
+                return _teamdroid_sql_conn
+            except pyodbc.Error:
+                try:
+                    _teamdroid_sql_conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _teamdroid_sql_conn = None
+
+        conn = pyodbc.connect(
+            build_teamdroid_sql_conn_str(),
+            timeout=getattr(settings, "TEAMDROID_SQL_TIMEOUT", 10),
+            autocommit=False,
+        )
+        _teamdroid_sql_conn = conn
+        return conn
+
+
+def close_teamdroid_sql() -> None:
+    """Закрыть singleton-соединение к SQL Server Teamdroid."""
+    global _teamdroid_sql_conn
+    with _teamdroid_sql_lock:
+        if _teamdroid_sql_conn is not None:
+            try:
+                _teamdroid_sql_conn.close()
+            except Exception as exc:  # noqa: BLE001
+                db_logger.warning(f"[teamdroid_sql] failed to close connection: {exc!r}")
+            _teamdroid_sql_conn = None
+
+
+@contextmanager
+def teamdroid_sql_cursor() -> Iterator[pyodbc.Cursor]:
+    """Контекстный менеджер: курсор на singleton-соединении.
+
+    Держит _teamdroid_sql_lock на всё время работы, т.к. pyodbc
+    не thread-safe. Соединение НЕ закрывается при выходе.
+    """
+    with _teamdroid_sql_lock:
+        conn = get_teamdroid_sql_conn()
+        cur = conn.cursor()
+        try:
+            yield cur
+        finally:
+            cur.close()
+
+
 __all__ = [
     "DBType",
     "DBConfig",
     "DBEngine",
     "DBManager",
     "db_manager",
+    "build_teamdroid_sql_conn_str",
+    "get_teamdroid_sql_conn",
+    "close_teamdroid_sql",
+    "teamdroid_sql_cursor",
 ]

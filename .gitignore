@@ -170,6 +170,10 @@ cython_debug/
 requirements.txt
 requirements-dev.txt
 
+# Secrets
+app/secrets/
+*.json.key
+
 # Telegram sessions (сессионные файлы Telethon)
 *.session
 *.session-journal

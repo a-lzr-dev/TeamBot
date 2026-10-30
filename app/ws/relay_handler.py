@@ -1,8 +1,13 @@
-"""Приём push-батчей от Go myrelay-адаптера.
+"""Приём push-батчей от Go myrelay-адаптера + регистрация FID.
 
-Эндпоинт POST по пути settings.WS_RELAY_INGEST_PATH (по умолчанию
-/internal/push). Защищён Bearer-токеном (WS_RELAY_AUTH_TOKEN), который
-должен совпадать с `auth_token` в tinode.conf (push -> myrelay).
+Эндпоинты:
+  - POST {WS_RELAY_INGEST_PATH}          — приём батча пушей от Go-адаптера
+                                           (по умолчанию /internal/push)
+  - POST {WS_RELAY_INGEST_PATH}/register_fid — регистрация FID по user_id
+                                           (по умолчанию /internal/push/register_fid)
+
+Оба защищены Bearer-токеном (WS_RELAY_AUTH_TOKEN), который должен совпадать
+с `auth_token` в tinode.conf (push -> myrelay).
 
 Go-адаптер (server/push/myrelay) отправляет JSON в snake_case:
     {
@@ -16,6 +21,11 @@ Go-адаптер (server/push/myrelay) отправляет JSON в snake_case:
       ]
     }
 
+Регистрация FID:
+    POST /internal/push/register_fid
+    Authorization: Bearer <WS_RELAY_AUTH_TOKEN>
+    {"user_id": "usrXXX", "fid": "dX4f..._fid"}
+
 Дедупликация выполняется:
   - на уровне батча по event_id (см. PushNotificationService.is_duplicate_batch);
   - на уровне отдельного push по (user_id, topic, type, seq|ts).
@@ -28,6 +38,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 
 from ..config import settings
 from ..logger import api_logger
@@ -44,6 +55,10 @@ def _ingest_path() -> str:
     return settings.WS_RELAY_INGEST_PATH or _DEFAULT_INGEST_PATH
 
 
+def _register_fid_path() -> str:
+    return _ingest_path().rstrip("/") + "/register_fid"
+
+
 def _check_auth(authorization: str | None, event_id: str | None) -> None:
     expected = settings.WS_RELAY_AUTH_TOKEN
     if not expected:
@@ -56,12 +71,23 @@ def _check_auth(authorization: str | None, event_id: str | None) -> None:
         return
 
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing bearer token",
+        )
 
     provided = authorization.removeprefix("Bearer ").strip()
     if not hmac.compare_digest(provided, expected):
         api_logger.warning("relay: invalid auth token (event_id=%s)", event_id or "-")
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+        )
+
+
+# ============================================================
+# PUSH INGEST
+# ============================================================
 
 
 @router.post(_ingest_path(), include_in_schema=False)
@@ -88,7 +114,12 @@ async def ingest_relay_batch(
         api_logger.warning("relay: empty batch event_id=%s", batch.event_id)
         return JSONResponse(
             status_code=200,
-            content={"ok": True, "accepted": 0, "event_id": batch.event_id, "empty": True},
+            content={
+                "ok": True,
+                "accepted": 0,
+                "event_id": batch.event_id,
+                "empty": True,
+            },
         )
 
     user_ids = sorted({p.user_id for p in batch.pushes})
@@ -99,7 +130,6 @@ async def ingest_relay_batch(
         user_ids,
     )
 
-    # --- NEW: разбиваем на категории по статусу ---
     delivered = 0
     partial = 0
     no_connections = 0
@@ -121,7 +151,7 @@ async def ingest_relay_batch(
                 push.silent,
                 push.webrtc,
             )
-            status = await push_notification_service.dispatch(push)
+            delivery_status = await push_notification_service.dispatch(push)
         except Exception as e:  # noqa: BLE001
             failed += 1
             undelivered_users.append(push.user_id)
@@ -133,24 +163,25 @@ async def ingest_relay_batch(
             )
             continue
 
-        if status == DeliveryStatus.DELIVERED:
+        if delivery_status == DeliveryStatus.DELIVERED:
             delivered += 1
-        elif status == DeliveryStatus.PARTIAL:
+        elif delivery_status == DeliveryStatus.PARTIAL:
             partial += 1
-        elif status == DeliveryStatus.NO_CONNECTIONS:
+        elif delivery_status == DeliveryStatus.NO_CONNECTIONS:
             no_connections += 1
             undelivered_users.append(push.user_id)
-        elif status == DeliveryStatus.FAILED:
+        elif delivery_status == DeliveryStatus.FAILED:
             failed += 1
             undelivered_users.append(push.user_id)
-        elif status in (DeliveryStatus.SKIPPED_SILENT, DeliveryStatus.SKIPPED_TYPE):
+        elif delivery_status in (
+            DeliveryStatus.SKIPPED_SILENT,
+            DeliveryStatus.SKIPPED_TYPE,
+        ):
             skipped += 1
-        elif status == DeliveryStatus.DUPLICATE:
+        elif delivery_status == DeliveryStatus.DUPLICATE:
             duplicate += 1
 
-    # --- NEW: сводный лог по батчу ---
     if undelivered_users:
-        # de-dup и сортируем — чтобы не спамить одним user_id дважды
         unique_undelivered = sorted(set(undelivered_users))
         api_logger.warning(
             "relay: batch event_id=%s undelivered users=%s "
@@ -171,9 +202,7 @@ async def ingest_relay_batch(
         content={
             "ok": True,
             "event_id": batch.event_id,
-            # обратная совместимость: accepted = всё, что не failed
             "accepted": delivered + partial + no_connections + skipped + duplicate,
-            # расширенная статистика
             "delivered": delivered,
             "partial": partial,
             "no_connections": no_connections,
@@ -182,4 +211,77 @@ async def ingest_relay_batch(
             "duplicate": duplicate,
             "undelivered_users": sorted(set(undelivered_users)),
         },
+    )
+
+
+# ============================================================
+# FID REGISTRATION
+# ============================================================
+
+
+class RegisterFidRequest(BaseModel):
+    """Запрос на регистрацию FID для пользователя."""
+
+    user_id: str = Field(..., description="Tinode user ID, e.g. 'usrABC...'")
+    fid: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="Firebase Installation ID (FID)",
+    )
+
+    @field_validator("user_id")
+    @classmethod
+    def _validate_user_id(cls, v: str) -> str:
+        if not v.startswith("usr") or len(v) < 6:
+            raise ValueError(f"Invalid user_id: {v}")
+        return v
+
+
+@router.post(_register_fid_path(), include_in_schema=False)
+async def register_fid(
+    payload: RegisterFidRequest,
+    authorization: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """Регистрация FID по user_id.
+
+    Используется мобильным клиентом, если FID обновился, а WS-соединения
+    ещё нет (или оно было закрыто). В этом случае сервер запомнит FID и
+    сможет доставлять push через FCM даже без активного WS.
+
+    Аутентификация — Bearer-токен (WS_RELAY_AUTH_TOKEN).
+    """
+    _check_auth(authorization, f"register_fid:{payload.user_id}")
+
+    await push_notification_service.update_fid(payload.user_id, payload.fid)
+    api_logger.info(
+        "relay: registered fid user=%s fid_suffix=...%s",
+        payload.user_id,
+        payload.fid[-8:] if len(payload.fid) >= 8 else "***",
+    )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "user_id": payload.user_id,
+            "fid_registered": True,
+        },
+    )
+
+
+@router.delete(_register_fid_path(), include_in_schema=False)
+async def unregister_fid(
+    user_id: str,
+    authorization: Annotated[str | None, Header()] = None,
+) -> JSONResponse:
+    """Удалить FID пользователя (например, при logout)."""
+    _check_auth(authorization, f"unregister_fid:{user_id}")
+
+    await push_notification_service.update_fid(user_id, None)
+    api_logger.info("relay: unregistered fid user=%s", user_id)
+
+    return JSONResponse(
+        status_code=200,
+        content={"ok": True, "user_id": user_id, "fid_registered": False},
     )

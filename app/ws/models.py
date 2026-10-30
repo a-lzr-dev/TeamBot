@@ -23,6 +23,7 @@ class RelayPush(BaseModel):
     topic: str = Field(..., description="Topic name")
 
     from_id: str | None = Field(None, alias="from")
+    fid: str | None = Field(None, description="Firebase Installation ID (опционально)")
     seq: int | None = None
     unread: int | None = None
     delivered: int | None = None

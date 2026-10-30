@@ -20,6 +20,23 @@ services:
       DB_AVANPOST_PASSWORD: ${DB_AVANPOST_PASSWORD:?set DB_AVANPOST_PASSWORD}
       DB_AVANPOST_HOST: ${DB_AVANPOST_HOST:-localhost}
       DB_AVANPOST_PORT: ${DB_AVANPOST_PORT:-1433}
+      # SQL Server (Teamdroid / Avanpost procedures)
+      # Одно соединение используется для всех четырёх процедур:
+      #   ext.PA_mbl_AuthStart_Exec
+      #   ext.PA_mbl_AuthFinish_Exec
+      #   ext.PA_mbl_TokenVerify_Exec
+      #   ext.PA_mbl_TokenFinish_Exec
+      #   ext.PA_mbl_MsgsDeliveryStatus_Edit
+      TEAMDROID_SQL_SERVER: ${TEAMDROID_SQL_SERVER:-}
+      TEAMDROID_SQL_DATABASE: ${TEAMDROID_SQL_DATABASE:-}
+      TEAMDROID_SQL_USERNAME: ${TEAMDROID_SQL_USERNAME:-}
+      TEAMDROID_SQL_PASSWORD: ${TEAMDROID_SQL_PASSWORD:-}
+      TEAMDROID_SQL_TIMEOUT: ${TEAMDROID_SQL_TIMEOUT:-10}
+      TEAMDROID_SQL_PROC_AUTH_START: ${TEAMDROID_SQL_PROC_AUTH_START:-ext.PA_mbl_AuthStart_Exec}
+      TEAMDROID_SQL_PROC_AUTH_FINISH: ${TEAMDROID_SQL_PROC_AUTH_FINISH:-ext.PA_mbl_AuthFinish_Exec}
+      TEAMDROID_SQL_PROC_TOKEN_VERIFY: ${TEAMDROID_SQL_PROC_TOKEN_VERIFY:-ext.PA_mbl_TokenVerify_Exec}
+      TEAMDROID_SQL_PROC_TOKEN_FINISH: ${TEAMDROID_SQL_PROC_TOKEN_FINISH:-ext.PA_mbl_TokenFinish_Exec}
+      TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY: ${TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY:-ext.PA_mbl_MsgsDeliveryStatus_Edit}
       # Telegram
       BOT_TOKEN: ${BOT_TOKEN:?set BOT_TOKEN}
       BOT_ID: ${BOT_ID:?set BOT_ID}
@@ -96,6 +113,12 @@ services:
       DB_AVANPOST_PASSWORD: ${DB_AVANPOST_PASSWORD:?set DB_AVANPOST_PASSWORD}
       DB_AVANPOST_HOST: ${DB_AVANPOST_HOST:-localhost}
       DB_AVANPOST_PORT: ${DB_AVANPOST_PORT:-1433}
+      # SQL Server (не используется при миграциях, но нужен для валидации Settings)
+      TEAMDROID_SQL_SERVER: ${TEAMDROID_SQL_SERVER:-}
+      TEAMDROID_SQL_DATABASE: ${TEAMDROID_SQL_DATABASE:-}
+      TEAMDROID_SQL_USERNAME: ${TEAMDROID_SQL_USERNAME:-}
+      TEAMDROID_SQL_PASSWORD: ${TEAMDROID_SQL_PASSWORD:-}
+      TEAMDROID_SQL_TIMEOUT: ${TEAMDROID_SQL_TIMEOUT:-10}
       # Telegram (минимально необходимые для инициализации)
       BOT_TOKEN: ${BOT_TOKEN:-dummy_token_for_migrations}
       BOT_ID: ${BOT_ID:-0}
@@ -142,6 +165,12 @@ services:
       DB_MAIN_PASSWORD: ${DB_MAIN_PASSWORD:?set DB_MAIN_PASSWORD}
       DB_MAIN_HOST: ${DB_MAIN_HOST:-localhost}
       DB_MAIN_PORT: ${DB_MAIN_PORT:-5432}
+      # SQL Server (не используется при миграциях, но нужен для валидации Settings)
+      TEAMDROID_SQL_SERVER: ${TEAMDROID_SQL_SERVER:-}
+      TEAMDROID_SQL_DATABASE: ${TEAMDROID_SQL_DATABASE:-}
+      TEAMDROID_SQL_USERNAME: ${TEAMDROID_SQL_USERNAME:-}
+      TEAMDROID_SQL_PASSWORD: ${TEAMDROID_SQL_PASSWORD:-}
+      TEAMDROID_SQL_TIMEOUT: ${TEAMDROID_SQL_TIMEOUT:-10}
       # Telegram (минимально необходимые)
       BOT_TOKEN: ${BOT_TOKEN:-dummy_token_for_migrations}
       BOT_ID: ${BOT_ID:-0}

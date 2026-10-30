@@ -248,20 +248,20 @@ class AvanpostRepository:
         СТРУКТУРА ОТВЕТА ПРОЦЕДУРЫ:
         [
             {
-                "SyncType": "System",           -- Тип синхронизации
+                "SyncType": "System", -- Тип синхронизации
                 "SyncTime": "2026-08-21T19:03:29", -- Время синхронизации
-                "Data": [                        -- Массив блоков данных
+                "Data": [ -- Массив блоков данных
                     {
-                        "DataTypeId": 1,        -- ID типа данных
-                        "FlagExpire": null,     -- Флаг удаления
-                        "Data": [               -- Реальные данные (массив записей)
+                        "DataTypeId": 1, -- ID типа данных
+                        "FlagExpire": null, -- Флаг удаления
+                        "Data": [-- Реальные данные (массив записей)
                             {"FID": "RU", "FFlagDefault": true},
                             {"FID": "EN", "FFlagDefault": false}
                         ]
                     },
                     ...
                 ],
-                "Stats": {                       -- Статистика
+                "Stats": { -- Статистика
                     "Total": 10,
                     "TablesUpdated": 3
                 }
@@ -306,7 +306,7 @@ class AvanpostRepository:
 
         try:
             first_row = rows[0]
-            db_logger.debug(f"🔍 First row type: {type(first_row)}")
+            db_logger.debug(f"🔍 First row type: {type(first_row).__name__}")
             db_logger.debug(f"🔍 First row length: {len(first_row)}")
 
             if len(first_row) >= 1:
@@ -382,10 +382,14 @@ class AvanpostRepository:
                                     db_logger.warning(f"⚠️ Block is not dict: {type(block)}")
                                     continue
 
-                                data_type_id = block.get("DataTypeId")
-                                if data_type_id is None:
-                                    db_logger.warning(f"⚠️ DataTypeId is None for block: {list(block.keys())}")
+                                raw_dt_id = block.get("DataTypeId")
+                                if not isinstance(raw_dt_id, int):
+                                    db_logger.warning(
+                                        f"⚠️ DataTypeId is not int: {type(raw_dt_id).__name__} "
+                                        f"for block: {list(block.keys())}"
+                                    )
                                     continue
+                                data_type_id: int = raw_dt_id
 
                                 records = block.get("Data")
                                 if not records:
@@ -563,10 +567,14 @@ class AvanpostRepository:
                                     db_logger.warning(f"⚠️ Item is not dict: {type(item)}")
                                     continue
 
-                                data_type_id = item.get("DataTypeId")
-                                if data_type_id is None:
-                                    db_logger.warning(f"⚠️ DataTypeId is None for item: {list(item.keys())}")
+                                raw_dt_id = item.get("DataTypeId")
+                                if not isinstance(raw_dt_id, int):
+                                    db_logger.warning(
+                                        f"⚠️ DataTypeId is not int: {type(raw_dt_id).__name__} "
+                                        f"for item: {list(item.keys())}"
+                                    )
                                     continue
+                                data_type_id: int = raw_dt_id
 
                                 records = item.get("Data")
                                 if records is None:
@@ -610,7 +618,7 @@ class AvanpostRepository:
                             db_logger.error(f"❌ JSON preview: {trimmed[:500]}...")
                             return {"Data": []}
 
-                    elif isinstance(first_col, int | float):
+                    elif isinstance(first_col, (int, float)):
                         if first_col == 0:
                             if show_logs:
                                 db_logger.info("ℹ️ User procedure returned 0 (no data)")

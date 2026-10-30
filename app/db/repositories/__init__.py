@@ -13,6 +13,7 @@ from .notifications_settings import NotificationSettingsRepository
 from .reminders import ReminderRepository
 from .stats import StatsRepository
 from .system import SystemRepository
+from .teamdroid import TeamdroidProcedureRepository
 from .users import UserRepository
 
 __all__ = [
@@ -40,6 +41,8 @@ __all__ = [
     "ReminderRepository",
     # Автоматизация
     "AutomationRequestRepository",
+    # Teamdroid SQL Server (ext.PA_mbl_*)
+    "TeamdroidProcedureRepository",
     # Общие
     "GenericRepository",
 ]

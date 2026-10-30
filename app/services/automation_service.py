@@ -27,6 +27,7 @@
 
 import asyncio
 import contextlib
+import shutil
 import sys
 import tempfile
 from datetime import datetime
@@ -102,20 +103,25 @@ def _check_libreoffice() -> tuple[bool, Any]:
     """
     Проверяет доступность LibreOffice в системе.
 
+    Использует ``shutil.which`` (кроссплатформенный), а не
+    ``subprocess.run(["which", ...])``, который на Windows падает
+    с ``WinError 2`` (утилиты ``which`` там нет).
+
     Returns:
         tuple[bool, Any]: (доступность, модуль subprocess)
     """
     try:
         import subprocess
 
-        # Проверка наличия исполняемого файла soffice
-        check_result = subprocess.run(["which", "soffice"], capture_output=True, text=True)
-        if check_result.returncode == 0:
-            app_logger.info("✅ LibreOffice found")
+        # Проверка наличия исполняемого файла soffice/libreoffice
+        # (shutil.which работает и на Windows, и на Linux/macOS).
+        path = shutil.which("soffice") or shutil.which("libreoffice")
+        if path:
+            app_logger.info(f"✅ LibreOffice found: {path}")
             return True, subprocess
-        else:
-            app_logger.warning("⚠️ LibreOffice not found. Install: sudo apt-get install libreoffice")
-            return False, None
+
+        app_logger.warning("⚠️ LibreOffice not found. Install: sudo apt-get install libreoffice")
+        return False, None
     except ImportError:
         app_logger.warning("⚠️ subprocess module not available")
         return False, None

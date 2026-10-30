@@ -69,6 +69,7 @@ from .routers import (
     bot_msgs_router,
     bot_sync_router,
     errors_router,
+    push_router,
     reminders_router,
     stats_router,
     sync_router,
@@ -263,7 +264,8 @@ class APIManager:
             raise RuntimeError(
                 "WS_NOTIFY_TOKEN_VERIFY_MODE='trust' is only allowed when "
                 f"APP_ENV=development, but APP_ENV='{env}'. "
-                "Set WS_NOTIFY_TOKEN_VERIFY_MODE='grpc' or APP_ENV='development'."
+                "Set WS_NOTIFY_TOKEN_VERIFY_MODE='grpc' or 'avanpost' "
+                "or APP_ENV='development'."
             )
 
         # ── Safety check: relay auth token must be set in production ─────
@@ -274,7 +276,8 @@ class APIManager:
         ):
             raise RuntimeError(
                 "WS_RELAY_AUTH_TOKEN is empty in production. "
-                "Set it in .env and mirror it into tinode.conf (push -> myrelay -> auth_token)."
+                "Set it in .env and mirror it into tinode.conf "
+                "(push -> myrelay -> auth_token)."
             )
 
         api_keys = getattr(settings, "API_KEYS", []) or []
@@ -407,6 +410,7 @@ class APIManager:
         app.include_router(errors_router, prefix="/api/v1")
         app.include_router(reminders_router, prefix="/api/v1")
         app.include_router(automation_router, prefix="/api/v1")
+        app.include_router(push_router, prefix="/api/v1")
         app.include_router(stats_router, prefix="/api/v1")
         app.include_router(sync_router, prefix="/api/v1")
         app.include_router(teamdroid_router, prefix="/api/v1")
