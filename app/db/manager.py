@@ -25,14 +25,6 @@
     - Автоматическое переподключение (pool_pre_ping)
     - Контекстный менеджер для безопасной работы с сессиями
     - Поддержка разных моделей для разных БД (BaseModel для main, None для avanpost)
-
-Архитектура:
-    - DBEngine: обёртка для движка SQLAlchemy с конфигурацией
-    - DBManager: синглтон для управления всеми движками
-    - db_manager: глобальный экземпляр для использования во всём приложении
-    - Две зарегистрированные БД: "main" (PostgreSQL) и "avanpost" (MSSQL)
-    - Отдельный singleton-соединение к Teamdroid SQL Server (pyodbc) —
-      используется только хранимыми процедурами ext.PA_mbl_*.
 """
 
 import asyncio
@@ -41,7 +33,7 @@ from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Optional
+from typing import Any
 
 import pyodbc
 from sqlalchemy import text
@@ -126,7 +118,7 @@ class DBEngine:
         """
         self.config = config
         self._engine: AsyncEngine | None = None
-        self._session_factory: async_sessionmaker | None = None
+        self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._initialized = False
 
     @property
@@ -139,12 +131,12 @@ class DBEngine:
         Raises:
             RuntimeError: Если движок не инициализирован
         """
-        if not self._engine:
+        if self._engine is None:
             raise RuntimeError("Engine not initialized")
         return self._engine
 
     @property
-    def session_factory(self) -> async_sessionmaker:
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
         """Получение фабрики сессий.
 
         Returns:
@@ -153,7 +145,7 @@ class DBEngine:
         Raises:
             RuntimeError: Если фабрика не инициализирована
         """
-        if not self._session_factory:
+        if self._session_factory is None:
             raise RuntimeError("Session factory not initialized")
         return self._session_factory
 
@@ -165,6 +157,12 @@ class DBEngine:
             bool: True если движок инициализирован
         """
         return self._initialized
+
+    @property
+    def db_type_str(self) -> str:
+        """Строковое представление типа БД (безопасное)."""
+        db_type = self.config.db_type
+        return db_type.value if db_type is not None else "unknown"
 
     async def initialize(self) -> None:
         """Инициализация движка.
@@ -208,12 +206,15 @@ class DBEngine:
 
         # Проверка подключения
         try:
-            async with self._engine.connect() as conn:
+            engine = self._engine
+            if engine is None:
+                raise RuntimeError("Engine not created")
+            async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
                 await conn.commit()
-            db_logger.info(f"✅ {db_type.upper()} connection successful")
+            db_logger.info(f"✅ {self.db_type_str.upper()} connection successful")
         except Exception as e:
-            db_logger.error(f"❌ {db_type.upper()} connection failed: {e}")
+            db_logger.error(f"❌ {self.db_type_str.upper()} connection failed: {e}")
             raise
 
         self._initialized = True
@@ -223,10 +224,11 @@ class DBEngine:
 
         Закрывает все соединения и очищает пул.
         """
-        if self._engine:
-            await self._engine.dispose()
+        engine = self._engine
+        if engine is not None:
+            await engine.dispose()
             self._initialized = False
-            db_logger.debug(f"⛔ {self.config.db_type.upper()} engine disposed")
+            db_logger.debug(f"⛔ {self.db_type_str.upper()} engine disposed")
 
 
 class DBManager:
@@ -242,12 +244,19 @@ class DBManager:
         _initialized (bool): Флаг инициализации менеджера
     """
 
-    _instance: Optional["DBManager"] = None
+    _instance: "DBManager" = None  # type: ignore[assignment]
 
     def __new__(cls) -> "DBManager":
         """Создание единственного экземпляра (Singleton)."""
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
+            instance = super().__new__(cls)
+            # Сужаем тип: после присваивания поле не None.
+            cls._instance = instance  # type: ignore[assignment]
+            # Инициализируем поля здесь, чтобы избежать Optional в __init__.
+            instance._engines = {}  # type: ignore[attr-defined]
+            instance._primary_name = None  # type: ignore[attr-defined]
+            instance._session_counter = 0  # type: ignore[attr-defined]
+            instance._initialized = False  # type: ignore[attr-defined]
         return cls._instance
 
     def __init__(self) -> None:
@@ -255,9 +264,8 @@ class DBManager:
 
         Создаёт пустые структуры для хранения движков и статистики.
         """
-        if hasattr(self, "_initialized"):
+        if hasattr(self, "_initialized") and self._initialized:
             return
-
         self._engines: dict[str, DBEngine] = {}
         self._primary_name: str | None = None
         self._session_counter = 0
@@ -289,7 +297,9 @@ class DBManager:
             self._primary_name = name
             db_logger.info(f"✅ Primary database set to '{name}'")
 
-        db_logger.info(f"✅ Database '{name}' registered ({config.db_type.value})")
+        db_type = config.db_type
+        db_type_str = db_type.value if db_type is not None else "unknown"
+        db_logger.info(f"✅ Database '{name}' registered ({db_type_str})")
         return self
 
     @property
@@ -368,15 +378,14 @@ class DBManager:
         if not engine.is_initialized:
             await engine.initialize()
 
-        session = None
-        try:
-            session = engine.session_factory()
-            self._session_counter += 1
-            if show_logs:
-                db_logger.debug(
-                    f"🔄 Session created for '{db_name or self._primary_name}' (total={self._session_counter})"
-                )
+        # Создаём сессию ДО try — если фабрика бросит, вызывающий получит
+        # исключение из get_session, что корректно.
+        session = engine.session_factory()
+        self._session_counter += 1
+        if show_logs:
+            db_logger.debug(f"🔄 Session created for '{db_name or self._primary_name}' (total={self._session_counter})")
 
+        try:
             yield session
 
             await session.commit()
@@ -385,14 +394,12 @@ class DBManager:
 
         except Exception as e:
             db_logger.error(f"❌ Session error: {e}", exc_info=True)
-            if session:
-                await session.rollback()
+            await session.rollback()
             raise
         finally:
-            if session:
-                await session.close()
-                if show_logs:
-                    db_logger.debug("🔒 Session closed")
+            await session.close()
+            if show_logs:
+                db_logger.debug("🔒 Session closed")
 
     @log_exceptions(db_logger)
     async def initialize_all(self) -> None:
@@ -410,7 +417,7 @@ class DBManager:
             try:
                 await engine.initialize()
                 db_logger.info(f"✅ Database '{name}' initialized")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — одна БД не должна ломать остальные
                 db_logger.error(f"❌ Failed to initialize '{name}': {e}")
 
         self._initialized = True
@@ -427,21 +434,35 @@ class DBManager:
             db_name (str | None): Имя БД (по умолчанию основная)
             drop_first (bool): Удалить существующие таблицы перед созданием
         """
-        engine = self.get_engine(db_name) if db_name else self.primary
+        engine_wrapper = self.get_engine(db_name) if db_name else self.primary
 
-        if not engine.is_initialized:
-            await engine.initialize()
+        if not engine_wrapper.is_initialized:
+            await engine_wrapper.initialize()
 
-        models = engine.config.models or BaseModel
+        models = engine_wrapper.config.models or BaseModel
+        metadata = models.metadata
 
-        async with engine.engine.connect() as conn, conn.begin():
+        async_engine = engine_wrapper.engine
+
+        # `run_sync` ожидает Callable, принимающий Connection и возвращающий T.
+        # `metadata.create_all`/`drop_all` имеют сигнатуру
+        #   (bind, tables=None, checkfirst=True) -> None,
+        # поэтому оборачиваем их в лямбду с явной аннотацией,
+        # чтобы PyCharm не ругался на несоответствие типов (440/444).
+        def _run_drop_all(sync_conn: Any) -> None:
+            metadata.drop_all(bind=sync_conn)
+
+        def _run_create_all(sync_conn: Any) -> None:
+            metadata.create_all(bind=sync_conn)
+
+        async with async_engine.connect() as conn, conn.begin():
             if drop_first:
                 db_logger.warning(f"⚠️ Dropping all tables for '{db_name or self._primary_name}'...")
-                await conn.run_sync(models.metadata.drop_all)
+                await conn.run_sync(_run_drop_all)
 
             db_logger.debug(f"🔄 Creating tables for '{db_name or self._primary_name}'...")
 
-            await conn.run_sync(models.metadata.create_all)
+            await conn.run_sync(_run_create_all)
 
             db_logger.info(f"✅ Tables created for '{db_name or self._primary_name}'")
 
@@ -527,7 +548,7 @@ class DBManager:
                 "error": str(e),
                 "force": force,
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — синхронизация не должна ронять приложение
             db_logger.error(f"❌ Avanpost data sync failed: {e}", exc_info=True)
             return {
                 "success": False,
@@ -537,7 +558,7 @@ class DBManager:
             }
 
     @log_exceptions(db_logger)
-    async def sync_avanpost_async(self, force: bool = False) -> asyncio.Task:
+    async def sync_avanpost_async(self, force: bool = False) -> asyncio.Task[None]:
         """Запуск синхронизации Avanpost в фоновом режиме.
 
         Создаёт асинхронную задачу для выполнения синхронизации без блокировки
@@ -571,11 +592,11 @@ class DBManager:
                     else:
                         db_logger.info("📊 No changes detected")
                 else:
-                    db_logger.warning(f"⚠️ Background Avanpost sync failed: {result.get('message')}")
+                    db_logger.warning(f"⚠️ Background Avanpost sync failed: {result.get('message') or 'unknown error'}")
             except asyncio.CancelledError:
                 db_logger.debug("ℹ️ Background Avanpost sync cancelled")
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — фоне не роняем loop
                 db_logger.error(f"❌ Background Avanpost sync error: {e}", exc_info=True)
 
         task = asyncio.create_task(_sync_task(), name="avanpost_background_sync")
@@ -594,13 +615,13 @@ class DBManager:
             try:
                 await engine.dispose()
                 db_logger.debug(f"⛔ Database '{name}' closed")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — не блокируем общий shutdown
                 db_logger.error(f"❌ Failed to close '{name}': {e}")
 
         # CHANGED: закрываем singleton-соединение Teamdroid SQL (pyodbc).
         try:
             close_teamdroid_sql()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 — не блокируем shutdown
             db_logger.warning(f"⚠️ Failed to close Teamdroid SQL connection: {e}")
 
         self._initialized = False
@@ -618,22 +639,23 @@ class DBManager:
         Returns:
             bool: True если подключение успешно
         """
-        engine = self.get_engine(db_name) if db_name else self.primary
+        engine_wrapper = self.get_engine(db_name) if db_name else self.primary
 
-        if not engine.is_initialized:
-            await engine.initialize()
+        if not engine_wrapper.is_initialized:
+            await engine_wrapper.initialize()
 
         try:
-            async with engine.engine.connect() as conn:
+            async_engine = engine_wrapper.engine
+            async with async_engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
                 await conn.commit()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — health-check: любая ошибка = False
             db_logger.error(f"❌ Connection check failed: {e}")
             return False
 
     @log_exceptions(db_logger)
-    async def get_stats(self) -> dict:
+    async def get_stats(self) -> dict[str, Any]:
         """Получение статистики всех баз данных.
 
         Возвращает информацию о каждой зарегистрированной БД:
@@ -646,7 +668,7 @@ class DBManager:
         return {
             "databases": {
                 name: {
-                    "type": engine.config.db_type.value,
+                    "type": engine.db_type_str,
                     "initialized": engine.is_initialized,
                     "url": engine.config.url.split("://")[0] + "://***",
                     "is_primary": name == self._primary_name,
@@ -696,15 +718,6 @@ if settings.db_avanpost_url:
 
 
 # ==================== TEAMDROID SQL (pyodbc singleton) ====================
-#
-# Отдельное переиспользуемое соединение к SQL Server Teamdroid.
-# Используется хранимыми процедурами ext.PA_mbl_* через
-# app/db/repositories/teamdroid.py.
-#
-# Не является SQLAlchemy-движком: pyodbc не thread-safe, поэтому
-# доступ сериализуется через _teamdroid_sql_lock. Соединение лениво
-# создаётся, автоматически переподключается при разрыве и закрывается
-# в DBManager.close_all() / close_teamdroid_sql().
 
 _teamdroid_sql_conn: pyodbc.Connection | None = None
 _teamdroid_sql_lock = threading.RLock()
@@ -757,7 +770,7 @@ def get_teamdroid_sql_conn() -> pyodbc.Connection:
             except pyodbc.Error:
                 try:
                     _teamdroid_sql_conn.close()
-                except Exception:  # noqa: BLE001
+                except pyodbc.Error:
                     pass
                 _teamdroid_sql_conn = None
 
@@ -777,7 +790,7 @@ def close_teamdroid_sql() -> None:
         if _teamdroid_sql_conn is not None:
             try:
                 _teamdroid_sql_conn.close()
-            except Exception as exc:  # noqa: BLE001
+            except pyodbc.Error as exc:
                 db_logger.warning(f"[teamdroid_sql] failed to close connection: {exc!r}")
             _teamdroid_sql_conn = None
 

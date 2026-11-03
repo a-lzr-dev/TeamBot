@@ -67,8 +67,9 @@ from .routers import (
     avanpost_router,
     bot_msgs_router,
     bot_sync_router,
+    client_router,
     errors_router,
-    push_router,
+    logs_router,
     reminders_router,
     stats_router,
     sync_router,
@@ -291,6 +292,30 @@ class APIManager:
         api_logger.info(f"   WS_VERIFY_MODE   = {verify}")
         api_logger.info(f"   WS_PATH          = {settings.WS_NOTIFY_PATH or '/ws/notify'}")
         api_logger.info("   RELAY_INGEST     = /internal/push")
+        # ── Ingest-ключи (диагностика конфигурации) ────────────────
+        ingest_enabled = getattr(settings, "APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED", True)
+        server_sync_keys = list(getattr(settings, "APP_SERVER_SYNC_INGEST_API_KEYS", []) or [])
+        client_sync_keys = list(getattr(settings, "APP_CLIENT_SYNC_INGEST_API_KEYS", []) or [])
+        client_support_keys = list(getattr(settings, "APP_CLIENT_SUPPORT_INGEST_API_KEYS", []) or [])
+
+        api_logger.info(f"   LOGS_INGEST           = {ingest_enabled}")
+        api_logger.info(f"   INGEST server_sync    = {len(server_sync_keys)} key(s)")
+        api_logger.info(f"   INGEST client_sync    = {len(client_sync_keys)} key(s)")
+        api_logger.info(f"   INGEST client_support = {len(client_support_keys)} key(s)")
+
+        if not ingest_enabled:
+            api_logger.warning(
+                "⚠️ APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED=false — POST /api/v1/logs/batch будет возвращать 404"
+            )
+        elif not client_support_keys:
+            api_logger.warning(
+                "⚠️ APP_CLIENT_SUPPORT_INGEST_API_KEYS пуст — POST /api/v1/logs/batch будет возвращать 503"
+            )
+        if not server_sync_keys:
+            api_logger.warning("⚠️ APP_SERVER_SYNC_INGEST_API_KEYS пуст — server-sync ingest отключён")
+        if not client_sync_keys:
+            api_logger.warning("⚠️ APP_CLIENT_SYNC_INGEST_API_KEYS пуст — /api/v1/client/register будет отклоняться")
+        # ───────────────────────────────────────────────────────────
         api_logger.info("=" * 60)
 
         self._app = FastAPI(
@@ -403,13 +428,14 @@ class APIManager:
 
         # Public business API.
         app.include_router(admin_router, prefix="/api/v1")
+        app.include_router(automation_router, prefix="/api/v1")
+        app.include_router(avanpost_router, prefix="/api/v1")
         app.include_router(bot_msgs_router, prefix="/api/v1")
         app.include_router(bot_sync_router, prefix="/api/v1")
-        app.include_router(avanpost_router, prefix="/api/v1")
         app.include_router(errors_router, prefix="/api/v1")
+        app.include_router(logs_router, prefix="/api/v1")
+        app.include_router(client_router, prefix="/api/v1")
         app.include_router(reminders_router, prefix="/api/v1")
-        app.include_router(automation_router, prefix="/api/v1")
-        app.include_router(push_router, prefix="/api/v1")
         app.include_router(stats_router, prefix="/api/v1")
         app.include_router(sync_router, prefix="/api/v1")
         app.include_router(teamdroid_router, prefix="/api/v1")
@@ -425,7 +451,7 @@ class APIManager:
             )
             from ..ws.router import ws_notify_handler
 
-            # HTTP-эндпоинты relay: /internal/push и /internal/push/register_fid
+            # HTTP-эндпоинты relay: /internal/push и /internal/client/register
             app.include_router(relay_router)
 
             # WebSocket-эндпоинт для мобильных клиентов

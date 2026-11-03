@@ -1,3 +1,4 @@
+from .app import AppRepository
 from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .avanpost_actions import AvanpostActionRepository
@@ -17,6 +18,8 @@ from .teamdroid import TeamdroidProcedureRepository
 from .users import UserRepository
 
 __all__ = [
+    # Репозиторий для работы c мобильными клиентами
+    "AppRepository",
     # Репозиторий для работы с меню действий
     "AvanpostActionRepository",
     # Основные репозитории

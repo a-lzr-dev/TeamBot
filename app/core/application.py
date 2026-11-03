@@ -25,6 +25,7 @@
         - Проверка напоминаний (reminder_checker)
         - Управление временем жизни сообщений (message_lifetime_service)
         - Обработка логов ошибок (log_handler_service)
+        - Ретеншн диагностических логов мобильных клиентов (logs_retention)
 
     4.  Управление остановкой:
         - Graceful shutdown с корректным завершением всех задач
@@ -65,8 +66,8 @@
     - При graceful shutdown: отказ одного компонента не должен блокировать
       остановку остальных (``_stop_*``, ``_emergency_stop``).
     - В фоновых задачах (``_sequential_sync``, ``_reminder_check_loop``,
-      ``_sync_avanpost_users_in_background``): ошибка не должна ронять
-      event loop.
+      ``_logs_retention_loop``, ``_sync_avanpost_users_in_background``):
+      ошибка не должна ронять event loop.
     - В health-check / status: любая ошибка компонента = «нездоров», но
       сам health-check не падает.
     - При необязательных операциях (sync, логи): ошибка логируется, но
@@ -152,7 +153,7 @@ class ApplicationManager:
     Реализует синглтон для централизованного управления:
     - Запуск компонентов в правильном порядке
     - Graceful shutdown
-    - Фоновые задачи (напоминания, синхронизация)
+    - Фоновые задачи (напоминания, синхронизация, ретеншн логов)
     - Health checks
     """
 
@@ -313,6 +314,8 @@ class ApplicationManager:
         3. SEED (системные данные)
         4. SYNC BASE (справочники Avanpost) - СИНХРОННО!
         5. SYNC USERS (пользовательские данные) - ОПЦИОНАЛЬНО, В ФОНЕ
+        6. Инициализация LogHandlerService
+        7. Запуск фонового ретеншна диагностических логов
         """
         app_logger.debug("🗄️ Starting database...")
 
@@ -341,6 +344,9 @@ class ApplicationManager:
 
         # 6. Инициализация LogHandlerService
         await self._init_log_handler()
+
+        # 7. Запуск фонового ретеншна диагностических логов мобильных клиентов
+        await self._start_logs_retention()
 
     async def _sync_avanpost_base_if_enabled(self) -> None:
         """Синхронизация базовых данных Avanpost (справочники).
@@ -419,6 +425,69 @@ class ApplicationManager:
             await log_handler_service.initialize()
         except Exception as e:  # noqa: BLE001 — инициализация логов не критична для старта
             app_logger.error(f"❌ Failed to initialize LogHandlerService: {e}", exc_info=True)
+
+    # ==================== ЗАПУСК: РЕТЕНШН ДИАГНОСТИЧЕСКИХ ЛОГОВ ====================
+
+    async def _start_logs_retention(self) -> None:
+        """Запуск фонового ретеншна TAppLogs / TAppLogsRequests.
+
+        Периодически (раз в час) удаляет устаревшие записи диагностических
+        логов мобильных клиентов и закрытые запросы логов. Не критично
+        для основной работы приложения, поэтому ошибки логируются и
+        подавляются.
+        """
+        if not getattr(settings, "APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED", True):
+            app_logger.debug("⏭️ Logs retention skipped (APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED=false)")
+            return
+
+        task: asyncio.Task[None] = asyncio.create_task(self._logs_retention_loop(), name="logs_retention")
+        self._tasks.append(task)
+        app_logger.info("✅ Logs retention loop started")
+
+    async def _logs_retention_loop(self) -> None:
+        """Фоновый цикл ретеншна TAppLogs / TAppLogsRequests (раз в час)."""
+        from ..db.repositories import AppRepository
+
+        info_days = getattr(settings, "APP_CLIENT_SUPPORT_LOGS_RETENTION_INFO_DAYS", 30)
+        error_days = getattr(settings, "APP_CLIENT_SUPPORT_OGS_RETENTION_ERROR_DAYS", 90)
+        req_days = getattr(settings, "APP_CLIENT_SUPPORT_OGS_REQUESTS_RETENTION_DAYS", 30)
+
+        app_logger.info(
+            "✅ Logs retention loop started (info=%dd, error=%dd, requests=%dd)",
+            info_days,
+            error_days,
+            req_days,
+        )
+
+        while self.is_running:
+            try:
+                async with self.db.get_session() as session:
+                    stats = await AppRepository.run_retention(
+                        session,
+                        info_days=info_days,
+                        error_days=error_days,
+                        requests_retention_days=req_days,
+                    )
+                    await session.commit()  # NEW: коммит после retention
+
+                if stats["logs_deleted"] or stats["requests_deleted"] or stats.get("requests_expired"):
+                    app_logger.info(
+                        "🧹 Logs retention: logs_deleted=%d requests_deleted=%d requests_expired=%d",
+                        stats["logs_deleted"],
+                        stats["requests_deleted"],
+                        stats.get("requests_expired", 0),
+                    )
+
+                await asyncio.sleep(3600)
+
+            except asyncio.CancelledError:
+                app_logger.debug("ℹ️ Logs retention cancelled")
+                break
+            except Exception as e:  # noqa: BLE001 — фоновый цикл, не роняем loop
+                app_logger.error(f"❌ Logs retention error: {e}", exc_info=True)
+                await asyncio.sleep(300)
+
+        app_logger.debug("ℹ️ Logs retention loop finished")
 
     # ==================== СИНХРОНИЗАЦИЯ ДАННЫХ ====================
 

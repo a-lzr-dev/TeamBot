@@ -4,22 +4,29 @@
   1. Извлечь token из ``?token=`` или ``Authorization: Bearer``.
   2. Извлечь FID (Firebase Installation ID) из ``?fid=``.
   3. Определить реальный IP клиента (X-Forwarded-For / X-Real-IP / client.host)
-     для передачи в Avanpost (ext.PA_mbl_VerifyToken_Exec, поле $.cip).
+     для передачи в SQL Server (ext.PA_mbl_TokenVerify_Exec, поле $.cip).
   4. Проверить token согласно ``settings.ws_notify_verify_mode``.
      ``verify_ws_token`` возвращает ``VerifiedToken`` (см. ``app/ws/auth.py``).
   5. Если ``VerifiedToken.ok`` — false, закрыть WS с кодом 4401 и выйти.
   6. Зарегистрировать соединение в ``push_notification_service`` с FID.
-  7. При отключении — снять регистрацию и вызвать
-     ``ext.PA_mbl_TokenFinish_Exec`` (завершение сессии токена
-     в Teamdroid SQL Server).
+  7. При отключении — снять регистрацию, **сохранив FID** в реестре
+     (``keep_fid=True``), чтобы FCM-доставка продолжала работать, когда
+     приложение закрыто.
+
+Завершение сессии токена (``ext.PA_mbl_TokenFinish_Exec``) здесь
+**не выполняется**: обычный разрыв WS (закрытие приложения, потеря сети,
+рестарт сервера) не является логаутом. Если вызывать TokenFinish на каждый
+disconnect, SQL Server помечает устройство завершённым, и FCM перестаёт
+доставлять push на закрытое приложение.
+
+TokenFinish выполняется только при явном логауте — через
+``DELETE /api/v1/client/register`` (см. ``app/api/routers/client.py``).
 
 Берётся ПОСЛЕДНИЙ адрес из X-Forwarded-For (добавлен доверенным nginx),
 а не первый — первый может быть подделан клиентом.
 """
 
 from __future__ import annotations
-
-import asyncio
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -85,44 +92,6 @@ def _verified_for_trust_mode(websocket: WebSocket, token: str | None) -> Verifie
     return VerifiedToken(user_id=None)
 
 
-async def _token_finish_safe(user_id: str, fcm_id: str) -> None:
-    """Вызов ext.PA_mbl_TokenFinish_Exec. Ошибки не фатальны.
-
-    Завершает сессию токена в Teamdroid SQL Server при разъединении
-    WebSocket-соединения. Любая ошибка (нет соединения, THROW 50000,
-    TEAMDROID_APP_ID=0) только логируется — WS-обработчик завершается
-    штатно.
-    """
-    app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
-    if not app_id:
-        api_logger.debug("ws: token_finish skipped (TEAMDROID_APP_ID=0) user=%s", user_id)
-        return
-
-    try:
-        from ..db.repositories import TeamdroidProcedureRepository
-
-        ok, err = await asyncio.wait_for(
-            asyncio.to_thread(
-                TeamdroidProcedureRepository.token_finish,
-                user_id=user_id,
-                fcm_id=fcm_id,
-                app_id=app_id,
-            ),
-            timeout=5.0,  # NEW: не блокируем WS-закрытие
-        )
-        if not ok:
-            api_logger.warning(
-                "ws: token_finish failed user=%s fcm=%s... err=%s",
-                user_id,
-                fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-                err,
-            )
-    except TimeoutError:
-        api_logger.warning("ws: token_finish timeout user=%s", user_id)
-    except Exception as exc:  # noqa: BLE001
-        api_logger.error("ws: token_finish raised user=%s: %r", user_id, exc, exc_info=True)
-
-
 async def ws_notify_handler(websocket: WebSocket) -> None:
     # 1) token / fid / client_ip
     api_logger.info(
@@ -154,7 +123,7 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
 
     user_id = verified.user_id
     # FID из query имеет приоритет, т.к. клиент передаёт его явно.
-    # Fallback — FID, извлеченный сервером из токена (Avanpost/Tinode).
+    # Fallback — FID, извлечённый сервером из токена (SQL Server / Tinode).
     fcm_id = query_fid or verified.fcm_id
 
     if not user_id or not user_id.startswith("usr"):
@@ -184,18 +153,12 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        # ── Обычный disconnect: снимаем WS, но НЕ завершаем токен ──
+        # Обычный disconnect: снимаем WS, но НЕ завершаем токен.
         #
-        # ВАЖНО: закрытие приложения/сети ≠ логаут. Если здесь вызывать
-        # ext.PA_mbl_TokenFinish_Exec, то:
-        #   - SQL Server помечает устройство завершённым (FDateFinish);
-        #   - push_notification_service.unregister() без keep_fid
-        #     стирает FID из памяти;
-        #   - FCM-доставка при закрытом приложении перестаёт работать.
-        #
-        # Поэтому TokenFinish делаем только при явном логауте —
-        # через DELETE /api/v1/push/register_fid (app/api/routers/push.py).
-        # См. комментарий в push_notification_service.unregister().
+        # Закрытие приложения/сети ≠ логаут. TokenFinish в SQL Server
+        # делается только через DELETE /api/v1/client/register
+        # (app/api/routers/client.py::unregister_fid), иначе FCM
+        # перестанет доставлять push на закрытое приложение.
         await push_notification_service.unregister(
             user_id,
             websocket,

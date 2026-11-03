@@ -44,7 +44,7 @@
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,14 +92,18 @@ class AutomationRequestRepository:
         """
         db_logger.info(f"📝 [create] Creating automation request for user {user_id}")
 
-        request = UserRequestAutomationModel(
-            FK_User=user_id,
-            FTitle=title,
-            FDescription=description,
-            FPriority=priority,
-            FStatus=UserRequestAutomationStatus.NEW,
-            FK_Chat=chat_id,
-            FNote=note,
+        model_cls: Any = cast("Any", UserRequestAutomationModel)
+        request = cast(
+            "UserRequestAutomationModel",
+            model_cls(
+                FK_User=user_id,
+                FTitle=title,
+                FDescription=description,
+                FPriority=priority,
+                FStatus=UserRequestAutomationStatus.NEW,
+                FK_Chat=chat_id,
+                FNote=note,
+            ),
         )
         session.add(request)
         await session.flush()
@@ -205,7 +209,10 @@ class AutomationRequestRepository:
             list[UserRequestAutomationModel]: Список заявок
         """
         db_logger.info(
-            f"📋 [get_all] Getting all requests with filters: status={status}, priority={priority}, user_id={user_id}"
+            "📋 [get_all] Getting all requests with filters: status=%s, priority=%s, user_id=%s",
+            status,
+            priority,
+            user_id,
         )
 
         stmt = select(UserRequestAutomationModel)
@@ -418,7 +425,7 @@ class AutomationRequestRepository:
         Returns:
             dict: Статистика
         """
-        db_logger.info(f"📊 [get_stats] Getting stats for user_id={user_id}")
+        db_logger.info("📊 [get_stats] Getting stats for user_id=%s", user_id)
 
         conditions = []
 

@@ -101,6 +101,10 @@ from .base import (
     datetime_now,
 )
 from .main import (
+    AppLogModel,
+    AppLogRequestModel,
+    # Модели мобильных клиентов
+    AppModel,
     # Модели рассылок
     BroadcastMessageLinkModel,
     BroadcastModel,
@@ -221,6 +225,10 @@ __all__ = [
     "ErrorModel",
     "ErrorMessageLinkModel",
     "ErrorFilterModel",
+    # Модели мобильных клиентов
+    "AppModel",
+    "AppLogModel",
+    "AppLogRequestModel",
     # Telegram - периодические задачи
     "PeriodicTaskModel",
     # Telegram - напоминания

@@ -9,9 +9,32 @@ Middleware для аутентификации запросов к API.
     1. Проверка наличия API ключа в заголовке X-API-Key
     2. Валидация API ключа по списку из настроек
     3. Пропуск публичных путей (health, docs, relay-ingest, WS)
-    4. Пропуск запросов с доверенных хостов (TRUSTED_HOSTS)
+    4. Пропуск запросов с доверенных хостов (API_TRUSTED_HOSTS)
     5. Пропуск CORS preflight (OPTIONS) и WebSocket upgrade запросов
     6. Добавление информации о пользователе в request.state
+
+Отдельные наборы ключей (НЕ пересекаются):
+    - API_KEYS — основной набор (admin, бизнес-API).
+    - APP_CLIENT_SUPPORT_INGEST_API_KEYS — приём диагностических логов
+      мобильных клиентов:
+          POST /api/v1/logs/batch
+          POST /api/v1/logs/request/{id}/decline
+    - APP_CLIENT_SYNC_INGEST_API_KEYS — синхронизация мобильного клиента:
+          POST   /api/v1/client/register
+          DELETE /api/v1/client/register
+          POST   /api/v1/client/send-code
+          POST   /api/v1/client/verify-code
+          POST   /api/v1/client/note
+          GET    /api/v1/client/health
+    - APP_SERVER_SYNC_INGEST_API_KEYS — синхронизация основного сервера
+      (Teamdroid):
+          POST /api/v1/teamdroid/send-files
+          POST /api/v1/teamdroid/send-text
+          POST /api/v1/teamdroid/delete-messages
+          POST /api/v1/teamdroid/grant-user
+          GET  /api/v1/teamdroid/user-id/{id_val}
+          GET  /api/v1/teamdroid/acs/{topic}
+          GET  /api/v1/teamdroid/health
 
 Технические особенности:
     - Интеграция с FastAPI/Starlette через BaseHTTPMiddleware
@@ -27,6 +50,8 @@ Middleware для аутентификации запросов к API.
     - /internal/push защищён отдельным Bearer-токеном (WS_RELAY_AUTH_TOKEN)
       внутри relay_handler, а не API-ключом
     - /ws/notify проверяет токен в query при accept в ws_notify_handler
+    - Каждый ingest-канал защищён СВОИМ набором ключей, чтобы ключ
+      одного канала можно было отозвать независимо от остальных
     - Логирование предупреждений при неавторизованных попытках
 
 Архитектура:
@@ -37,6 +62,7 @@ Middleware для аутентификации запросов к API.
 
 import hmac
 import ipaddress
+import re
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response
@@ -50,6 +76,68 @@ from ...logger import api_logger
 def _is_dev_env() -> bool:
     """Проверка, что мы в development-окружении."""
     return (getattr(settings, "APP_ENV", "") or "").lower() in ("development", "dev")
+
+
+# Регулярка для /api/v1/logs/request/<uuid>/decline
+_LOGS_DECLINE_RE = re.compile(r"^/api/v1/logs/request/[^/]+/decline$")
+
+# Точный путь приёма батча диагностических логов
+_LOGS_BATCH_PATH = "/api/v1/logs/batch"
+
+# Канал client-sync (APP_CLIENT_SYNC_INGEST_API_KEYS):
+#   POST   /api/v1/client/register
+#   DELETE /api/v1/client/register
+#   POST   /api/v1/client/send-code
+#   POST   /api/v1/client/verify-code
+#   POST   /api/v1/client/note
+#   GET    /api/v1/client/health
+_CLIENT_SYNC_INGEST_PATHS: tuple[str, ...] = (
+    "/api/v1/client/register",
+    "/api/v1/client/send-code",
+    "/api/v1/client/verify-code",
+    "/api/v1/client/note",
+    "/api/v1/client/health",
+)
+
+# Канал server-sync (APP_SERVER_SYNC_INGEST_API_KEYS):
+#   POST /api/v1/teamdroid/send-files
+#   POST /api/v1/teamdroid/send-text
+#   POST /api/v1/teamdroid/delete-messages
+#   POST /api/v1/teamdroid/grant-user
+#   GET  /api/v1/teamdroid/user-id/{id_val}
+#   GET  /api/v1/teamdroid/acs/{topic}
+#   GET  /api/v1/teamdroid/health
+#
+# Матчим по префиксу (startswith path + "/" или точное совпадение),
+# потому что user-id/acs имеют параметризованные хвосты.
+_SERVER_SYNC_INGEST_PATHS: tuple[str, ...] = (
+    "/api/v1/teamdroid/send-files",
+    "/api/v1/teamdroid/send-text",
+    "/api/v1/teamdroid/delete-messages",
+    "/api/v1/teamdroid/grant-user",
+    "/api/v1/teamdroid/user-id",
+    "/api/v1/teamdroid/acs",
+    "/api/v1/teamdroid/health",
+)
+
+
+def _is_server_sync_ingest_path(path: str) -> bool:
+    """Пути sync-каналов основного сервера (teamdroid/*)."""
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _SERVER_SYNC_INGEST_PATHS)
+
+
+def _is_client_sync_ingest_path(path: str) -> bool:
+    """Пути sync-каналов мобильного клиента (register/send-code/verify-code/note/health)."""
+    return path in _CLIENT_SYNC_INGEST_PATHS
+
+
+def _is_logs_ingest_path(path: str) -> bool:
+    """Пути приёма диагностических логов мобильного клиента."""
+    if path == _LOGS_BATCH_PATH:
+        return True
+    if _LOGS_DECLINE_RE.match(path):
+        return True
+    return False
 
 
 # ============================================================
@@ -140,8 +228,143 @@ class AuthMiddleware(BaseHTTPMiddleware):
             api_logger.debug(f"🔓 Public path: {path}")
             return await call_next(request)
 
-        # 2. Проверка, является ли хост доверенным
         client_ip = self._get_client_ip(request)
+
+        # 2. Ingest-логи мобильного клиента: APP_CLIENT_SUPPORT_INGEST_API_KEYS.
+        if _is_logs_ingest_path(path):
+            if not getattr(settings, "APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED", True):
+                api_logger.warning(f"⚠️ Logs ingest disabled, path={path}")
+                return JSONResponse(
+                    status_code=404,
+                    content={
+                        "error": "NotFound",
+                        "message": "Logs ingest is disabled",
+                        "path": path,
+                    },
+                )
+
+            api_key = request.headers.get("X-API-Key")
+            if not api_key:
+                api_logger.warning(f"⚠️ Missing ingest API key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=401,
+                    error="Unauthorized",
+                    message="Missing ingest API key. Please provide X-API-Key header.",
+                )
+
+            valid_keys = list(getattr(settings, "APP_CLIENT_SUPPORT_INGEST_API_KEYS", []) or [])
+            if not valid_keys:
+                api_logger.warning("⚠️ APP_CLIENT_SUPPORT_INGEST_API_KEYS пуст — /api/v1/logs/* отклоняется")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=503,
+                    error="ServiceUnavailable",
+                    message="Ingest keys not configured.",
+                )
+
+            if not self._is_valid_key_for(api_key, valid_keys):
+                api_logger.warning(f"⚠️ Invalid client-support ingest key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=403,
+                    error="Forbidden",
+                    message="Invalid ingest API key.",
+                )
+
+            request.state.user = {
+                "api_key": api_key,
+                "role": "logs_ingest_client",
+                "client_ip": client_ip,
+            }
+            return await call_next(request)
+
+        # 2.1. Client-sync ingest (APP_CLIENT_SYNC_INGEST_API_KEYS)
+        if _is_client_sync_ingest_path(path):
+            api_key = request.headers.get("X-API-Key")
+            if not api_key:
+                api_logger.warning(f"⚠️ Missing client-sync API key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=401,
+                    error="Unauthorized",
+                    message="Missing client-sync API key. Please provide X-API-Key header.",
+                )
+
+            valid_keys = list(getattr(settings, "APP_CLIENT_SYNC_INGEST_API_KEYS", []) or [])
+            if not valid_keys:
+                api_logger.warning("⚠️ APP_CLIENT_SYNC_INGEST_API_KEYS пуст — client-sync отклоняется")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=503,
+                    error="ServiceUnavailable",
+                    message="Client-sync keys not configured.",
+                )
+
+            if not self._is_valid_key_for(api_key, valid_keys):
+                api_logger.warning(f"⚠️ Invalid client-sync key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=403,
+                    error="Forbidden",
+                    message="Invalid client-sync API key.",
+                )
+
+            request.state.user = {
+                "api_key": api_key,
+                "role": "client_sync",
+                "client_ip": client_ip,
+            }
+            return await call_next(request)
+
+        # 2.2. Server-sync ingest (APP_SERVER_SYNC_INGEST_API_KEYS)
+        if _is_server_sync_ingest_path(path):
+            api_key = request.headers.get("X-API-Key")
+            if not api_key:
+                api_logger.warning(f"⚠️ Missing server-sync API key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=401,
+                    error="Unauthorized",
+                    message="Missing server-sync API key. Please provide X-API-Key header.",
+                )
+
+            valid_keys = list(getattr(settings, "APP_SERVER_SYNC_INGEST_API_KEYS", []) or [])
+            if not valid_keys:
+                api_logger.warning("⚠️ APP_SERVER_SYNC_INGEST_API_KEYS пуст — server-sync отклоняется")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=503,
+                    error="ServiceUnavailable",
+                    message="Server-sync keys not configured.",
+                )
+
+            if not self._is_valid_key_for(api_key, valid_keys):
+                api_logger.warning(f"⚠️ Invalid server-sync key for {path} (client={client_ip})")
+                return self._unauthorized_response(
+                    path=path,
+                    client_ip=client_ip,
+                    status_code=403,
+                    error="Forbidden",
+                    message="Invalid server-sync API key.",
+                )
+
+            request.state.user = {
+                "api_key": api_key,
+                "role": "server_sync",
+                "client_ip": client_ip,
+            }
+            return await call_next(request)
+
+        # 3. Проверка, является ли хост доверенным
         if self._is_trusted_host(client_ip):
             api_logger.info(f"🔓 Trusted host {client_ip} -> {path} (no API key required)")
             request.state.user = {
@@ -151,7 +374,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             }
             return await call_next(request)
 
-        # 3. Проверка API ключа
+        # 4. Проверка основного API ключа
         api_key = request.headers.get("X-API-Key")
 
         if not api_key:
@@ -164,7 +387,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 message="Missing API key. Please provide X-API-Key header.",
             )
 
-        # 4. Проверка валидности API ключа
+        # 5. Проверка валидности API ключа
         if not self._is_valid_api_key(api_key):
             api_logger.warning(f"⚠️ Invalid API key for {path} (client={client_ip})")
             return self._unauthorized_response(
@@ -175,14 +398,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 message="Invalid API key.",
             )
 
-        # 5. Добавление информации о пользователе в request
+        # 6. Добавление информации о пользователе в request
         request.state.user = {
             "api_key": api_key,
             "role": "admin",
             "client_ip": client_ip,
         }
 
-        # 6. Передача запроса дальше
+        # 7. Передача запроса дальше
         return await call_next(request)
 
     # ============================================================
@@ -333,10 +556,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 return [h.strip() for h in from_settings.split(",") if h.strip()]
         return cls.DEFAULT_TRUSTED_HOSTS
 
-    @staticmethod
-    def _is_valid_api_key(api_key: str) -> bool:
+    @classmethod
+    def _is_valid_api_key(cls, api_key: str) -> bool:
         """
-        Проверка валидности API ключа.
+        Проверка валидности основного API ключа (API_KEYS).
 
         Использует hmac.compare_digest для защиты от timing-атак.
 
@@ -350,12 +573,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not valid_keys:
             api_logger.critical("🚨 API_KEYS is not configured! API is not protected.")
             return False
+        return cls._is_valid_key_for(api_key, [str(k) for k in valid_keys])
 
+    @staticmethod
+    def _is_valid_key_for(api_key: str, valid_keys: list[str]) -> bool:
+        """Constant-time проверка ключа против набора valid_keys.
+
+        fail-closed: пустой набор → всегда False.
+        Все элементы набора приводятся к str (защита от случайных
+        int/bytes в конфиге).
+        """
+        if not valid_keys:
+            return False
         provided: bytes = api_key.encode("utf-8")
         result = False
         for valid in valid_keys:
-            candidate: bytes = valid.encode("utf-8") if isinstance(valid, str) else bytes(valid)
-            # Сравниваем всегда, чтобы время не зависело от позиции совпадения
+            candidate: bytes = str(valid).encode("utf-8")
+            # Сравниваем ВСЕ элементы, чтобы время не зависело от позиции совпадения
             if hmac.compare_digest(provided, candidate):
                 result = True
         return result

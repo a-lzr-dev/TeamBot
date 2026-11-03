@@ -345,7 +345,7 @@ class TeamdroidProcedureRepository:
 
         Ошибка SQL не фатальна — возвращается пустой dict, сервис
         стартует с пустым реестром (клиенты перерегистрируются через
-        WS или POST /api/v1/push/register_fid).
+        WS или POST /api/v1/client/register).
         """
         proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD
         TeamdroidProcedureRepository._validate_proc_name(proc_name)

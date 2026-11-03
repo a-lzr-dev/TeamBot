@@ -41,6 +41,7 @@ import asyncio
 import json
 import time
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 
@@ -95,20 +96,6 @@ class _FcmClient:
     service account JSON (`FCM_CREDENTIALS_PATH`), клиент считается
     недоступным, а `send()` возвращает False.
     """
-
-    # _CHANNEL_MESSAGE = "new_message_channel"
-    # _CHANNEL_SUBSCRIPTION = "subscription_channel"
-    # _CHANNEL_CALL = "call_channel"
-    # _CHANNEL_DEFAULT = "default_channel"
-    #
-    # @classmethod
-    # def _channel_for(cls, data: dict[str, str]) -> str:
-    #     t = (data.get("type") or "").lower()
-    #     return {
-    #         "message": cls._CHANNEL_MESSAGE,
-    #         "subscription": cls._CHANNEL_SUBSCRIPTION,
-    #         "call": cls._CHANNEL_CALL,
-    #     }.get(t, cls._CHANNEL_DEFAULT)
 
     def __init__(self) -> None:
         self._initialized: bool = False
@@ -202,9 +189,14 @@ class _FcmClient:
                 android=messaging.AndroidConfig(priority="high"),
             )
 
-            from collections.abc import Callable
-
-            sender: Callable[[messaging.MulticastMessage], messaging.BatchResponse] = messaging.send_each_for_multicast
+            # Прямая передача messaging.send_each_for_multicast в
+            # asyncio.to_thread ломает вывод ParamSpec в PyCharm:
+            # firebase_admin не поставляет py.typed, поэтому
+            # `Callable[P, T]` из to_thread остаётся неразрешённым,
+            # и `message` подсвечивается как "Unexpected argument".
+            # Оборачиваем вызов в локальную функцию с явной сигнатурой
+            # Callable[[Any], Any] — PyCharm выведет её тип корректно.
+            sender: Callable[[Any], Any] = messaging.send_each_for_multicast
             response = await asyncio.to_thread(sender, message)
             success = sum(1 for r in response.responses if r.success)
             failure = len(response.responses) - success
@@ -258,7 +250,7 @@ class PushNotificationService:
             "fcm_skipped": 0,
         }
 
-    # ---------- lifecycle -------._stat---
+    # ---------- lifecycle ----------
 
     async def start(self) -> None:
         if self._running:
@@ -266,7 +258,7 @@ class PushNotificationService:
         self._running = True
         self._started_at = time.time()
 
-        # Восстановить FID из SQL Server ----------
+        # Восстановить FID из SQL Server
         if getattr(settings, "FCM_LOAD_FIDS_ON_START", True) and getattr(settings, "FCM_ENABLED", False):
             await self._restore_fids_from_sql()
 
@@ -292,8 +284,9 @@ class PushNotificationService:
     async def _restore_fids_from_sql(self) -> None:
         """Загрузить активные (usi, dvc) из ext.PA_mbl_TokenDevices_Load.
 
-        Вызывается один раз в start(). Ошибки не фатальны: сервис
-        стартует с пустым реестром, клиенты перерегистрируются.
+        Дополнительно: для каждого восстановленного usi проверяем, что
+        в TApps есть запись с FUserID = usi (или создаём/обновляем),
+        чтобы FCM-доставка logs_request работала.
         """
         try:
             from ..db.repositories import TeamdroidProcedureRepository
@@ -306,11 +299,7 @@ class PushNotificationService:
             api_logger.warning("push_service: load_token_devices timeout — starting with empty FID registry")
             return
         except Exception as exc:  # noqa: BLE001
-            api_logger.error(
-                "push_service: load_token_devices failed: %r",
-                exc,
-                exc_info=True,
-            )
+            api_logger.error("push_service: load_token_devices failed: %r", exc, exc_info=True)
             return
 
         if not loaded:
@@ -322,6 +311,34 @@ class PushNotificationService:
                 self._user_to_fcms[user_id].update(fids)
                 for fid in fids:
                     self._fcm_to_user[fid] = user_id
+
+        # Синхронизация TApps.FUserID с usi (только если FUserID пуст или числовой).
+        try:
+            from ..db import db_manager
+            from ..db.repositories import AppRepository
+
+            async with db_manager.get_session() as session:
+                for user_id, fids in loaded.items():
+                    for fid in fids:
+                        app = await AppRepository.get_app_by_fid(session, fid)
+                        if app is None:
+                            await AppRepository.get_or_create_app(session, fid, user_id=user_id)
+                            api_logger.info(
+                                "push_service: created TApps for restored fid=%s user=%s",
+                                fid[-8:],
+                                user_id,
+                            )
+                        elif app.FUserID != user_id:
+                            api_logger.warning(
+                                "push_service: TApps.FUserID mismatch fid=%s db=%r sql=%r — updating",
+                                fid[-8:],
+                                app.FUserID,
+                                user_id,
+                            )
+                            app.FUserID = user_id
+                await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            api_logger.error("push_service: TApps sync failed: %r", exc, exc_info=True)
 
         api_logger.info(
             "push_service: restored %d FIDs for %d users from SQL Server",
@@ -356,7 +373,7 @@ class PushNotificationService:
     async def update_fid(self, user_id: str, fid: str | None) -> None:
         """Зарегистрировать/обновить FID пользователя.
 
-        Вызывается из `POST /internal/push/register_fid`.
+        Вызывается из `POST /internal/client/register`.
         Если `fid=None` — удалить все FID пользователя.
         """
         if not user_id or not user_id.startswith("usr"):
@@ -392,7 +409,7 @@ class PushNotificationService:
     async def remove_fid(self, user_id: str, fid: str) -> None:
         """Удалить конкретный FID пользователя.
 
-        Вызывается из `DELETE /api/v1/push/register_fid` и из
+        Вызывается из `DELETE /api/v1/client/register` и из
         `relay_handler.unregister_fid`.
         """
         if not user_id or not user_id.startswith("usr"):
@@ -484,7 +501,7 @@ class PushNotificationService:
                 (WS нет, но устройство всё ещё "живое" для FCM).
 
                 FID удаляется только при явном логауте — через
-                ``remove_fid()`` (``DELETE /api/v1/push/register_fid``).
+                ``remove_fid()`` (``DELETE /api/v1/client/register``).
                 Если keep_fid=False — поведение как раньше (удалить FID
                 при пустом списке сокетов).
         """

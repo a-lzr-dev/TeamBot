@@ -112,6 +112,59 @@ class Settings(BaseSettings):
     FCM_SEND_MODE: str = "fallback"
     FCM_FID_TTL_SECONDS: int = 7 * 24 * 3600
 
+    # ============ MOBILE APPS ============
+
+    # Ключи для обмена данными с основным сервером:
+    #   POST   /api/v1/teamdroid/send-files
+    #   POST   /api/v1/teamdroid/send-text
+    #   POST   /api/v1/teamdroid/delete-messages
+    #   POST   /api/v1/teamdroid/grant-user
+    #   GET    /api/v1/teamdroid/acs/{topic}
+    #   GET    /api/v1/teamdroid/user-id/{id_val}
+    #   GET    /api/v1/teamdroid/health
+    APP_SERVER_SYNC_INGEST_API_KEYS: list[str] = Field(
+        default_factory=lambda: [],
+        description="Отдельные API-ключи для обмена данными с основным серверном",
+    )
+
+    # Ключи для обмена данными с мобильными клиентами:
+    #   POST   /api/v1/client/note
+    #   POST   /api/v1/client/send-code
+    #   POST   /api/v1/client/verify-code
+    #   POST   /api/v1/client/register
+    #   DELETE /api/v1/client/register
+    #   GET    /api/v1/client/health
+    APP_CLIENT_SYNC_INGEST_API_KEYS: list[str] = Field(
+        default_factory=lambda: [],
+        description="Отдельные API-ключи для обмена данными с мобильным клиентом",
+    )
+
+    # Ключи для приёма диагностических логов мобильных клиентов:
+    #   POST /api/v1/logs/batch
+    #   POST /api/v1/logs/request/{request_id}/decline
+    APP_CLIENT_SUPPORT_INGEST_API_KEYS: list[str] = Field(
+        default_factory=lambda: [],
+        description="Отдельные API-ключи для работы мобильным клиентом",
+    )
+
+    # Диагностические логи удаленных клиентов
+    APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED: bool = True
+    APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_BYTES: int = 1 * 1024 * 1024  # сжатый размер
+    APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_UNCOMPRESSED_BYTES: int = 4 * 1024 * 1024
+    APP_CLIENT_SUPPORT_LOGS_MAX_RECORDS_PER_BATCH: int = 5000
+    APP_CLIENT_SUPPORT_LOGS_MAX_MSG_LEN: int = 4096
+    APP_CLIENT_SUPPORT_LOGS_MAX_TRACE_LEN: int = 16384
+    APP_CLIENT_SUPPORT_LOGS_MAX_FIELDS_LEN: int = 4096
+    APP_CLIENT_SUPPORT_LOGS_REQUESTS_PER_DAY: int = 3
+    APP_CLIENT_SUPPORT_LOGS_FORCE_ALL_PER_DAY: int = 1
+    APP_CLIENT_SUPPORT_LOGS_BYTES_PER_DAY: int = 1_048_576
+    APP_CLIENT_SUPPORT_LOGS_REQUEST_TTL_SEC: int = 3600
+    APP_CLIENT_SUPPORT_LOGS_REQUEST_FORCE_ALL_MAX_BYTES: int = 512 * 1024
+    APP_CLIENT_SUPPORT_LOGS_RETENTION_INFO_DAYS: int = 30
+    APP_CLIENT_SUPPORT_LOGS_RETENTION_ERROR_DAYS: int = 90
+    APP_CLIENT_SUPPORT_LOGS_REQUESTS_RETENTION_DAYS: int = 30
+    APP_CLIENT_SUPPORT_LOGS_PUSH_TYPE: str = "logs_request"
+
     # ============ API ============
 
     API_HOST: str = "0.0.0.0"
@@ -269,6 +322,33 @@ class Settings(BaseSettings):
                 return [int(v)]
             except (ValueError, SyntaxError):
                 return []
+        return []
+
+    @field_validator(
+        "APP_SERVER_SYNC_INGEST_API_KEYS",
+        "APP_CLIENT_SYNC_INGEST_API_KEYS",
+        "APP_CLIENT_SUPPORT_INGEST_API_KEYS",
+        mode="before",
+    )
+    @classmethod
+    def parse_ingest_api_keys(cls, v: str | list[str] | None) -> list[str]:
+        """Парсинг JSON-массива или CSV-строки в список ключей."""
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    result = ast.literal_eval(v)
+                    if isinstance(result, list):
+                        return [str(x).strip() for x in result if str(x).strip()]
+                except (ValueError, SyntaxError):
+                    pass
+            return [x.strip() for x in v.split(",") if x.strip()]
         return []
 
     @field_validator("AVANPOST_AUTO_ADD_USERS_IDS_ON_START", mode="before")
@@ -517,6 +597,15 @@ class Settings(BaseSettings):
     @property
     def is_development(self) -> bool:
         return self.LOG_LEVEL.lower() == "debug"
+
+    @property
+    def all_ingest_api_keys(self) -> list[str]:
+        """Объединённый список всех ingest-ключей (только для диагностики)."""
+        return (
+            list(self.APP_SERVER_SYNC_INGEST_API_KEYS)
+            + list(self.APP_CLIENT_SYNC_INGEST_API_KEYS)
+            + list(self.APP_CLIENT_SUPPORT_INGEST_API_KEYS)
+        )
 
     @property
     def is_bot_account(self) -> bool:

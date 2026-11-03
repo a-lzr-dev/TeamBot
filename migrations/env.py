@@ -17,8 +17,10 @@ config = context.config
 
 # Используем URL из настроек приложения (синхронный)
 # Заменяем asyncpg на psycopg2 для синхронной работы
-sync_url = settings.DB_MAIN_URL.replace("postgresql+asyncpg://", "postgresql://")
-config.set_main_option("sqlalchemy.url", sync_url)
+sync_url = settings.db_main_url.replace("postgresql+asyncpg://", "postgresql://")
+# Экранируем символы '%' для корректной работы configparser
+escaped_sync_url = sync_url.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", escaped_sync_url)
 
 # Настройка логирования
 if config.config_file_name is not None:

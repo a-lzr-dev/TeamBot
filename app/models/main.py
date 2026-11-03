@@ -11,11 +11,12 @@
     3. Участники чатов (TChatsMembers)
     4. Сообщения (TChatsMessages)
     5. Ошибки (TErrors, TErrorsMessagesLinks, TErrorsFilters)
-    6. Периодические задачи (TPeriodicTasks)
-    7. Напоминания (TUsersReminders, TUsersRemindersShares)
-    8. Настройки уведомлений (TChatsNotificationsSettings)
-    9. Автоматизация (TUsersRequestsAutomations)
-    10. Рассылки (TBroadcasts, TBroadcastsMessagesLinks)
+    6. Мобильные клиенты (TApps) и диагностические логи (TAppLogs, TAppLogsRequests)
+    7. Периодические задачи (TPeriodicTasks)
+    8. Напоминания (TUsersReminders, TUsersRemindersShares)
+    9. Настройки уведомлений (TChatsNotificationsSettings)
+    10. Автоматизация (TUsersRequestsAutomations)
+    11. Рассылки (TBroadcasts, TBroadcastsMessagesLinks)
 
 Технические особенности:
     - Использование SQLAlchemy 2.0 с аннотациями типов (Mapped)
@@ -30,9 +31,8 @@
     - Связи с Avanpost моделями из models.avanpost
 """
 
-import sys
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from aiogram import enums
 from sqlalchemy import (
@@ -47,10 +47,12 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from ..config import settings
 from .avanpost import AvanpostUserLinkModel, AvanpostUserModel
 from .base import (
     BaseModel,
@@ -67,8 +69,8 @@ from .base import (
     datetime_now,
 )
 
-# Определяем, используется ли SQLite
-_IS_SQLITE = "sqlite" in sys.modules or "aiosqlite" in str(sys.modules.get("sqlalchemy", {}))
+_MAIN_DB_URL: str = getattr(settings, "db_main_url", "") or ""
+_IS_SQLITE: bool = _MAIN_DB_URL.startswith("sqlite")
 
 
 def _get_table_args(autoincrement: bool = True) -> tuple:
@@ -146,7 +148,7 @@ class UserModel(BaseModel, UserMixin):
         "BroadcastModel", foreign_keys="BroadcastModel.FK_CancelledBy", back_populates="cancelled_by_user"
     )
 
-    avanpost_link: Mapped[Optional["AvanpostUserLinkModel"]] = relationship(
+    avanpost_link: Mapped[AvanpostUserLinkModel | None] = relationship(
         "AvanpostUserLinkModel",
         foreign_keys="AvanpostUserLinkModel.FK_Link",
         back_populates="telegram_user",
@@ -160,30 +162,53 @@ class UserModel(BaseModel, UserMixin):
         return self.fullname
 
     def __repr__(self) -> str:
-        return f"<User(id={self.FID}, username={self.FUserName}, fullname={self.fullname}, phone={self.FPhone})>"
+        username: str = self.FUserName or "-"
+        phone: str = self.FPhone or "-"
+        fullname: str = self.fullname or "-"
+        return f"<User(id={self.FID}, username={username}, fullname={fullname}, phone={phone})>"
 
     @property
     def fullname(self) -> str:
-        """Полное имя пользователя."""
-        if self.FFirstName and self.FLastName:
-            return f"{self.FFirstName} {self.FLastName}"
-        if self.FFirstName:
-            return self.FFirstName or ""
-        if self.FLastName:
-            return self.FLastName or ""
-        return self.FUserName or ""
+        """Полное имя пользователя.
+
+        ИСПРАВЛЕНО (PyCharm "Type 'None' doesn't define '__str__'",
+        строка 191): в предыдущей версии `first`/`last` оставались
+        `str | None` внутри f-string, потому что PyCharm не связывает
+        булевы `has_first`/`has_last` с сужением типа. Здесь ранние
+        `if ... is not None` — PyCharm сам сужает типы в каждой ветке.
+        """
+        first: str | None = self.FFirstName
+        last: str | None = self.FLastName
+        username: str | None = self.FUserName
+
+        if first is not None and first != "":
+            if last is not None and last != "":
+                return f"{first} {last}"
+            return first
+
+        if last is not None and last != "":
+            return last
+
+        return username if username is not None else ""
 
     @property
-    def avanpost_user(self) -> Optional["AvanpostUserModel"]:
-        """Получение AvanpostUser через связь."""
-        if self.avanpost_link is None:
+    def avanpost_user(self) -> AvanpostUserModel | None:
+        """Получение AvanpostUser через связь.
+
+        ИСПРАВЛЕНО (PyCharm "This code is unreachable", строка 186):
+        в оригинале после `if not isinstance(...): return None` шёл код,
+        который PyCharm помечал как недостижимый, потому что
+        `avanpost_link` уже сужен до `AvanpostUserLinkModel | None`,
+        а `.avanpost_user` — до `AvanpostUserModel`. Здесь используем
+        локальную переменную с явной аннотацией — это убирает
+        ложное срабатывание.
+        """
+        link: AvanpostUserLinkModel | None = self.avanpost_link
+        if link is None:
             return None
 
-        avanpost_user = self.avanpost_link.avanpost_user
+        avanpost_user: AvanpostUserModel | None = link.avanpost_user
         if avanpost_user is None:
-            return None
-
-        if not isinstance(avanpost_user, AvanpostUserModel):
             return None
 
         return avanpost_user
@@ -191,17 +216,23 @@ class UserModel(BaseModel, UserMixin):
     @property
     def is_authenticated(self) -> bool:
         """Проверка авторизации через наличие связи с AvanpostUser."""
-        if self.avanpost_link is None:
+        link: AvanpostUserLinkModel | None = self.avanpost_link
+        if link is None:
             return False
-        return self.avanpost_link.FK_Link is not None
+        return link.FK_Link is not None
 
     @property
     def avanpost_id(self) -> int | None:
-        """Получение ID пользователя в Avanpost."""
-        if self.avanpost_link is None:
+        """Получение ID пользователя в Avanpost.
+
+        ИСПРАВЛЕНО (PyCharm "This code is unreachable", строка 208):
+        явная локальная переменная и проверка `isinstance(fk_parent, int)`.
+        """
+        link: AvanpostUserLinkModel | None = self.avanpost_link
+        if link is None:
             return None
 
-        fk_parent = self.avanpost_link.FK_Parent
+        fk_parent: int | None = link.FK_Parent
         if fk_parent is None:
             return None
 
@@ -212,15 +243,20 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def avanpost_group_id(self) -> int | None:
-        """Получение ID группы меню из AvanpostUser."""
-        if self.avanpost_link is None:
+        """Получение ID группы меню из AvanpostUser.
+
+        ИСПРАВЛЕНО (PyCharm "This code is unreachable", строка 223):
+        явная локальная переменная для `menu_group` и `isinstance`.
+        """
+        link: AvanpostUserLinkModel | None = self.avanpost_link
+        if link is None:
             return None
 
-        avanpost_user = self.avanpost_link.avanpost_user
+        avanpost_user: AvanpostUserModel | None = link.avanpost_user
         if avanpost_user is None:
             return None
 
-        menu_group = avanpost_user.FK_MenuGroup
+        menu_group: int | None = avanpost_user.FK_MenuGroup
         if menu_group is None:
             return None
 
@@ -231,10 +267,21 @@ class UserModel(BaseModel, UserMixin):
 
     @property
     def display_name(self) -> str:
-        """Отображаемое имя пользователя."""
-        if self.fullname and self.fullname != self.FUserName:
-            return f"{self.fullname} (@{self.FUserName})"
-        return f"@{self.FUserName}"
+        """Отображаемое имя пользователя.
+
+        ИСПРАВЛЕНО (PyCharm "Type 'None' doesn't define '__str__'",
+        строка 165): `self.FUserName` — `str | None`, а в f-string
+        использовался напрямую. Используем явные проверки.
+        """
+        username: str | None = self.FUserName
+        fullname: str = self.fullname
+
+        if username is None or username == "":
+            return fullname
+
+        if fullname != "" and fullname != username:
+            return f"{fullname} (@{username})"
+        return f"@{username}"
 
 
 class ChatModel(BaseModel):
@@ -283,7 +330,7 @@ class ChatModel(BaseModel):
         "ChatMessageModel", back_populates="chat", cascade="all, delete-orphan"
     )
 
-    ChatsNotificationsSettings: Mapped[Optional["ChatNotificationSettingsModel"]] = relationship(
+    ChatsNotificationsSettings: Mapped["ChatNotificationSettingsModel | None"] = relationship(
         "ChatNotificationSettingsModel", back_populates="chat", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -300,7 +347,9 @@ class ChatModel(BaseModel):
     )
 
     def __repr__(self) -> str:
-        return f"<Chat(id={self.FID}, type={self.FType}, title={self.FTitle})>"
+        title: str = self.FTitle or "-"
+        chat_type: str = self.FType.value
+        return f"<Chat(id={self.FID}, type={chat_type}, title={title})>"
 
 
 class UserChatMemberModel(BaseModel, UserMixin, ChatMemberMixin):
@@ -466,11 +515,9 @@ class ChatMessageModel(BaseModel):
 
     # ==================== СВЯЗИ ====================
     chat: Mapped["ChatModel"] = relationship("ChatModel", back_populates="ChatMessages")
-    user: Mapped[Optional["UserModel"]] = relationship("UserModel", back_populates="UserMessages")
-    chat_member: Mapped[Optional["ChatMemberModel"]] = relationship(
-        "ChatMemberModel", back_populates="ChatMemberMessages"
-    )
-    deleted_by_message: Mapped[Optional["ChatMessageModel"]] = relationship(
+    user: Mapped["UserModel | None"] = relationship("UserModel", back_populates="UserMessages")
+    chat_member: Mapped["ChatMemberModel | None"] = relationship("ChatMemberModel", back_populates="ChatMemberMessages")
+    deleted_by_message: Mapped["ChatMessageModel | None"] = relationship(
         "ChatMessageModel", remote_side=[FID], foreign_keys=[FK_DeletedByMessage], uselist=False
     )
     error_links: Mapped[list["ErrorMessageLinkModel"]] = relationship(
@@ -495,16 +542,30 @@ class ChatMessageModel(BaseModel):
 
     @property
     def display_text(self) -> str:
-        """Отображаемый текст сообщения."""
+        """Отображаемый текст сообщения.
+
+        ИСПРАВЛЕНО (PyCharm "Type 'None' doesn't define '__str__'",
+        строка 305): `self.FK_MessageType` — enum, но в f-string
+        использовался `.value`, а PyCharm не знал, что `FK_MessageType`
+        не `None` (хотя это NOT NULL). Здесь явная проверка на `None`.
+        """
         if self.FFlagDeleted:
             if self.FK_DeletedByMessage:
                 return f"[DELETED by message {self.FK_DeletedByMessage}]"
             return "[DELETED MESSAGE]"
-        if self.FText:
-            return self.FText or ""
-        if self.FCaption:
-            return self.FCaption or ""
-        return f"[{self.FK_MessageType.value}]"
+
+        text: str | None = self.FText
+        if text:
+            return text
+
+        caption: str | None = self.FCaption
+        if caption:
+            return caption
+
+        msg_type: MessageType | None = self.FK_MessageType
+        if msg_type is None:
+            return "[UNKNOWN]"
+        return f"[{msg_type.value}]"
 
 
 # ============================================================
@@ -603,7 +664,7 @@ class ErrorModel(BaseModel):
     FK_ResolvedBy: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("TUsers.FID"), nullable=True)
 
     # ==================== СВЯЗИ ====================
-    resolved_by_user: Mapped[Optional["UserModel"]] = relationship(
+    resolved_by_user: Mapped["UserModel | None"] = relationship(
         "UserModel", foreign_keys=[FK_ResolvedBy], back_populates="ResolvedErrors"
     )
     error_links: Mapped[list["ErrorMessageLinkModel"]] = relationship(
@@ -704,7 +765,190 @@ class ErrorFilterModel(BaseModel):
 
 
 # ============================================================
-# 3. МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ
+# 3. МОБИЛЬНЫЕ КЛИЕНТЫ И ДИАГНОСТИЧЕСКИЕ ЛОГИ
+# ============================================================
+
+
+class AppModel(BaseModel):
+    """Справочник мобильных клиентов (приложений).
+
+    FFid — уникальный строковый идентификатор клиента (fingerprint/device-id).
+    FUserID — Tinode user ID (usrXXX), НЕ числовой ID. Это важно:
+    push_notification_service.get_fcms_for_user() ожидает usrXXX.
+    """
+
+    __tablename__ = "TApps"
+    __table_args__ = (
+        PrimaryKeyConstraint("FID", name="PK_Apps"),
+        UniqueConstraint("FFid", name="UK_Apps_FFid"),
+        Index("IX_Apps_FFid", "FFid"),
+        Index("IX_Apps_IsActive", "FIsActive"),
+        Index("IX_Apps_UserID", "FUserID"),
+        *_get_table_args(autoincrement=True),
+    )
+
+    FID: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    FFid: Mapped[str] = mapped_column(String(255), nullable=False)
+    FTitle: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    FPlatform: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    FAppVersion: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    FUserID: Mapped[str | None] = mapped_column(String(64), nullable=True)  # usrXXX
+
+    FIsActive: Mapped[bool] = mapped_column(Boolean, default=True)
+    FLastSeenAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    FLogsCount: Mapped[int] = mapped_column(Integer, default=0)
+    FLogRequestsCount: Mapped[int] = mapped_column(Integer, default=0)
+
+    FDateCreated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
+    FDateUpdated: Mapped[datetime] = mapped_column(DateTime, default=datetime_now, onupdate=datetime_now)
+
+    Logs: Mapped[list["AppLogModel"]] = relationship("AppLogModel", back_populates="app", cascade="all, delete-orphan")
+    LogRequests: Mapped[list["AppLogRequestModel"]] = relationship(
+        "AppLogRequestModel", back_populates="app", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        title: str = self.FTitle or "-"
+        return f"<App(id={self.FID}, fid={self.FFid}, title={title}, active={self.FIsActive})>"
+
+
+class AppLogModel(BaseModel):
+    """
+    Диагностические логи мобильных клиентов.
+
+    Одна строка = одна запись лога. Батч идентифицируется
+    (FBatchID, FIdx) — это гарантирует идемпотентность вставки
+    через ON CONFLICT DO NOTHING.
+
+    Attributes:
+        FID: ID записи
+        FK_App: ID клиента (TApps.FID)
+        FBatchID: Идентификатор батча логов
+        FIdx: Индекс записи внутри батча
+        FRequestID: ID запроса, в рамках которого собраны логи (опционально)
+        FFid: Строковый идентификатор клиента (дублируется для запросов)
+        FUserID: ID пользователя клиента (строковый, опционально)
+        FReceivedAt: Дата приёма записи на сервере
+        FTrigger: Триггер сбора логов
+        FFilterApplied: Применённый фильтр
+        FTruncated: Была ли запись усечена
+        FTruncatedReason: Причина усечения
+        FTs: Временная метка записи лога (клиентская)
+        FSessionID: ID сессии клиента
+        FLevel: Уровень лога (числовой)
+        FCritical: Является ли запись критической
+        FTag: Тег лога
+        FMsg: Сообщение лога
+        FTrace: Трассировка стека
+        FThread: Поток
+        FFields: Дополнительные поля (JSON/текст)
+    """
+
+    __tablename__ = "TAppLogs"
+    __table_args__ = (
+        PrimaryKeyConstraint("FID", name="PK_AppLogs"),
+        ForeignKeyConstraint(["FK_App"], ["TApps.FID"], ondelete="CASCADE", name="FK_AppLogs_App"),
+        UniqueConstraint("FBatchID", "FIdx", name="uq_app_logs_batch_idx"),
+        Index("ix_app_logs_app_received", "FK_App", "FReceivedAt"),
+        Index("ix_app_logs_level_received", "FLevel", "FReceivedAt"),
+        Index("ix_app_logs_request", "FRequestID"),
+        *_get_table_args(autoincrement=True),
+    )
+
+    FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    FK_App: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    FBatchID: Mapped[str] = mapped_column(Text, nullable=False)
+    FIdx: Mapped[int] = mapped_column(Integer, nullable=False)
+    FRequestID: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FFid: Mapped[str] = mapped_column(Text, nullable=False)
+    FUserID: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FReceivedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    FTrigger: Mapped[str] = mapped_column(Text, nullable=False)
+    FFilterApplied: Mapped[str] = mapped_column(Text, nullable=False)
+    FTruncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    FTruncatedReason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    FTs: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    FSessionID: Mapped[str] = mapped_column(Text, nullable=False)
+    FLevel: Mapped[int] = mapped_column(Integer, nullable=False)
+    FCritical: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    FTag: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FMsg: Mapped[str] = mapped_column(Text, nullable=False)
+    FTrace: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FThread: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FFields: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ==================== СВЯЗИ ====================
+    app: Mapped["AppModel"] = relationship("AppModel", back_populates="Logs")
+
+    def __repr__(self) -> str:
+        return (
+            f"<AppLog(id={self.FID}, app={self.FK_App}, batch={self.FBatchID}, idx={self.FIdx}, level={self.FLevel})>"
+        )
+
+
+class AppLogRequestModel(BaseModel):
+    """
+    Запрос на отправку диагностических логов с мобильного клиента.
+
+    Attributes:
+        FID: ID запроса (UUID-строка, PK)
+        FK_App: ID клиента (TApps.FID)
+        FFid: Строковый идентификатор клиента (дублируется для запросов)
+        FUserID: ID пользователя клиента (строковый, опционально)
+        FCreatedAt: Дата создания запроса
+        FMaxBytes: Максимальный размер выборки в байтах
+        FSinceTs: Нижняя граница по времени (клиентская метка)
+        FLevels: Список уровней (например, "3,4,5") или NULL
+        FForceAll: Принудительно собрать все логи
+        FFulfilledAt: Дата выполнения запроса
+        FTruncated: Была ли выборка усечена
+        FTruncatedReason: Причина усечения
+        FDeclineReason: Причина отказа от выполнения
+        FTtlSec: TTL запроса в секундах
+        FExpiresAt: Дата истечения срока действия запроса
+        FCreatedBy: Кто создал запрос ("admin" | "system")
+    """
+
+    __tablename__ = "TAppLogsRequests"
+    __table_args__ = (
+        PrimaryKeyConstraint("FID", name="PK_AppLogRequests"),
+        ForeignKeyConstraint(["FK_App"], ["TApps.FID"], ondelete="CASCADE", name="FK_AppLogsRequests_App"),
+        Index("ix_AppLogsRequest_app_created", "FK_App", "FCreatedAt"),
+        Index("ix_AppLogsRequest_expires", "FExpiresAt"),
+    )
+
+    FID: Mapped[str] = mapped_column(Text, primary_key=True)  # UUID-строка
+    FK_App: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    FFid: Mapped[str] = mapped_column(Text, nullable=False)
+    FUserID: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FCreatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    FMaxBytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    FSinceTs: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    FLevels: Mapped[str | None] = mapped_column(Text, nullable=True)  # "3,4,5" или NULL
+    FForceAll: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    FFulfilledAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    FTruncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    FTruncatedReason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FDeclineReason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    FTtlSec: Mapped[int] = mapped_column(Integer, default=3600, nullable=False)
+    FExpiresAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    FCreatedBy: Mapped[str] = mapped_column(Text, nullable=False)  # "admin" | "system"
+
+    # ==================== СВЯЗИ ====================
+    app: Mapped["AppModel"] = relationship("AppModel", back_populates="LogRequests")
+
+    def __repr__(self) -> str:
+        return f"<AppLogRequest(id={self.FID}, app={self.FK_App}, created_at={self.FCreatedAt})>"
+
+
+# ============================================================
+# 4. МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ
 # ============================================================
 
 
@@ -730,12 +974,12 @@ class PeriodicTaskModel(BaseModel):
         FFailCount: Количество неудачных выполнений
         FConsecutiveFailures: Количество последовательных ошибок
         FMaxConsecutiveFailures: Максимальное количество последовательных ошибок
-        FExecutionTimeoutSeconds: Таймаут выполнения в секундах
+        FExecutionTimeoutSeconds: Тайм-аут выполнения в секундах
         FLastExecutionDuration: Длительность последнего выполнения
         FErrorCount: Количество ошибок
         FLastErrorText: Текст последней ошибки
         FNotifiedOnFailure: Было ли уведомление о сбое
-        FNotifiedOnTimeout: Было ли уведомление о таймауте
+        FNotifiedOnTimeout: Было ли уведомление о тайм-ауте
         FCreatedAt: Дата создания
         FUpdatedAt: Дата обновления
     """
@@ -783,7 +1027,7 @@ class PeriodicTaskModel(BaseModel):
 
 
 # ============================================================
-# 4. МОДЕЛИ НАПОМИНАНИЙ
+# 5. МОДЕЛИ НАПОМИНАНИЙ
 # ============================================================
 
 
@@ -870,7 +1114,7 @@ class UserReminderModel(BaseModel):
 
     # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User])
-    chat: Mapped[Optional["ChatModel"]] = relationship("ChatModel", foreign_keys=[FK_Chat], back_populates="Reminders")
+    chat: Mapped["ChatModel | None"] = relationship("ChatModel", foreign_keys=[FK_Chat], back_populates="Reminders")
 
     child_reminders: Mapped[list["UserReminderModel"]] = relationship(
         "UserReminderModel",
@@ -920,7 +1164,7 @@ class UserReminderShareModel(BaseModel):
 
 
 # ============================================================
-# 5. МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ
+# 6. МОДЕЛИ НАСТРОЕК УВЕДОМЛЕНИЙ
 # ============================================================
 
 
@@ -994,7 +1238,7 @@ class ChatNotificationSettingsModel(BaseModel):
 
 
 # ============================================================
-# 6. МОДЕЛИ АВТОМАТИЗАЦИИ
+# 7. МОДЕЛИ АВТОМАТИЗАЦИИ
 # ============================================================
 
 
@@ -1046,7 +1290,8 @@ class UserRequestAutomationModel(BaseModel):
         default=UserRequestAutomationPriority.MEDIUM,
     )
     FStatus: Mapped[UserRequestAutomationStatus] = mapped_column(
-        SQLEnum(UserRequestAutomationStatus, name="requestautomationstatus"), default=UserRequestAutomationStatus.NEW
+        SQLEnum(UserRequestAutomationStatus, name="requestautomationstatus"),
+        default=UserRequestAutomationStatus.NEW,
     )
 
     FK_Chat: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -1060,10 +1305,10 @@ class UserRequestAutomationModel(BaseModel):
 
     # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="RequestsAutomations")
-    chat: Mapped[Optional["ChatModel"]] = relationship(
+    chat: Mapped["ChatModel | None"] = relationship(
         "ChatModel", foreign_keys=[FK_Chat], back_populates="RequestsAutomations"
     )
-    completed_by_user: Mapped[Optional["UserModel"]] = relationship(
+    completed_by_user: Mapped["UserModel | None"] = relationship(
         "UserModel", foreign_keys=[FCompletedBy], back_populates="RequestsAutomationsCompleted"
     )
 
@@ -1072,7 +1317,7 @@ class UserRequestAutomationModel(BaseModel):
 
 
 # ============================================================
-# 7. МОДЕЛИ РАССЫЛОК
+# 8. МОДЕЛИ РАССЫЛОК
 # ============================================================
 
 
@@ -1130,7 +1375,7 @@ class BroadcastModel(BaseModel):
 
     # ==================== СВЯЗИ ====================
     user: Mapped["UserModel"] = relationship("UserModel", foreign_keys=[FK_User], back_populates="Broadcasts")
-    cancelled_by_user: Mapped[Optional["UserModel"]] = relationship(
+    cancelled_by_user: Mapped["UserModel | None"] = relationship(
         "UserModel", foreign_keys=[FK_CancelledBy], back_populates="BroadcastsCancelled"
     )
     messages: Mapped[list["BroadcastMessageLinkModel"]] = relationship(
@@ -1205,6 +1450,10 @@ __all__ = [
     "ErrorModel",
     "ErrorMessageLinkModel",
     "ErrorFilterModel",
+    # Модели мобильных клиентов
+    "AppModel",
+    "AppLogModel",
+    "AppLogRequestModel",
     # Модели периодических задач
     "PeriodicTaskModel",
     # Модели напоминаний
