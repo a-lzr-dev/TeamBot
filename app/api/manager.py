@@ -61,7 +61,6 @@ from ..middlewares.api import (
 )
 from ..models import datetime_now
 from ..utils.decorators import handle_exception, log_exceptions
-from ..ws.relay_handler import router as ws_relay_router
 from .routers import (
     admin_router,
     automation_router,
@@ -416,20 +415,29 @@ class APIManager:
         app.include_router(teamdroid_router, prefix="/api/v1")
         app.include_router(utils_router, prefix="/api/v1")
 
-        # Internal ingest from the Go myrelay adapter. Not prefixed with /api/v1
-        # so it can be firewalled separately.
         if settings.WS_NOTIFY_ENABLED:
-            app.include_router(ws_relay_router)
-
-            # WebSocket endpoint for mobile clients.
+            from ..ws.relay_handler import (
+                ingest_path,
+                register_fid_path,
+            )
+            from ..ws.relay_handler import (
+                router as relay_router,
+            )
             from ..ws.router import ws_notify_handler
 
-            ws_path = settings.WS_NOTIFY_PATH or "/ws/notify"
-            app.add_api_websocket_route(ws_path, ws_notify_handler)
+            # HTTP-эндпоинты relay: /internal/push и /internal/push/register_fid
+            app.include_router(relay_router)
 
-            api_logger.info(f"✅ Routers registered; WS endpoint at {ws_path}; relay ingest at POST /internal/push")
-        else:
-            api_logger.info("ℹ️ WS_NOTIFY_ENABLED=false: relay ingest and WS endpoint are NOT registered")
+            # WebSocket-эндпоинт для мобильных клиентов
+            ws_path = settings.WS_NOTIFY_PATH or "/ws/notify"
+            app.websocket(ws_path)(ws_notify_handler)
+
+            api_logger.info(
+                "✅ Routers registered; WS=%s; relay ingest=%s; FID register=%s",
+                ws_path,
+                ingest_path(),
+                register_fid_path(),
+            )
 
     # ============================================================
     # EXCEPTION HANDLERS

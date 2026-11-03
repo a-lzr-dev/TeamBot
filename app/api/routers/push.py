@@ -1,201 +1,247 @@
-"""Публичный API для регистрации Firebase Installation ID (FID).
+"""Публичный API для регистрации FID через WS-токен.
 
-Клиент вызывает POST /api/v1/push/register_fid, когда получил FID
-(FirebaseInstallations.getInstance().getId() → onComplete), но не
-установил WS-соединение (или оно было закрыто). Это позволяет серверу
-доставлять push через FCM даже без WS.
+Клиент вызывает POST /api/v1/push/register_fid с {"token": "<base64>"}:
+  - токен расшифровывается (IV||AES-GCM, plaintext = FID|usrXXX|yyMMdd|ver|code);
+  - вызывается ext.PA_mbl_TokenVerify_Exec (usi=usrXXX, api=TEAMDROID_APP_ID,
+    dvc=FID, tkn=yyMMdd, cip=client_ip, ver, vcd);
+  - при успехе FID регистрируется в push_notification_service.
 
-# CHANGED: добавлена проверка существования пользователя.
-# Раньше register_fid принимал любой user_id, начинающийся с "usr", без
-# проверки в БД. Любой, у кого есть PHONE_AUTH_APP_KEY, мог
-# зарегистрировать FID на чужой user_id и получать push-уведомления жертвы.
-# Теперь проверяем наличие записи в AvanpostUserLinkModel
-# (usrXXX -> TUsers.FID). Если маппинга нет — 404.
+DELETE /api/v1/push/register_fid с {"token": "<base64>"}:
+  - токен расшифровывается;
+  - вызывается ext.PA_mbl_TokenFinish_Exec (usi, api, dvc);
+  - FID удаляется из push_notification_service.
 
-Аутентификация — стандартный X-API-Key (AuthMiddleware). user_id
-передаётся в теле и должен существовать в БД (проверка через
-AvanpostUserLinkModel).
-
-Эндпоинты:
-    POST /api/v1/push/register_fid — зарегистрировать FID
-    DELETE /api/v1/push/register_fid — удалить FID (logout)
+Старый контракт {user_id, fid} больше не поддерживается.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import asyncio
+
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 (нужен FastAPI в runtime для Depends)
 
-from ...db.repositories import UserRepository
+from ...config import settings
+from ...db.repositories import TeamdroidProcedureRepository
 from ...logger import api_logger
 from ...utils.datetime import get_timestamp
 from ...utils.decorators import log_exceptions
 from ...ws.push_notification_service import push_notification_service
-from ..dependencies import get_session
+from ...ws.token_crypto import decrypt_ws_token
 
 router = APIRouter(prefix="/push", tags=["Push"])
 
-_user_repo = UserRepository()
+
+# ---------------------------------------------------------------------------
+# Модели
+# ---------------------------------------------------------------------------
 
 
-class RegisterFidRequest(BaseModel):
-    """Запрос на регистрацию FID."""
+class _TokenPayload(BaseModel):
+    token: str = Field(..., min_length=1, description="Base64(IV||AES-256-GCM(plaintext))")
 
-    user_id: str = Field(..., description="Tinode user ID, e.g. 'usrABC...'")
-    fid: str = Field(
-        ...,
-        min_length=10,
-        max_length=64,
-        description="Firebase Installation ID (FID)",
-    )
-
-    @field_validator("user_id")
+    @field_validator("token")
     @classmethod
-    def _validate_user_id(cls, v: str) -> str:
-        if not v.startswith("usr") or len(v) < 6:
-            raise ValueError(f"Invalid user_id: {v}")
-        return v
-
-
-class UnregisterFidRequest(BaseModel):
-    """Запрос на удаление FID."""
-
-    user_id: str = Field(..., description="Tinode user ID")
-    fid: str = Field(
-        ...,
-        min_length=10,
-        max_length=64,
-        description="Firebase Installation ID",
-    )
-
-    @field_validator("user_id")
-    @classmethod
-    def _validate_user_id(cls, v: str) -> str:
-        if not v.startswith("usr") or len(v) < 6:
-            raise ValueError(f"Invalid user_id: {v}")
+    def _strip(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("empty token")
         return v
 
 
 # ---------------------------------------------------------------------------
-# Хелпер: проверка существования пользователя по usrXXX
+# Хелперы
 # ---------------------------------------------------------------------------
 
 
-async def _user_exists(session: AsyncSession, usr_id: str) -> bool:
-    """Проверить, что usrXXX существует в БД (через AvanpostUserLinkModel).
-
-    # CHANGED: раньше проверка отсутствовала. Теперь register_fid не может
-    # зарегистрировать FID на несуществующий/чужой user_id, даже если у
-    # вызывающего есть X-API-Key.
-
-    Маппинг: usrXXX в Tinode соответствует записи AvanpostUserModel.FID,
-    связанной с Telegram-пользователем через AvanpostUserLinkModel. Но
-    поскольку в Tinode user_id — это usrXXX (строка), а в БД
-    AvanpostUserModel.FID — число, прямой проверки "usrXXX -> FID" нет.
-
-    Поэтому: считаем, что user_id валиден, если для него есть хотя бы
-    одна запись в AvanpostUserLinkModel с непустым FK_Link (то есть
-    пользователь прошёл авторизацию через Avanpost и получил usrXXX).
-    """
-    from ...models import AvanpostUserLinkModel
-
-    stmt = select(AvanpostUserLinkModel.FK_Link).where(AvanpostUserLinkModel.FK_Link.is_not(None)).limit(1)
-    # TODO: когда появится колонка TinodeUserID (usrXXX) в БД, заменить
-    # этот запрос на точную проверку по usrXXX. Сейчас проверка мягкая:
-    # достаточно, чтобы в системе был хоть один авторизованный пользователь.
-    result = await session.execute(stmt)
-    return result.scalar_one_or_none() is not None
+def _extract_client_ip(request: Request) -> str:
+    """IP клиента с учётом прокси (последний в X-Forwarded-For)."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1][:64]
+    xri = request.headers.get("x-real-ip")
+    if xri:
+        return xri.strip()[:64]
+    if request.client is not None:
+        return (request.client.host or "")[:64]
+    return ""
 
 
-# ---------------------------------------------------------------------------
-# Эндпоинты
-# ---------------------------------------------------------------------------
-
-
-@router.post(
-    "/register_fid",
-    summary="Зарегистрировать Firebase Installation ID",
-    description=(
-        "Сохраняет FID для пользователя, чтобы сервер "
-        "мог доставлять push через FCM, даже если WS-соединение отсутствует."
-    ),
-)
-@log_exceptions(api_logger)
-async def register_fid(
-    payload: RegisterFidRequest,
-    session: AsyncSession = Depends(get_session),
-) -> JSONResponse:
-    """Регистрация FID.
-
-    # CHANGED: теперь проверяем, что пользователь существует. Раньше
-    # принимали любой usrXXX с валидным X-API-Key — это позволяло
-    # зарегистрировать FID на чужой user_id и получать его push.
-
-    Защита:
-    - X-API-Key (AuthMiddleware) — отсекает внешних клиентов.
-    - Проверка user_id в БД — отсекает регистрацию FID на несуществующего
-      пользователя даже при утёкшем API-ключе.
-    """
-    # Проверка существования пользователя.
-    if not await _user_exists(session, payload.user_id):
-        api_logger.warning(
-            "push.register_fid: user %r does not exist in DB",
-            payload.user_id,
-        )
-        return JSONResponse(
-            status_code=404,
+def _decrypt_or_error(token: str) -> tuple[object | None, JSONResponse | None]:
+    payload = decrypt_ws_token(token)
+    if payload is None:
+        return None, JSONResponse(
+            status_code=400,
             content={
                 "success": False,
-                "error": "user_not_found",
-                "user_id": payload.user_id,
+                "error": "invalid_token",
+                "message": "Token decryption or validation failed",
+                "timestamp": get_timestamp(),
+            },
+        )
+    return payload, None
+
+
+# ---------------------------------------------------------------------------
+# POST — регистрация FID (TokenVerify)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/register_fid", summary="Зарегистрировать FID (с проверкой токена)")
+@log_exceptions(api_logger)
+async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse:
+    data, err = _decrypt_or_error(payload.token)
+    if err is not None:
+        return err
+    # data: WsTokenData — но mypy его не знает, приводим по месту
+    from ...ws.token_crypto import WsTokenData
+
+    assert isinstance(data, WsTokenData)
+
+    user_id = data.user_id
+    fid = data.fcm_id
+    client_ip = _extract_client_ip(request)
+
+    app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
+    if not app_id:
+        api_logger.error("push.register_fid: TEAMDROID_APP_ID=0 — TokenVerify невозможен")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "error": "server_misconfigured",
+                "message": "TEAMDROID_APP_ID is not configured",
                 "timestamp": get_timestamp(),
             },
         )
 
-    await push_notification_service.update_fid(payload.user_id, payload.fid)
+    # 1) TokenVerify в Teamdroid SQL Server
+    try:
+        ok, verify_err = await asyncio.wait_for(
+            asyncio.to_thread(
+                TeamdroidProcedureRepository.verify_token,
+                user_id=user_id,
+                fcm_id=fid,
+                app_id=app_id,
+                token_date=data.date,
+                client_ip=client_ip,
+                app_version=data.app_version,
+                app_version_code=data.app_version_code,
+            ),
+            timeout=10.0,
+        )
+    except TimeoutError:
+        api_logger.warning("push.register_fid: verify_token timeout user=%s", user_id)
+        return JSONResponse(
+            status_code=504,
+            content={
+                "success": False,
+                "error": "verify_timeout",
+                "timestamp": get_timestamp(),
+            },
+        )
+
+    if not ok:
+        api_logger.warning(
+            "push.register_fid: verify_token rejected user=%s fid_suffix=%s err=%s",
+            user_id,
+            fid[-6:] if len(fid) >= 6 else "***",
+            verify_err,
+        )
+        return JSONResponse(
+            status_code=401,
+            content={
+                "success": False,
+                "error": "token_rejected",
+                "message": verify_err or "TokenVerify failed",
+                "timestamp": get_timestamp(),
+            },
+        )
+
+    # 2) Регистрация FID в in-memory сервисе
+    await push_notification_service.update_fid(user_id, fid)
     api_logger.info(
-        "push.register_fid: user=%s fid_suffix=...%s",
-        payload.user_id,
-        payload.fid[-8:] if len(payload.fid) >= 8 else "***",
+        "push.register_fid: OK user=%s fid_suffix=...%s",
+        user_id,
+        fid[-8:] if len(fid) >= 8 else "***",
     )
 
     return JSONResponse(
         status_code=200,
         content={
             "success": True,
-            "user_id": payload.user_id,
+            "user_id": user_id,
             "fid_registered": True,
             "timestamp": get_timestamp(),
         },
     )
 
 
-@router.delete(
-    "/register_fid",
-    summary="Удалить Firebase Installation ID",
-    description="Удаляет FID пользователя (например, при logout).",
-)
+# ---------------------------------------------------------------------------
+# DELETE — удаление FID (TokenFinish)
+# ---------------------------------------------------------------------------
+
+
+@router.delete("/register_fid", summary="Удалить FID (с завершением сессии токена)")
 @log_exceptions(api_logger)
-async def unregister_fid(
-    payload: UnregisterFidRequest,
-) -> JSONResponse:
-    """Удаление FID."""
-    await push_notification_service.remove_fid(payload.user_id, payload.fid)
+async def unregister_fid(payload: _TokenPayload, request: Request) -> JSONResponse:
+    data, err = _decrypt_or_error(payload.token)
+    if err is not None:
+        return err
+    from ...ws.token_crypto import WsTokenData
+
+    assert isinstance(data, WsTokenData)
+
+    user_id = data.user_id
+    fid = data.fcm_id
+    client_ip = _extract_client_ip(request)
+    _ = client_ip  # TokenFinish IP не использует, оставлено для симметрии
+
+    app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
+
+    # 1) TokenFinish (best-effort — при ошибке всё равно снимаем FID)
+    finish_ok = False
+    if app_id:
+        try:
+            finish_ok, finish_err = await asyncio.wait_for(
+                asyncio.to_thread(
+                    TeamdroidProcedureRepository.token_finish,
+                    user_id=user_id,
+                    fcm_id=fid,
+                    app_id=app_id,
+                ),
+                timeout=10.0,
+            )
+            if not finish_ok:
+                api_logger.warning(
+                    "push.unregister_fid: token_finish non-OK user=%s err=%s",
+                    user_id,
+                    finish_err,
+                )
+        except TimeoutError:
+            api_logger.warning("push.unregister_fid: token_finish timeout user=%s", user_id)
+    else:
+        api_logger.warning("push.unregister_fid: TEAMDROID_APP_ID=0 — TokenFinish пропущен")
+
+    # 2) Удаляем FID из сервиса
+    await push_notification_service.remove_fid(user_id, fid)
     api_logger.info(
-        "push.unregister_fid: user=%s fid_suffix=...%s",
-        payload.user_id,
-        payload.fid[-8:] if len(payload.fid) >= 8 else "***",
+        "push.unregister_fid: OK user=%s fid_suffix=...%s finish_ok=%s",
+        user_id,
+        fid[-8:] if len(fid) >= 8 else "***",
+        finish_ok,
     )
 
     return JSONResponse(
         status_code=200,
         content={
             "success": True,
-            "user_id": payload.user_id,
+            "user_id": user_id,
             "fid_registered": False,
+            "token_finished": finish_ok,
             "timestamp": get_timestamp(),
         },
     )

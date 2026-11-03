@@ -10,11 +10,20 @@ TEAMDROID_SQL_*:
     TEAMDROID_SQL_PROC_TOKEN_VERIFY             ext.PA_mbl_TokenVerify_Exec
     TEAMDROID_SQL_PROC_TOKEN_FINISH             ext.PA_mbl_TokenFinish_Exec
     TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY ext.PA_mbl_MsgsDeliveryStatus_Edit
+    TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD       ext.PA_mbl_TokenDevices_Load
 
-Контракт всех процедур:
+Контракт процедур с @Params:
     EXEC <proc> @Params = N'<json>'
     Выход: одна JSON-строка в одной колонке одной строки,
     либо (Success BIT) для VerifyToken / TokenFinish.
+
+Контракт ext.PA_mbl_TokenDevices_Load:
+    EXEC ext.PA_mbl_TokenDevices_Load @Params = N'{"api":<TINYINT>}'
+    Возвращает набор строк (usi, dvc) — активные устройства за
+    последние 90 дней. Read-only: используется при старте
+    PushNotificationService для восстановления in-memory реестра
+    user_id <-> FID (SQL Server ведёт его сам через verify_token/
+    token_finish, TeamBot только читает).
 
 Все методы синхронные (pyodbc блокирующий). Из async-кода вызывать так:
 
@@ -152,7 +161,6 @@ class TeamdroidProcedureRepository:
         try:
             result = TeamdroidProcedureRepository._run_json_proc(proc_name, params)
             raw = result.get("raw")
-
             if raw is None:
                 db_logger.warning(
                     "⚠️ [verify_token] procedure returned no rows for user=%s",
@@ -160,7 +168,8 @@ class TeamdroidProcedureRepository:
                 )
                 return False, "no_rows"
 
-            ok = raw == 1 or raw is True
+            raw_value: Any = raw
+            ok = raw_value == 1 or raw_value is True
 
             if ok:
                 db_logger.info(
@@ -175,7 +184,7 @@ class TeamdroidProcedureRepository:
                 user_id,
                 raw,
             )
-            return False, f"rejected_value={raw!r}"
+            return False, f"rejected_value={raw_value!r}"
 
         except pyodbc.Error as e:
             err_text = str(e)
@@ -267,7 +276,8 @@ class TeamdroidProcedureRepository:
                 )
                 return False, "no_rows"
 
-            ok = raw == 1 or raw is True
+            raw_value: Any = raw
+            ok = raw_value == 1 or raw_value is True
 
             if ok:
                 db_logger.info(
@@ -282,7 +292,7 @@ class TeamdroidProcedureRepository:
                 user_id,
                 raw,
             )
-            return False, f"rejected_value={raw!r}"
+            return False, f"rejected_value={raw_value!r}"
 
         except pyodbc.Error as e:
             err_text = str(e)
@@ -311,6 +321,87 @@ class TeamdroidProcedureRepository:
                 exc_info=True,
             )
             return False, repr(e)
+
+    # ============================================================
+    # TOKEN DEVICES (FID registry, read-only)
+    # ============================================================
+
+    @staticmethod
+    def load_token_devices() -> dict[str, set[str]]:
+        """Загрузить активные пары (usi, dvc) из Teamdroid SQL Server.
+
+        Вызывает ext.PA_mbl_TokenDevices_Load с @Params = '{"api": <TINYINT>}'.
+        Процедура возвращает активные устройства за последние 90 дней
+        (FDateFinish IS NULL, FFlagExpire = 0, FDateChanged > now-90d).
+
+        Read-only: используется при старте PushNotificationService
+        для восстановления in-memory реестра user_id <-> FID.
+        SQL Server ведёт его сам через ext.PA_mbl_TokenVerify_Exec
+        (INSERT сессии устройства) и ext.PA_mbl_TokenFinish_Exec
+        (UPDATE FDateFinish) — TeamBot туда НЕ пишет.
+
+        Returns:
+            dict: {user_id: {fcm_id, ...}}
+
+        Ошибка SQL не фатальна — возвращается пустой dict, сервис
+        стартует с пустым реестром (клиенты перерегистрируются через
+        WS или POST /api/v1/push/register_fid).
+        """
+        proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD
+        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+
+        app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
+        if not app_id:
+            db_logger.warning(
+                "[load_token_devices] TEAMDROID_APP_ID=0 — процедура вернёт 0 строк (JOIN dir.TRSDirSysApps)"
+            )
+            return {}
+
+        params_json = json.dumps({"api": app_id}, ensure_ascii=False)
+        result_map: dict[str, set[str]] = {}
+
+        db_logger.debug("[load_token_devices] EXEC %s api=%d", proc_name, app_id)
+
+        try:
+            with teamdroid_sql_cursor() as cur:
+                try:
+                    cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    rows = cur.fetchall()
+                    # Прокручиваем возможные дополнительные result sets
+                    # (RETURN 0 после SELECT — код возврата, а не набор).
+                    while cur.nextset():
+                        pass
+                    cur.connection.commit()
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except pyodbc.Error as rb_exc:
+                        db_logger.error(
+                            "[load_token_devices] rollback failed: %r",
+                            rb_exc,
+                            exc_info=True,
+                        )
+                    raise
+
+            for row in rows:
+                usi = str(row[0] or "").strip()
+                dvc = str(row[1] or "").strip()
+                if usi.startswith("usr") and dvc:
+                    result_map.setdefault(usi, set()).add(dvc)
+
+            db_logger.info(
+                "[load_token_devices] loaded %d users, %d total FIDs",
+                len(result_map),
+                sum(len(s) for s in result_map.values()),
+            )
+            return result_map
+
+        except pyodbc.Error as e:
+            db_logger.warning("[load_token_devices] SQL error: %r", e, exc_info=True)
+            return {}
+        except Exception as e:  # noqa: BLE001
+            db_logger.error("[load_token_devices] unexpected error: %r", e, exc_info=True)
+            return {}
 
     # ============================================================
     # MSG DELIVERY STATUS
@@ -421,8 +512,13 @@ class TeamdroidProcedureRepository:
                 err_text = str(av_exc)
                 try:
                     cur.connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
+                except pyodbc.Error as rb_exc:
+                    db_logger.error(
+                        "[edit_msg_status_delivery_batch] rollback failed: %r (original error: %r)",
+                        rb_exc,
+                        av_exc,
+                        exc_info=True,
+                    )
 
                 if "PRC_mbl_MsgsDeliveryStatus_NoData" in err_text or "50000" in err_text:
                     db_logger.warning(
@@ -459,8 +555,12 @@ class TeamdroidProcedureRepository:
             except Exception:
                 try:
                     cur.connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
+                except pyodbc.Error as rb_exc:
+                    db_logger.error(
+                        "[_run_json_proc] rollback failed: %r",
+                        rb_exc,
+                        exc_info=True,
+                    )
                 raise
 
     # ============================================================
@@ -538,8 +638,12 @@ class TeamdroidProcedureRepository:
                 # в singleton-соединении.
                 try:
                     cur.connection.rollback()
-                except Exception:  # noqa: BLE001
-                    pass
+                except pyodbc.Error as rb_exc:
+                    db_logger.error(
+                        "[_run_json_proc] rollback failed: %r",
+                        rb_exc,
+                        exc_info=True,
+                    )
                 raise
 
 

@@ -58,7 +58,7 @@ class VerifiedToken:
     Attributes:
         user_id: Tinode user ID (``usrXXX``) или ``None``, если проверка
             не удалась.
-        fcm_id: Firebase Installation ID, извлечённый из токена.
+        fcm_id: Firebase Installation ID, извлеченный из токена.
     """
 
     user_id: str | None

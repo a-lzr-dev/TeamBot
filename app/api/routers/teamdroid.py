@@ -765,7 +765,7 @@ class TeamdroidClient:
         self._ctrl_waiters: dict[str, queue.Queue[Any]] = {}
         self._ctrl_waiters_lock = threading.Lock()
 
-        self._subscribed: set[str] = set()
+        self.subscribed: set[str] = set()
         self._subscribed_lock = threading.Lock()
 
     def next_id(self) -> str:
@@ -876,13 +876,13 @@ class TeamdroidClient:
 
         try:
             ctrl = waiter.get(timeout=timeout)
-        except queue.Empty:
+        except queue.Empty as exc:
             raise TimeoutError(
                 f"Timeout waiting for CTRL id={request_id} "
                 f"(timeout={timeout}s, running={self.running}, "
                 f"stream_alive="
                 f"{self.stream_thread.is_alive() if self.stream_thread else None})"
-            ) from None
+            ) from exc
         finally:
             with self._ctrl_waiters_lock:
                 self._ctrl_waiters.pop(request_id, None)
@@ -1003,11 +1003,11 @@ class TeamdroidClient:
             api_logger.warning("[teamdroid] SUBSCRIBE %r failed: %s", topic, err)
             raise RuntimeError(f"SUBSCRIBE {topic!r} failed: {err}")
         with self._subscribed_lock:
-            self._subscribed.add(topic)
+            self.subscribed.add(topic)
 
     def ensure_subscribed(self, topic: str) -> None:
         with self._subscribed_lock:
-            if topic in self._subscribed:
+            if topic in self.subscribed:
                 return
         self.subscribe(topic)
 
@@ -1326,7 +1326,7 @@ class TeamdroidClient:
             thread.join(timeout=2.0)
 
         with self._subscribed_lock:
-            self._subscribed.clear()
+            self.subscribed.clear()
 
 
 def _set_pub_mime(pub: Any, mime: str) -> None:
@@ -1935,7 +1935,7 @@ def _do_health() -> dict[str, Any]:
     return {
         "running": client.running,
         "stream_alive": (client.stream_thread.is_alive() if client.stream_thread else None),
-        "subscribed_count": len(client._subscribed),
+        "subscribed_count": len(client.subscribed),
         "host": client.host,
     }
 

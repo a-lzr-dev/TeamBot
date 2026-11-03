@@ -51,12 +51,12 @@ router = APIRouter(tags=["Internal"])
 _DEFAULT_INGEST_PATH = "/internal/push"
 
 
-def _ingest_path() -> str:
+def ingest_path() -> str:
     return settings.WS_RELAY_INGEST_PATH or _DEFAULT_INGEST_PATH
 
 
-def _register_fid_path() -> str:
-    return _ingest_path().rstrip("/") + "/register_fid"
+def register_fid_path() -> str:
+    return ingest_path().rstrip("/") + "/register_fid"
 
 
 def _check_auth(authorization: str | None, event_id: str | None) -> None:
@@ -90,7 +90,7 @@ def _check_auth(authorization: str | None, event_id: str | None) -> None:
 # ============================================================
 
 
-@router.post(_ingest_path(), include_in_schema=False)
+@router.post(ingest_path(), include_in_schema=False)
 async def ingest_relay_batch(
     batch: RelayBatch,
     authorization: Annotated[str | None, Header()] = None,
@@ -124,10 +124,13 @@ async def ingest_relay_batch(
 
     user_ids = sorted({p.user_id for p in batch.pushes})
     api_logger.info(
-        "relay: batch received event_id=%s pushes=%d users=%s",
+        "relay: batch received event_id=%s pushes=%d users=%s | fcm_enabled=%s fcm_mode=%s fcm_available=%s",
         batch.event_id,
         len(batch.pushes),
         user_ids,
+        getattr(settings, "FCM_ENABLED", False),
+        getattr(settings, "FCM_SEND_MODE", "fallback"),
+        push_notification_service.fcm.available,
     )
 
     delivered = 0
@@ -197,6 +200,7 @@ async def ingest_relay_batch(
             duplicate,
         )
 
+    stats = push_notification_service.stats
     return JSONResponse(
         status_code=200,
         content={
@@ -210,6 +214,12 @@ async def ingest_relay_batch(
             "skipped": skipped,
             "duplicate": duplicate,
             "undelivered_users": sorted(set(undelivered_users)),
+            # NEW: FCM-счётчики (кумулятивные с момента старта)
+            "fcm_stats": {
+                "sent": stats.get("fcm_sent", 0),
+                "failed": stats.get("fcm_failed", 0),
+                "skipped": stats.get("fcm_skipped", 0),
+            },
         },
     )
 
@@ -238,7 +248,7 @@ class RegisterFidRequest(BaseModel):
         return v
 
 
-@router.post(_register_fid_path(), include_in_schema=False)
+@router.post(register_fid_path(), include_in_schema=False)
 async def register_fid(
     payload: RegisterFidRequest,
     authorization: Annotated[str | None, Header()] = None,
@@ -270,7 +280,7 @@ async def register_fid(
     )
 
 
-@router.delete(_register_fid_path(), include_in_schema=False)
+@router.delete(register_fid_path(), include_in_schema=False)
 async def unregister_fid(
     user_id: str,
     authorization: Annotated[str | None, Header()] = None,

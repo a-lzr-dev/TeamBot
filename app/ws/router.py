@@ -64,9 +64,10 @@ def _extract_client_ip(websocket: WebSocket) -> str | None:
     if xri:
         return xri.strip()[:64]
 
-    if websocket.client is not None:
-        return (websocket.client.host or "")[:64] or None
-
+    client = websocket.client
+    if client is not None:
+        host = client.host or ""
+        return host[:64] or None
     return None
 
 
@@ -100,11 +101,14 @@ async def _token_finish_safe(user_id: str, fcm_id: str) -> None:
     try:
         from ..db.repositories import TeamdroidProcedureRepository
 
-        ok, err = await asyncio.to_thread(
-            TeamdroidProcedureRepository.token_finish,
-            user_id=user_id,
-            fcm_id=fcm_id,
-            app_id=app_id,
+        ok, err = await asyncio.wait_for(
+            asyncio.to_thread(
+                TeamdroidProcedureRepository.token_finish,
+                user_id=user_id,
+                fcm_id=fcm_id,
+                app_id=app_id,
+            ),
+            timeout=5.0,  # NEW: не блокируем WS-закрытие
         )
         if not ok:
             api_logger.warning(
@@ -113,6 +117,8 @@ async def _token_finish_safe(user_id: str, fcm_id: str) -> None:
                 fcm_id[-6:] if len(fcm_id) >= 6 else "***",
                 err,
             )
+    except TimeoutError:
+        api_logger.warning("ws: token_finish timeout user=%s", user_id)
     except Exception as exc:  # noqa: BLE001
         api_logger.error("ws: token_finish raised user=%s: %r", user_id, exc, exc_info=True)
 
@@ -148,7 +154,7 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
 
     user_id = verified.user_id
     # FID из query имеет приоритет, т.к. клиент передаёт его явно.
-    # Fallback — FID, извлечённый сервером из токена (Avanpost/Tinode).
+    # Fallback — FID, извлеченный сервером из токена (Avanpost/Tinode).
     fcm_id = query_fid or verified.fcm_id
 
     if not user_id or not user_id.startswith("usr"):
@@ -178,19 +184,27 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        # ── TokenFinish: завершение сессии токена в Teamdroid SQL Server ──
-        # FID берём ДО unregister, потому что unregister очищает
-        # _user_to_fcms[user_id] при отсутствии других сокетов.
-        # Приоритет — FID, пришедший в запросе; fallback — из сервиса.
-        finish_fid = fcm_id or push_notification_service.get_primary_fid(user_id)
-
-        await push_notification_service.unregister(user_id, websocket)
-        api_logger.info("ws: disconnected user=%s", user_id)
-
-        if finish_fid:
-            await _token_finish_safe(user_id, finish_fid)
-        else:
-            api_logger.debug("ws: token_finish skipped user=%s (no FID)", user_id)
+        # ── Обычный disconnect: снимаем WS, но НЕ завершаем токен ──
+        #
+        # ВАЖНО: закрытие приложения/сети ≠ логаут. Если здесь вызывать
+        # ext.PA_mbl_TokenFinish_Exec, то:
+        #   - SQL Server помечает устройство завершённым (FDateFinish);
+        #   - push_notification_service.unregister() без keep_fid
+        #     стирает FID из памяти;
+        #   - FCM-доставка при закрытом приложении перестаёт работать.
+        #
+        # Поэтому TokenFinish делаем только при явном логауте —
+        # через DELETE /api/v1/push/register_fid (app/api/routers/push.py).
+        # См. комментарий в push_notification_service.unregister().
+        await push_notification_service.unregister(
+            user_id,
+            websocket,
+            keep_fid=True,
+        )
+        api_logger.info(
+            "ws: disconnected user=%s (fid kept for FCM)",
+            user_id,
+        )
 
 
 __all__ = ["ws_notify_handler"]

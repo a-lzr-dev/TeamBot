@@ -232,7 +232,7 @@ class RateLimitMiddleware(BaseMiddleware):
         reset_time = rate_limit_manager.get_reset_time(scope, key)
 
         # Получение информации о блокировке
-        entry_info = None
+        entry_info: dict[str, Any] | None = None
         limiter = rate_limit_manager.get_limiter(scope)
         if limiter:
             entry_info = limiter.get_entry_info(key)

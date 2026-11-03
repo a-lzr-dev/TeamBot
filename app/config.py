@@ -6,14 +6,13 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     # ============ ОСНОВНАЯ БД ============
 
-    # Основная БД (для работы текущего приложения)
     DB_MAIN_NAME: str = "team_bot"
     DB_MAIN_USER: str = "user"
     DB_MAIN_PASSWORD: str = "password"
@@ -23,7 +22,6 @@ class Settings(BaseSettings):
     DB_MAIN_POOL_SIZE: int = 10
     DB_MAIN_MAX_OVERFLOW: int = 20
 
-    # Вторичная БД (для коммуникации с внешней системой)
     DB_AVANPOST_NAME: str = "avanpost"
     DB_AVANPOST_USER: str = "user"
     DB_AVANPOST_PASSWORD: str = "password"
@@ -36,71 +34,40 @@ class Settings(BaseSettings):
 
     # ============ AVANPOST SYNC ============
 
-    # Автоматические действия при старте приложения
     AVANPOST_AUTO_ADD_USERS_ALL_ON_START: bool = True
     AVANPOST_AUTO_ADD_USERS_IDS_ON_START: list[int] = Field(default_factory=lambda: [])
     AVANPOST_AUTO_SYNC_ON_START: bool = True
     AVANPOST_AUTO_ADD_VEHICLES_ON_START: bool = False
 
-    # Принудительная полная синхронизация (игнорировать кеш)
     AVANPOST_SYNC_FORCE: bool = False
-
-    # Режим синхронизации (True - фоновая, False - синхронная)
     AVANPOST_SYNC_ASYNC: bool = True
-
-    # Синхронизация пользовательских данных (Общие данные)
     AVANPOST_SYNC_USERS_BASE: bool = True
-
-    # Синхронизация пользовательских данных (Персональные данные)
     AVANPOST_SYNC_USERS_DETAILS: bool = True
-
-    # Ручной список синхронизации пользовательских данных (Персональные данные)
     AVANPOST_SYNC_USERS_DETAILS_IDS: list[int] | None = Field(default_factory=lambda: [])
-
     AVANPOST_SYNC_USER_IDS: list[int] = Field(default_factory=lambda: [])
-
-    # Требовать успешную синхронизацию для старта приложения
     AVANPOST_SYNC_REQUIRED: bool = False
-
-    # Тайм-аут синхронизации в секундах (0 - без ограничения)
     AVANPOST_SYNC_TIMEOUT: int = 300
-
-    # Размер чанка для синхронизации (количество типов данных за один запрос)
     AVANPOST_SYNC_CHUNK_SIZE: int = 10
 
     # ============ TELEGRAM ============
 
-    # Telegram Bot
     BOT_TOKEN: str = ""
     BOT_ID: int = 0
     BOT_HASH: str = ""
     BOT_SESSION_NAME: str = "bot_session"
     BOT_USERNAME: str = ""
-
-    # Тип аккаунта: "bot" или "user"
     TELEGRAM_ACCOUNT_TYPE: str = "bot"
-
-    # Для user-аккаунта (если TELEGRAM_ACCOUNT_TYPE = "user")
     USER_PHONE: str = "+375336391519"
     USER_SESSION_NAME: str = "user_session"
 
     # ============ TEAMDROID ============
 
-    # Teamdroid gRPC
     TEAMDROID_HOST: str = "localhost:16060"
     TEAMDROID_HTTP_UPLOAD_URL: str = "http://localhost:6060/v0/file/u"
     TEAMDROID_API_KEY: str = "apikey"
     TEAMDROID_USERNAME: str = "user"
     TEAMDROID_PASSWORD: str = "password"
-
-    # AppID приложения Teamdroid (dir.TRSDirSysApps.FID).
-    # Передаётся в ext.PA_mbl_TokenVerify_Exec как $.api
-    # Передаётся в ext.PA_mbl_TokenFinish_Exec как $.api
-    # и используется для поиска устройства (TRSAppDataObjectsDevices.FK_App).
-    # Обязателен для WS-verify в режиме "avanpost".
     TEAMDROID_APP_ID: int = 0
-
-    # Teamdroid protocol
     TEAMDROID_GRPC_MAX_MESSAGE: int = 16 * 1024 * 1024
     TEAMDROID_CTRL_TIMEOUT: int = 10
 
@@ -111,96 +78,56 @@ class Settings(BaseSettings):
     TEAMDROID_SQL_PASSWORD: str = ""
     TEAMDROID_SQL_TIMEOUT: int = 10
 
-    # Процедуры на сервере
     TEAMDROID_SQL_PROC_AUTH_START: str = "ext.PA_mbl_AuthStart_Exec"
     TEAMDROID_SQL_PROC_AUTH_FINISH: str = "ext.PA_mbl_AuthFinish_Exec"
     TEAMDROID_SQL_PROC_TOKEN_VERIFY: str = "ext.PA_mbl_TokenVerify_Exec"
     TEAMDROID_SQL_PROC_TOKEN_FINISH: str = "ext.PA_mbl_TokenFinish_Exec"
+    TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD: str = "ext.PA_mbl_TokenDevices_Load"
     TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY: str = "ext.PA_mbl_MsgsDeliveryStatus_Edit"
 
-    # ============ PUSH NOTIFICATIONS (WebSocket) ============
+    # ============ PUSH NOTIFICATIONS (WebSocket + FCM) ============
 
-    # Включить push-сервер (WS-уведомления)
     WS_NOTIFY_ENABLED: bool = True
-
-    # Путь WebSocket-эндпоинта (без префикса /api/v1)
     WS_NOTIFY_PATH: str = "/ws/notify"
-
-    # Режим проверки токена: "trust" | "grpc" | "avanpost"
-    #   trust — принять user_id как есть (только development)
-    #   grpc — проверка через Tinode gRPC (legacy)
-    #   avanpost — проверка через MSSQL Avanpost (основной режим)
     WS_NOTIFY_TOKEN_VERIFY_MODE: str = "avanpost"
-
-    # TTL кэша проверки токена при mode="grpc" (сек)
     WS_NOTIFY_TOKEN_CACHE_TTL: int = 300
-
-    # Максимум одновременных WS-соединений на пользователя
     WS_NOTIFY_MAX_CONNECTIONS_PER_USER: int = 10
-
-    # Интервал heartbeat (ping) для обнаружения мёртвых соединений (сек)
     WS_NOTIFY_HEARTBEAT_INTERVAL: int = 30
-
-    # Тайм-аут отправки одного уведомления (сек)
     WS_NOTIFY_SEND_TIMEOUT: float = 5.0
 
-    # Auth token expected from the Go myrelay adapter in Authorization header.
-    # Must match `auth_token` in tinode.conf. Leave empty to disable auth
-    # (development only!).
     WS_RELAY_AUTH_TOKEN: str = ""
-
-    # Where the relay ingest is mounted. Must be consistent with the endpoint
-    # configured on the Go side ("endpoint" in tinode.conf).
     WS_RELAY_INGEST_PATH: str = "/internal/push"
-
-    # Base64-ключ AES-256-GCM для расшифровки WS-токена мобильных клиентов.
-    # Должен совпадать с BuildConfig.WS_TOKEN_KEY в Android-клиенте.
     WS_TOKEN_KEY_B64: str = ""
 
-    # FCM (Firebase Cloud Messaging) — для доставки, когда WS-клиента нет онлайн.
+    # FCM (Firebase Cloud Messaging) — доставка, когда WS-клиента нет онлайн,
+    # или всегда (в зависимости от FCM_SEND_MODE).
     FCM_ENABLED: bool = True
+    FCM_LOAD_FIDS_ON_START: bool = True
     FCM_CREDENTIALS_PATH: str = ""
 
     # Режим отправки FCM:
-    #   "always" — всегда (WS + FCM одновременно) — соответствует ТЗ п.5
-    #                (помимо WS-оповещения отправляется FCM FID).
-    #   "fallback" — только если WS не доставил (для обычных сообщений),
-    #                для "sub" (приглашений в чат) — всегда.
-    #   "never" — только WS, FCM не отправляется.
+    #   "always" — всегда (WS + FCM одновременно)
+    #   "fallback" — только если WS не доставил (для msg) / всегда (для sub)
+    #   "never" — только WS
     FCM_SEND_MODE: str = "fallback"
-
-    # TTL записи FID -> user_id (на случай, если WS вообще не было, а FCM пришёл)
-    FCM_FID_TTL_SECONDS: int = 7 * 24 * 3600  # 7 дней
+    FCM_FID_TTL_SECONDS: int = 7 * 24 * 3600
 
     # ============ API ============
 
-    # API
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
-
-    # API Keys (для аутентификации)
     API_KEYS: list[str] = Field(default_factory=lambda: [], description="Список API ключей для аутентификации запросов")
-
-    # Режим работы
     APP_ENV: str = "production"
     APP_DEBUG: bool = False
     API_RELOAD: bool = False
     API_WORKERS: int = 1
-
-    # Безопасность
     API_TRUSTED_HOSTS: list[str] = Field(
-        default_factory=lambda: [
-            "127.0.0.1",
-            "::1",
-            "172.17.0.1",
-            "192.168.12.1",
-        ],
+        default_factory=lambda: ["127.0.0.1", "::1", "172.17.0.1", "192.168.12.1"],
         description="Список доверенных IP/подсетей",
     )
 
     # ============ ЛОГИРОВАНИЕ ============
 
-    # Логирование
     LOG_LEVEL: str = "DEBUG"
     LOG_DIR: str = "../logs"
     LOG_MAX_BYTES: int = 10_000_000
@@ -208,14 +135,12 @@ class Settings(BaseSettings):
 
     # ============ НАСТРОЙКИ БОТА ============
 
-    # Настройки бота
     ADMIN_IDS: list[int] = Field(default_factory=lambda: [1039799368])
     SYNC_INTERVAL: int = 300
     MAX_MESSAGE_LENGTH: int = 4096
 
     # ============ НАСТРОЙКИ TELETHON ============
 
-    # Настройки Telethon
     TELEGRAM_API_RETRY: int = 3
     TELEGRAM_RECONNECT_DELAY: int = 5
     TELEGRAM_CATCH_UP_ON_START: bool = True
@@ -223,7 +148,6 @@ class Settings(BaseSettings):
 
     # ============ RATE LIMITING ============
 
-    # Rate Limiting
     API_RATE_LIMIT: int = 100
     API_RATE_PERIOD: int = 60
     BOT_RATE_LIMIT: int = 10
@@ -233,26 +157,22 @@ class Settings(BaseSettings):
 
     # ============ ШИФРОВАНИЕ ============
 
-    # Шифрование
     ENCRYPTION_SECRET: str = Field(default=secrets.token_urlsafe(32), description="Секретный ключ для шифрования")
 
     # ============ НАСТРОЙКИ УВЕДОМЛЕНИЙ ============
 
-    # Настройки уведомлений по умолчанию
     DEFAULT_NOTIFICATION_LEVEL: str = "error"
     DEFAULT_GROUPING_WINDOW: int = 60
     DEFAULT_AUTO_REPORT_INTERVAL: int = 60
     DEFAULT_WORK_HOURS_START: int = 9
     DEFAULT_WORK_HOURS_END: int = 18
 
-    # Настройки ошибок
     ERROR_GROUPING_ENABLED: bool = True
     ERROR_GROUPING_WINDOW_MINUTES: int = 60
     ERROR_MAX_OCCURRENCES_BEFORE_SILENCE: int = 10
 
     # ============ НАСТРОЙКИ НАПОМИНАНИЙ ============
 
-    # Настройки напоминаний
     REMINDER_MAX_PER_USER: int = 100
     REMINDER_DEFAULT_INTERVAL: int = 0
     REMINDER_MAX_REMIND_COUNT: int = 10
@@ -261,128 +181,58 @@ class Settings(BaseSettings):
 
     # ============ НАСТРОЙКИ ЛОГОВ ОШИБОК ============
 
-    # ID чата, в котором находятся топики
     SUPPORT_CHAT_ID: int = Field(default=0, description="ID чата для отправки уведомлений об ошибках")
-
-    # Список топиков для разных источников ошибок
     SUPPORT_CHAT_TOPIC_IDS: dict[str, int] = Field(
         default_factory=dict, description="Маппинг источников ошибок на ID топиков в Telegram"
     )
-
-    # Минимальный интервал между уведомлениями об одинаковых ошибках
     LOG_ERROR_NOTIFICATION_INTERVAL: int = 60
-
-    # Включить/выключить автоматическое логирование ошибок из логов
     LOG_ERROR_AUTO_CAPTURE: bool = True
-
-    # Максимальная длина сохраняемого сообщения об ошибке
     LOG_ERROR_MAX_MESSAGE_LENGTH: int = 500
-
-    # Максимальная длина сохраняемого traceback
     LOG_ERROR_MAX_TRACEBACK_LENGTH: int = 1000
-
-    # Группировать ли ошибки по хешу
     LOG_ERROR_GROUPING_ENABLED: bool = True
-
-    # Очищать ли кеш ошибок при старте
     LOG_ERROR_CLEAR_CACHE_ON_START: bool = True
-
-    # Время жизни сообщений об ошибках в секундах
-    LOG_ERROR_MESSAGE_LIFETIME_SECONDS: int = 604800  # 7 дней в секундах
+    LOG_ERROR_MESSAGE_LIFETIME_SECONDS: int = 604800
 
     # ============ НАСТРОЙКИ АВТОМАТИЗАЦИИ ============
 
-    # Метод конвертации DOC в PDF: pywin32, comtypes, libreoffice, auto
     AUTOMATION_CONVERSION_METHOD: str = "auto"
-
-    # Максимальный размер файла для конвертации (в байтах)
-    AUTOMATION_MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50 MB
-
-    # Директория для временных файлов
+    AUTOMATION_MAX_FILE_SIZE: int = 50 * 1024 * 1024
     AUTOMATION_TEMP_DIR: str = "./temp/automation"
-
-    # Количество попыток при конвертации
     AUTOMATION_RETRY_COUNT: int = 3
-
-    # Задержка между попытками (в секундах)
     AUTOMATION_RETRY_DELAY: int = 2
-
-    # Время жизни временных файлов (в секундах)
-    AUTOMATION_CLEANUP_AFTER: int = 3600  # 1 час
-
-    # Разрешенные форматы файлов для конвертации
+    AUTOMATION_CLEANUP_AFTER: int = 3600
     AUTOMATION_ALLOWED_EXTENSIONS: list[str] = Field(default_factory=lambda: [".doc", ".docx"])
-
-    # Максимальное количество заявок на пользователя
     AUTOMATION_MAX_REQUESTS_PER_USER: int = 50
-
-    # Требуется ли подтверждение администратора для заявок
     AUTOMATION_REQUIRE_ADMIN_APPROVAL: bool = True
-
-    # Каналы для уведомлений о заявках (переопределяет SUPPORT_CHAT_ID)
     AUTOMATION_NOTIFICATION_CHAT_IDS: list[int] = Field(default_factory=list)
-
-    # Включить/выключить автоматическую очистку временных файлов
     AUTOMATION_AUTO_CLEANUP: bool = True
-
-    # Время ожидания конвертации (в секундах)
     AUTOMATION_CONVERSION_TIMEOUT: int = 60
 
     # ============ НАСТРОЙКИ ВРЕМЕНИ ЖИЗНИ СООБЩЕНИЙ ============
 
-    # --- Настройки времени жизни сообщений ---
-
-    MESSAGE_LIFETIME_CHECK_INTERVAL: int = 60  # Интервал проверки истекших сообщений (сек) = 1 мин
-    MESSAGE_LIFETIME_BATCH_SIZE: int = 1000  # Максимум сообщений за одну проверку
-    MESSAGE_LIFETIME_DEFAULT_SECONDS: int = 300  # Время жизни сообщений по умолчанию (сек) = 5 мин
-
-    # --- Настройки синхронизации ---
-
-    SYNC_CACHE_TTL_SECONDS: int = 60  # Время жизни кеша участников чата (сек)
-
-    # --- Настройки ошибок ---
-
-    ERROR_GROUP_CACHE_TTL_SECONDS: int = 300  # Время жизни кеша группировки ошибок (сек)
-
-    # --- Настройки логирования ---
-
-    LOG_QUEUE_MAX_SIZE: int = 1000  # Максимальный размер очереди логов
-    LOG_WORKER_TIMEOUT: float = 0.3  # Тайм-аут ожидания записи в очереди
-
-    # --- Настройки сообщений бота ---
-
-    BOT_MESSAGE_LIFETIME_SECONDS: int = 300  # Время жизни сообщений меню бота (сек)
-
-    # --- Настройки клавиатур ---
-
-    KEYBOARD_BUTTONS_PER_ROW: int = 3  # Количество кнопок в ряду
-
-    # --- Настройки аутентификации ---
-
-    AUTH_CACHE_TTL_SECONDS: int = 3600  # Время жизни кеша авторизации (сек)
-
-    # --- Настройки автоматизации (дополнительные) ---
-
-    AUTOMATION_STATS_ENABLED: bool = True  # Включить сбор статистики конвертаций
-    AUTOMATION_STATS_MAX_ENTRIES: int = 1000  # Максимум записей в статистике
-
-    # --- Настройки сети ---
-
-    HTTP_TIMEOUT_KEEP_ALIVE: int = 30  # Таймаут keep-alive для HTTP
-    TELEGRAM_POLLING_TIMEOUT: int = 30  # Таймаут polling Telegram
-    TELEGRAM_RETRY_DELAY: int = 5  # Задержка перед повторным подключением (сек)
-    TELEGRAM_MAX_RETRIES: int = 5  # Максимум попыток подключения
-
-    # --- Настройки API ---
-
-    API_DEFAULT_PAGE_SIZE: int = 50  # Размер страницы по умолчанию
-    API_STATS_DAYS: int = 7  # Период статистики в днях
+    MESSAGE_LIFETIME_CHECK_INTERVAL: int = 60
+    MESSAGE_LIFETIME_BATCH_SIZE: int = 1000
+    MESSAGE_LIFETIME_DEFAULT_SECONDS: int = 300
+    SYNC_CACHE_TTL_SECONDS: int = 60
+    ERROR_GROUP_CACHE_TTL_SECONDS: int = 300
+    LOG_QUEUE_MAX_SIZE: int = 1000
+    LOG_WORKER_TIMEOUT: float = 0.3
+    BOT_MESSAGE_LIFETIME_SECONDS: int = 300
+    KEYBOARD_BUTTONS_PER_ROW: int = 3
+    AUTH_CACHE_TTL_SECONDS: int = 3600
+    AUTOMATION_STATS_ENABLED: bool = True
+    AUTOMATION_STATS_MAX_ENTRIES: int = 1000
+    HTTP_TIMEOUT_KEEP_ALIVE: int = 30
+    TELEGRAM_POLLING_TIMEOUT: int = 30
+    TELEGRAM_RETRY_DELAY: int = 5
+    TELEGRAM_MAX_RETRIES: int = 5
+    API_DEFAULT_PAGE_SIZE: int = 50
+    API_STATS_DAYS: int = 7
 
     # ============ СВОЙСТВА ДЛЯ URL БАЗ ДАННЫХ ============
 
     @property
     def db_main_url(self) -> str:
-        """Собирает URL для основной БД (PostgreSQL) из отдельных переменных."""
         return (
             f"postgresql+asyncpg://{self.DB_MAIN_USER}:"
             f"{quote_plus(self.DB_MAIN_PASSWORD)}@"
@@ -391,7 +241,6 @@ class Settings(BaseSettings):
 
     @property
     def db_avanpost_url(self) -> str:
-        """Собирает URL для вторичной БД (MSSQL) из отдельных переменных."""
         return (
             f"mssql+aioodbc://{self.DB_AVANPOST_USER}:"
             f"{quote_plus(self.DB_AVANPOST_PASSWORD)}@"
@@ -405,36 +254,19 @@ class Settings(BaseSettings):
     @field_validator("ADMIN_IDS", "AUTOMATION_NOTIFICATION_CHAT_IDS", mode="before")
     @classmethod
     def parse_list_field(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списков из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
             return v
         if isinstance(v, str):
             try:
-                # Пробуем распарсить как JSON список
                 if v.startswith("[") and v.endswith("]"):
                     result = ast.literal_eval(v)
                     if isinstance(result, list):
-                        parsed_result: list[int] = [int(x) for x in result]
-                        return parsed_result
-                # Если через запятую
+                        return [int(x) for x in result]
                 elif "," in v:
-                    parts = v.split(",")
-                    result_list: list[int] = []
-                    for part in parts:
-                        part = part.strip()
-                        if part:
-                            try:
-                                result_list.append(int(part))
-                            except ValueError:
-                                continue
-                    return result_list
-                # Если просто число
-                try:
-                    return [int(v)]
-                except ValueError:
-                    return []
+                    return [int(p.strip()) for p in v.split(",") if p.strip()]
+                return [int(v)]
             except (ValueError, SyntaxError):
                 return []
         return []
@@ -442,7 +274,6 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_AUTO_ADD_USERS_IDS_ON_START", mode="before")
     @classmethod
     def parse_avanpost_users_list(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списка пользователей Avanpost из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -454,16 +285,7 @@ class Settings(BaseSettings):
                     if isinstance(result, list):
                         return [int(x) for x in result if isinstance(x, int | str)]
                 elif "," in v:
-                    parts = v.split(",")
-                    result = []
-                    for part in parts:
-                        part = part.strip()
-                        if part:
-                            try:
-                                result.append(int(part))
-                            except ValueError:
-                                continue
-                    return result  # type: ignore[no-any-return]
+                    return [int(p.strip()) for p in v.split(",") if p.strip()]
             except (ValueError, SyntaxError):
                 return []
         return []
@@ -471,7 +293,6 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_USER_IDS", mode="before")
     @classmethod
     def parse_avanpost_sync_user_ids(cls, v: str | list[int] | None) -> list[int]:
-        """Парсинг списка пользователей для синхронизации из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -481,24 +302,9 @@ class Settings(BaseSettings):
                 if v.startswith("[") and v.endswith("]"):
                     parsed = ast.literal_eval(v)
                     if isinstance(parsed, list):
-                        parsed_result: list[int] = []
-                        for x in parsed:
-                            if isinstance(x, int):
-                                parsed_result.append(x)
-                            elif isinstance(x, str) and x.isdigit():
-                                parsed_result.append(int(x))
-                        return parsed_result
+                        return [int(x) if isinstance(x, int) else int(x) for x in parsed if isinstance(x, (int, str))]
                 elif "," in v:
-                    parts = v.split(",")
-                    sync_ids: list[int] = []
-                    for part in parts:
-                        part = part.strip()
-                        if part:
-                            try:
-                                sync_ids.append(int(part))
-                            except ValueError:
-                                continue
-                    return sync_ids
+                    return [int(p.strip()) for p in v.split(",") if p.strip()]
             except (ValueError, SyntaxError):
                 return []
         return []
@@ -506,7 +312,6 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_AUTO_ADD_VEHICLES_ON_START", mode="before")
     @classmethod
     def validate_auto_add_vehicles(cls, v: bool | str | None) -> bool:
-        """Валидация и преобразование флага загрузки транспорта."""
         if v is None:
             return False
         if isinstance(v, bool):
@@ -518,30 +323,23 @@ class Settings(BaseSettings):
     @field_validator("SUPPORT_CHAT_TOPIC_IDS", mode="before")
     @classmethod
     def parse_support_chat_topic_ids(cls, v: str | dict | None) -> dict[str, int]:
-        """Парсинг SUPPORT_CHAT_TOPIC_IDS из строки в словарь."""
         if v is None:
             return {}
         if isinstance(v, dict):
-            return {str(k): int(v) for k, v in v.items()}
+            return {str(k): int(val) for k, val in v.items()}
         if isinstance(v, str):
             try:
                 if v.startswith("{") and v.endswith("}"):
                     result = ast.literal_eval(v)
                     if isinstance(result, dict):
-                        return {str(k): int(v) for k, v in result.items()}
+                        return {str(k): int(val) for k, val in result.items()}
                 elif "," in v and ":" in v:
-                    parts = v.split(",")
-                    parsed_dict: dict[str, int] = {}
-                    for part in parts:
+                    parsed: dict[str, int] = {}
+                    for part in v.split(","):
                         if ":" in part:
                             key, value = part.split(":", 1)
-                            key = key.strip().strip('"').strip("'")
-                            value = value.strip()
-                            try:
-                                parsed_dict[key] = int(value)
-                            except ValueError:
-                                continue
-                    return parsed_dict
+                            parsed[key.strip().strip('"').strip("'")] = int(value.strip())
+                    return parsed
             except (ValueError, SyntaxError) as e:
                 raise ValueError(f"Неверный формат SUPPORT_CHAT_TOPIC_IDS: {e}") from e
         return {}
@@ -549,7 +347,6 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_ALLOWED_EXTENSIONS", mode="before")
     @classmethod
     def parse_extensions_list(cls, v: str | list[str] | None) -> list[str]:
-        """Парсинг списка расширений."""
         if v is None:
             return [".doc", ".docx"]
         if isinstance(v, list):
@@ -562,25 +359,22 @@ class Settings(BaseSettings):
                         return [str(x).strip().lower() for x in result]
                 elif "," in v:
                     return [x.strip().lower() for x in v.split(",") if x.strip()]
-                else:
-                    return [v.strip().lower()]
+                return [v.strip().lower()]
             except (ValueError, SyntaxError):
                 return [".doc", ".docx"]
-        return [".doc", ".docx"]  # pragma: no cover
+        return [".doc", ".docx"]
 
     @field_validator("AUTOMATION_CONVERSION_METHOD")
     @classmethod
     def validate_conversion_method(cls, v: str) -> str:
-        """Валидация метода конвертации."""
-        valid_methods = ["pywin32", "comtypes", "libreoffice", "auto"]
-        if v.lower() not in valid_methods:
-            raise ValueError(f"Invalid conversion method: {v}. Must be one of: {', '.join(valid_methods)}")
+        valid = ["pywin32", "comtypes", "libreoffice", "auto"]
+        if v.lower() not in valid:
+            raise ValueError(f"Invalid conversion method: {v}. Must be one of: {', '.join(valid)}")
         return v.lower()
 
     @field_validator("AUTOMATION_MAX_FILE_SIZE")
     @classmethod
     def validate_max_file_size(cls, v: int) -> int:
-        """Валидация максимального размера файла."""
         if v < 1024 * 1024:
             raise ValueError("AUTOMATION_MAX_FILE_SIZE must be at least 1 MB")
         if v > 500 * 1024 * 1024:
@@ -590,7 +384,6 @@ class Settings(BaseSettings):
     @field_validator("AUTOMATION_CONVERSION_TIMEOUT")
     @classmethod
     def validate_timeout(cls, v: int) -> int:
-        """Валидация тайм-аута конвертации."""
         if v < 5:
             raise ValueError("AUTOMATION_CONVERSION_TIMEOUT must be at least 5 seconds")
         if v > 300:
@@ -600,7 +393,6 @@ class Settings(BaseSettings):
     @field_validator("MESSAGE_LIFETIME_DEFAULT_SECONDS")
     @classmethod
     def validate_message_lifetime(cls, v: int) -> int:
-        """Валидация времени жизни сообщений."""
         if v < 10:
             raise ValueError("MESSAGE_LIFETIME_DEFAULT_SECONDS must be at least 10 seconds")
         if v > 86400:
@@ -610,7 +402,6 @@ class Settings(BaseSettings):
     @field_validator("LOG_QUEUE_MAX_SIZE")
     @classmethod
     def validate_queue_size(cls, v: int) -> int:
-        """Валидация размера очереди логов."""
         if v < 10:
             raise ValueError("LOG_QUEUE_MAX_SIZE must be at least 10")
         if v > 10000:
@@ -620,7 +411,6 @@ class Settings(BaseSettings):
     @field_validator("API_DEFAULT_PAGE_SIZE")
     @classmethod
     def validate_page_size(cls, v: int) -> int:
-        """Валидация размера страницы API."""
         if v < 1:
             raise ValueError("API_DEFAULT_PAGE_SIZE must be at least 1")
         if v > 1000:
@@ -630,7 +420,6 @@ class Settings(BaseSettings):
     @field_validator("API_TRUSTED_HOSTS", mode="before")
     @classmethod
     def parse_trusted_hosts(cls, v: str | list[str] | None) -> list[str]:
-        """Парсинг списка доверенных хостов из строки в список."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -639,7 +428,6 @@ class Settings(BaseSettings):
             v = v.strip()
             if not v:
                 return []
-            # JSON-массив
             if v.startswith("[") and v.endswith("]"):
                 try:
                     result = ast.literal_eval(v)
@@ -647,14 +435,12 @@ class Settings(BaseSettings):
                         return [str(x).strip() for x in result if str(x).strip()]
                 except (ValueError, SyntaxError):
                     pass
-            # Строка через запятую
             return [x.strip() for x in v.split(",") if x.strip()]
         return []
 
     @field_validator("TELEGRAM_MAX_RETRIES")
     @classmethod
     def validate_max_retries(cls, v: int) -> int:
-        """Валидация максимального количества попыток."""
         if v < 1:
             raise ValueError("TELEGRAM_MAX_RETRIES must be at least 1")
         if v > 20:
@@ -664,7 +450,6 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_CHUNK_SIZE")
     @classmethod
     def validate_sync_chunk_size(cls, v: int) -> int:
-        """Валидация размера чанка синхронизации."""
         if v < 1:
             raise ValueError("AVANPOST_SYNC_CHUNK_SIZE must be at least 1")
         if v > 50:
@@ -674,7 +459,6 @@ class Settings(BaseSettings):
     @field_validator("AVANPOST_SYNC_TIMEOUT")
     @classmethod
     def validate_sync_timeout(cls, v: int) -> int:
-        """Валидация тайм-аута синхронизации."""
         if v < 0:
             raise ValueError("AVANPOST_SYNC_TIMEOUT must be >= 0")
         return v
@@ -682,12 +466,51 @@ class Settings(BaseSettings):
     @field_validator("TEAMDROID_APP_ID")
     @classmethod
     def validate_teamdroid_app_id(cls, v: int) -> int:
-        """AppID передаётся в процедуру как TINYINT (0..255)."""
         if v < 0:
             raise ValueError("TEAMDROID_APP_ID must be >= 0")
         if v > 255:
             raise ValueError("TEAMDROID_APP_ID must fit TINYINT (0..255)")
         return v
+
+    @field_validator("FCM_SEND_MODE")
+    @classmethod
+    def validate_fcm_send_mode(cls, v: str) -> str:
+        mode = (v or "fallback").lower()
+        if mode not in ("always", "fallback", "never"):
+            raise ValueError(f"FCM_SEND_MODE must be one of: always, fallback, never; got {v!r}")
+        return mode
+
+    # ============ КРОСС-ВАЛИДАЦИЯ ============
+
+    @model_validator(mode="after")
+    def validate_fcm_credentials(self) -> "Settings":
+        """
+        Проверяет, что при FCM_ENABLED=True и FCM_SEND_MODE != 'never'
+        указан путь к service account JSON и файл существует.
+
+        Не бросает исключение, но оставляет FCM_CREDENTIALS_PATH пустым
+        при отсутствии файла — это позволяет приложению стартовать,
+        а сервис push_notification_service зафиксирует
+        fcm_available=False в /api/v1/ws/stats.
+        """
+        if not self.FCM_ENABLED or self.FCM_SEND_MODE == "never":
+            return self
+
+        path_str = (self.FCM_CREDENTIALS_PATH or "").strip()
+        if not path_str:
+            return self
+
+        path = Path(path_str)
+        if not path.exists():
+            # Не падаем — просто предупреждаем. Реальную проверку
+            # делает _FcmClient._ensure_initialized при первом использовании.
+            import logging
+
+            logging.getLogger("app.config").warning(
+                "FCM_CREDENTIALS_PATH=%r does not exist; FCM will be unavailable",
+                path_str,
+            )
+        return self
 
     # ============ СВОЙСТВА ============
 
@@ -705,70 +528,56 @@ class Settings(BaseSettings):
 
     @property
     def is_windows(self) -> bool:
-        """Проверка, работаем ли мы на Windows."""
         return sys.platform == "win32"
 
     @property
     def is_linux(self) -> bool:
-        """Проверка, работаем ли мы на Linux."""
         return sys.platform.startswith("linux")
 
     @property
     def is_macos(self) -> bool:
-        """Проверка, работаем ли мы на macOS."""
         return sys.platform == "darwin"
 
     @property
     def automation_supported_methods(self) -> list[str]:
-        """Список доступных методов конвертации на текущей платформе."""
         methods: list[str] = []
-
         if self.is_windows:
             try:
                 methods.append("pywin32")
                 methods.append("comtypes")
             except ImportError:
                 pass
-
         try:
-            libreoffice_cmds = ["soffice", "libreoffice"]
-            for cmd in libreoffice_cmds:
+            for cmd in ["soffice", "libreoffice"]:
                 if shutil.which(cmd) is not None:
                     methods.append("libreoffice")
                     break
         except (OSError, TypeError, ValueError):
             pass
-
         return methods
 
     @property
     def automation_is_available(self) -> bool:
-        """Проверка, доступна ли конвертация на текущей платформе."""
         return len(self.automation_supported_methods) > 0
 
     @property
     def automation_best_method(self) -> str | None:
-        """Определение лучшего метода для текущей платформы."""
         if (
             self.AUTOMATION_CONVERSION_METHOD != "auto"
             and self.AUTOMATION_CONVERSION_METHOD in self.automation_supported_methods
         ):
             return self.AUTOMATION_CONVERSION_METHOD
-
         if self.is_windows:
             if "pywin32" in self.automation_supported_methods:
                 return "pywin32"
-            elif "comtypes" in self.automation_supported_methods:
+            if "comtypes" in self.automation_supported_methods:
                 return "comtypes"
-
         if "libreoffice" in self.automation_supported_methods:
             return "libreoffice"
-
         return None
 
     @property
     def automation_get_notification_chats(self) -> list[int]:
-        """Получение списка чатов для уведомлений о заявках."""
         if self.AUTOMATION_NOTIFICATION_CHAT_IDS:
             return self.AUTOMATION_NOTIFICATION_CHAT_IDS
         if self.SUPPORT_CHAT_ID:
@@ -777,27 +586,22 @@ class Settings(BaseSettings):
 
     @property
     def automation_get_notification_topic(self) -> int | None:
-        """Получение ID топика для уведомлений о заявках."""
         return self.SUPPORT_CHAT_TOPIC_IDS.get("Jobs")
 
     @property
     def avanpost_sync_enabled(self) -> bool:
-        """Проверка, включена ли синхронизация Avanpost."""
         return self.AVANPOST_AUTO_SYNC_ON_START
 
     @property
     def avanpost_sync_mode(self) -> str:
-        """Режим синхронизации: 'async' или 'sync'."""
         return "async" if self.AVANPOST_SYNC_ASYNC else "sync"
 
     @property
     def avanpost_sync_is_required(self) -> bool:
-        """Является ли синхронизация обязательной."""
         return self.AVANPOST_SYNC_REQUIRED
 
     @property
     def avanpost_sync_user_ids(self) -> list[int]:
-        """Получение списка пользователей для синхронизации."""
         return self.AVANPOST_SYNC_USER_IDS
 
     @property
@@ -809,14 +613,6 @@ class Settings(BaseSettings):
         mode = (self.WS_NOTIFY_TOKEN_VERIFY_MODE or "trust").lower()
         if mode not in ("trust", "grpc", "avanpost"):
             return "trust"
-        return mode
-
-    @field_validator("FCM_SEND_MODE")
-    @classmethod
-    def validate_fcm_send_mode(cls, v: str) -> str:
-        mode = (v or "fallback").lower()
-        if mode not in ("always", "fallback", "never"):
-            raise ValueError(f"FCM_SEND_MODE must be one of: always, fallback, never; got {v!r}")
         return mode
 
     model_config = SettingsConfigDict(

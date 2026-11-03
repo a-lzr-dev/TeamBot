@@ -7,10 +7,13 @@
 - дедупликацию пушей и батчей с ограниченным по размеру LRU-кэшем;
 - ограничение числа соединений на пользователя;
 - маршрутизацию push по FID (fcm_id) — на случай, если Go-адаптер
-  присылает адресата как FID, а не как usrXXX.
+  присылает адресата как FID, а не как usrXXX;
+- FCM-доставку (Firebase Cloud Messaging) в дополнение к WS.
 
-Совместим с Go-адаптером server/push/myrelay: принимает snake_case JSON
-(user_id, event_id, ts, mime, aonly, want, given), а также fcm_id.
+Режим FCM задаётся `settings.FCM_SEND_MODE`:
+  - "always" — всегда (WS + FCM одновременно);
+  - "fallback" — только если WS не доставил (для msg) или всегда (для sub);
+  - "never" — только WS, FCM не отправляется.
 
 Формат сообщений, отправляемых мобильному клиенту (NotificationsWsService.java):
 
@@ -42,6 +45,7 @@ from enum import StrEnum
 from typing import Any
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketDisconnect
 
 from ..config import settings
 from ..logger import api_logger
@@ -56,8 +60,6 @@ _SEEN_TTL_SECONDS = 300
 
 class DeliveryStatus(StrEnum):
     """Результат попытки доставить один push конкретному получателю.
-
-    Используется в relay_handler для подсчёта статистики батча.
 
     Attributes:
         DELIVERED: push доставлен хотя бы на один активный сокет.
@@ -80,15 +82,156 @@ class DeliveryStatus(StrEnum):
     DUPLICATE = "duplicate"
 
 
+# ============================================================
+# FCM-клиент (firebase-admin)
+# ============================================================
+
+
+class _FcmClient:
+    """Ленивая инициализация firebase-admin и отправка FCM-сообщений.
+
+    Инициализация выполняется один раз при первом использовании.
+    Если FCM отключён (`FCM_ENABLED=false`) или не задан путь к
+    service account JSON (`FCM_CREDENTIALS_PATH`), клиент считается
+    недоступным, а `send()` возвращает False.
+    """
+
+    # _CHANNEL_MESSAGE = "new_message_channel"
+    # _CHANNEL_SUBSCRIPTION = "subscription_channel"
+    # _CHANNEL_CALL = "call_channel"
+    # _CHANNEL_DEFAULT = "default_channel"
+    #
+    # @classmethod
+    # def _channel_for(cls, data: dict[str, str]) -> str:
+    #     t = (data.get("type") or "").lower()
+    #     return {
+    #         "message": cls._CHANNEL_MESSAGE,
+    #         "subscription": cls._CHANNEL_SUBSCRIPTION,
+    #         "call": cls._CHANNEL_CALL,
+    #     }.get(t, cls._CHANNEL_DEFAULT)
+
+    def __init__(self) -> None:
+        self._initialized: bool = False
+        self._available: bool = False
+        self._messaging: Any = None
+        self._lock = asyncio.Lock()
+
+    @property
+    def available(self) -> bool:
+        return self._available
+
+    async def ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        async with self._lock:
+            if self._initialized:
+                return
+
+            if not getattr(settings, "FCM_ENABLED", False):
+                api_logger.info("fcm: disabled (FCM_ENABLED=false)")
+                self._initialized = True
+                return
+
+            cred_path = (getattr(settings, "FCM_CREDENTIALS_PATH", "") or "").strip()
+            if not cred_path:
+                api_logger.warning("fcm: FCM_CREDENTIALS_PATH is empty, FCM will be unavailable")
+                self._initialized = True
+                return
+
+            try:
+                import firebase_admin
+                from firebase_admin import credentials, messaging
+
+                try:
+                    firebase_admin.get_app()
+                    api_logger.info("fcm: firebase-admin already initialized")
+                except ValueError:
+                    cred = credentials.Certificate(cred_path)
+                    firebase_admin.initialize_app(cred)
+                    api_logger.info("fcm: firebase-admin initialized from %s", cred_path)
+
+                self._messaging = messaging
+                self._available = True
+            except Exception as exc:  # noqa: BLE001
+                api_logger.error("fcm: failed to initialize firebase-admin: %r", exc, exc_info=True)
+                self._available = False
+                # ВАЖНО: не ставим _initialized=True — даём шанс повторить
+                return
+
+            self._initialized = True
+
+    async def send(
+        self,
+        fids: list[str],
+        *,
+        title: str,
+        body: str,
+        data: dict[str, str] | None = None,
+        silent: bool = False,
+    ) -> bool:
+        """Отправить FCM-сообщение на список FID.
+
+        Возвращает True, если хотя бы одно сообщение было отправлено
+        успешно (или принято FCM), False — при полной неудаче/недоступности.
+        """
+        if not fids:
+            return False
+
+        await self.ensure_initialized()
+        if not self._available or self._messaging is None:
+            return False
+
+        messaging = self._messaging
+
+        # Данные всегда передаём как строки (требование FCM).
+        data_str: dict[str, str] = {k: str(v) for k, v in (data or {}).items()}
+
+        # title/body кладём в data — клиент сам построит уведомление через NotificationHelper.
+        if title:
+            data_str.setdefault("title", title)
+        if body:
+            data_str.setdefault("body", body)
+
+        try:
+            # ВСЕГДА data-only, без notification-блока.
+            # Иначе FCM SDK сам покажет уведомление и не вызовет
+            # FBaseMessagingService.onMessageReceived — note recv не уйдёт.
+            message = messaging.MulticastMessage(
+                tokens=fids,
+                data=data_str,
+                android=messaging.AndroidConfig(priority="high"),
+            )
+
+            from collections.abc import Callable
+
+            sender: Callable[[messaging.MulticastMessage], messaging.BatchResponse] = messaging.send_each_for_multicast
+            response = await asyncio.to_thread(sender, message)
+            success = sum(1 for r in response.responses if r.success)
+            failure = len(response.responses) - success
+            if success > 0:
+                api_logger.info("fcm: sent %d/%d (failures=%d)", success, len(response.responses), failure)
+                for i, r in enumerate(response.responses):
+                    if not r.success and r.exception is not None:
+                        api_logger.warning("fcm: token[%d] failed: %r", i, r.exception)
+                return True
+            api_logger.warning("fcm: all %d messages failed (silent=%s)", failure, silent)
+            return False
+        except Exception as exc:
+            api_logger.error("fcm: send failed: %r", exc, exc_info=True)
+            return False
+
+
+# ============================================================
+# Push Notification Service
+# ============================================================
+
+
 class PushNotificationService:
     def __init__(self) -> None:
         self._connections: dict[str, set[WebSocket]] = defaultdict(set)
-        # --- FID <-> user_id (CHANGED) ---
         # fcm_id -> user_id: используется, если push приходит на FID.
         self._fcm_to_user: dict[str, str] = {}
         # user_id -> fcm_id: обратная связь, чтобы при unregister почистить FID.
-        # Один user может иметь несколько FID (несколько устройств) —
-        # храним множество.
         self._user_to_fcms: dict[str, set[str]] = defaultdict(set)
 
         self._lock = asyncio.Lock()
@@ -98,7 +241,8 @@ class PushNotificationService:
         self._heartbeat_task: asyncio.Task | None = None
         self._running = False
         self._started_at: float | None = None
-        self._stats = {
+        self.fcm = _FcmClient()
+        self.stats = {
             "pushes_received": 0,
             "pushes_dispatched": 0,
             "pushes_duplicate": 0,
@@ -109,16 +253,81 @@ class PushNotificationService:
             "batches_empty": 0,
             "pushes_fid_resolved": 0,
             "pushes_fid_unresolved": 0,
+            "fcm_sent": 0,
+            "fcm_failed": 0,
+            "fcm_skipped": 0,
         }
+
+    # ---------- lifecycle -------._stat---
 
     async def start(self) -> None:
         if self._running:
             return
         self._running = True
         self._started_at = time.time()
+
+        # Восстановить FID из SQL Server ----------
+        if getattr(settings, "FCM_LOAD_FIDS_ON_START", True) and getattr(settings, "FCM_ENABLED", False):
+            await self._restore_fids_from_sql()
+
+        # Прогреваем FCM-клиент на старте (инициализация firebase-admin).
+        if getattr(settings, "FCM_ENABLED", False):
+            try:
+                await self.fcm.ensure_initialized()
+            except Exception as exc:  # noqa: BLE001
+                api_logger.error("fcm: warm-up failed: %r", exc)
+
         if settings.WS_NOTIFY_HEARTBEAT_INTERVAL > 0:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        api_logger.info("push_service: started")
+
+        api_logger.info(
+            "push_service: started (fcm_enabled=%s, fcm_mode=%s, fcm_available=%s, fids=%d, users=%d)",
+            getattr(settings, "FCM_ENABLED", False),
+            getattr(settings, "FCM_SEND_MODE", "fallback"),
+            self.fcm.available,
+            len(self._fcm_to_user),
+            len(self._user_to_fcms),
+        )
+
+    async def _restore_fids_from_sql(self) -> None:
+        """Загрузить активные (usi, dvc) из ext.PA_mbl_TokenDevices_Load.
+
+        Вызывается один раз в start(). Ошибки не фатальны: сервис
+        стартует с пустым реестром, клиенты перерегистрируются.
+        """
+        try:
+            from ..db.repositories import TeamdroidProcedureRepository
+
+            loaded = await asyncio.wait_for(
+                asyncio.to_thread(TeamdroidProcedureRepository.load_token_devices),
+                timeout=15.0,
+            )
+        except TimeoutError:
+            api_logger.warning("push_service: load_token_devices timeout — starting with empty FID registry")
+            return
+        except Exception as exc:  # noqa: BLE001
+            api_logger.error(
+                "push_service: load_token_devices failed: %r",
+                exc,
+                exc_info=True,
+            )
+            return
+
+        if not loaded:
+            api_logger.info("push_service: no FIDs restored from SQL (empty result)")
+            return
+
+        async with self._lock:
+            for user_id, fids in loaded.items():
+                self._user_to_fcms[user_id].update(fids)
+                for fid in fids:
+                    self._fcm_to_user[fid] = user_id
+
+        api_logger.info(
+            "push_service: restored %d FIDs for %d users from SQL Server",
+            sum(len(s) for s in loaded.values()),
+            len(loaded),
+        )
 
     async def stop(self) -> None:
         self._running = False
@@ -142,7 +351,69 @@ class PushNotificationService:
 
         api_logger.info("push_service: stopped")
 
-    # ---------- регистрация / удаление ----------
+    # ---------- FID registry ----------
+
+    async def update_fid(self, user_id: str, fid: str | None) -> None:
+        """Зарегистрировать/обновить FID пользователя.
+
+        Вызывается из `POST /internal/push/register_fid`.
+        Если `fid=None` — удалить все FID пользователя.
+        """
+        if not user_id or not user_id.startswith("usr"):
+            raise ValueError(f"Invalid user_id: {user_id!r}")
+
+        async with self._lock:
+            if fid is None:
+                # Удалить все FID пользователя.
+                old = self._user_to_fcms.pop(user_id, set())
+                for f in old:
+                    self._fcm_to_user.pop(f, None)
+                api_logger.info("push_service: cleared FIDs for user=%s", user_id)
+                return
+
+            fid = fid.strip()
+            if not fid:
+                raise ValueError("empty fid")
+
+            # Удалить старые FID пользователя (обычно один), чтобы не плодить.
+            old = self._user_to_fcms.get(user_id, set())
+            for f in old:
+                if f != fid:
+                    self._fcm_to_user.pop(f, None)
+            self._user_to_fcms[user_id] = {fid}
+            self._fcm_to_user[fid] = user_id
+
+        api_logger.info(
+            "push_service: fid registered user=%s fid=...%s",
+            user_id,
+            fid[-8:] if len(fid) >= 8 else "***",
+        )
+
+    async def remove_fid(self, user_id: str, fid: str) -> None:
+        """Удалить конкретный FID пользователя.
+
+        Вызывается из `DELETE /api/v1/push/register_fid` и из
+        `relay_handler.unregister_fid`.
+        """
+        if not user_id or not user_id.startswith("usr"):
+            return
+
+        async with self._lock:
+            fcms = self._user_to_fcms.get(user_id)
+            if not fcms:
+                return
+            fcms.discard(fid)
+            self._fcm_to_user.pop(fid, None)
+            if not fcms:
+                self._user_to_fcms.pop(user_id, None)
+
+        api_logger.info(
+            "push_service: fid removed user=%s fid=...%s",
+            user_id,
+            fid[-8:] if len(fid) >= 8 else "***",
+        )
+
+    # ---------- registration ----------
 
     async def register(
         self,
@@ -152,26 +423,15 @@ class PushNotificationService:
         *,
         fcm_id_kw: str | None = None,
     ) -> None:
-        """Регистрирует WS-соединение пользователя.
-
-        Args:
-            user_id: Tinode user ID (``usrXXX``).
-            ws: WebSocket-соединение.
-            fcm_id: Firebase Installation ID (FID) клиента, если известен.
-                Может быть передан как позиционно, так и по имени.
-            fcm_id_kw: алиас для совместимости со старыми вызовами
-                ``register(..., fcm_id=...)``; склеивается с ``fcm_id``.
-        """
+        """Регистрирует WS-соединение пользователя."""
         if not user_id or not user_id.startswith("usr"):
             raise ValueError(f"Invalid user_id: {user_id!r}")
 
-        # Поддержка обоих вариантов передачи FID.
         effective_fcm = fcm_id or fcm_id_kw
 
         async with self._lock:
             user_conns = self._connections[user_id]
             if ws in user_conns:
-                # Соединение уже зарегистрировано — обновим FID, если он пришёл.
                 if effective_fcm:
                     self._fcm_to_user[effective_fcm] = user_id
                     self._user_to_fcms[user_id].add(effective_fcm)
@@ -185,8 +445,12 @@ class PushNotificationService:
                         oldest.close(code=1013, reason="too many connections"),
                         timeout=2.0,
                     )
-                except Exception:  # noqa: BLE001
-                    pass
+                except (TimeoutError, RuntimeError, ConnectionError) as exc:
+                    api_logger.warning(
+                        "push_service: failed to close oldest ws user=%s: %r",
+                        user_id,
+                        exc,
+                    )
 
             user_conns.add(ws)
 
@@ -201,7 +465,29 @@ class PushNotificationService:
             len(self._connections[user_id]),
         )
 
-    async def unregister(self, user_id: str, ws: WebSocket) -> None:
+    async def unregister(
+        self,
+        user_id: str,
+        ws: WebSocket,
+        *,
+        keep_fid: bool = True,
+    ) -> None:
+        """Снять WS-соединение пользователя.
+
+        Args:
+            user_id: Tinode user ID.
+            ws: сокет, который нужно снять.
+            keep_fid: если True (по умолчанию) — FID пользователя
+                остаётся в реестре ``_user_to_fcms``/``_fcm_to_user``,
+                даже если это был последний сокет. Это нужно для того,
+                чтобы FCM-доставка работала, когда приложение закрыто
+                (WS нет, но устройство всё ещё "живое" для FCM).
+
+                FID удаляется только при явном логауте — через
+                ``remove_fid()`` (``DELETE /api/v1/push/register_fid``).
+                Если keep_fid=False — поведение как раньше (удалить FID
+                при пустом списке сокетов).
+        """
         async with self._lock:
             user_conns = self._connections.get(user_id)
             if user_conns is None:
@@ -209,17 +495,20 @@ class PushNotificationService:
             user_conns.discard(ws)
             if not user_conns:
                 del self._connections[user_id]
-                # Соединений у пользователя не осталось — чистим FID-связи.
-                fcms = self._user_to_fcms.pop(user_id, set())
-                for fcm in fcms:
-                    self._fcm_to_user.pop(fcm, None)
-        api_logger.debug("push_service: unregistered user=%s", user_id)
+                if not keep_fid:
+                    fcms = self._user_to_fcms.pop(user_id, set())
+                    for fcm in fcms:
+                        self._fcm_to_user.pop(fcm, None)
+        api_logger.debug(
+            "push_service: unregistered user=%s keep_fid=%s",
+            user_id,
+            keep_fid,
+        )
 
-    # ---------- дедупликация ----------
+    # ---------- dedup ----------
 
     @staticmethod
     def _prune(od: OrderedDict, max_size: int, now: float) -> None:
-        """Удаляет устаревшие и лишние записи из OrderedDict (LRU-очистка)."""
         while od:
             key, ts = next(iter(od.items()))
             if now - ts <= _SEEN_TTL_SECONDS:
@@ -229,11 +518,6 @@ class PushNotificationService:
             od.popitem(last=False)
 
     def is_duplicate_batch(self, event_id: str) -> bool:
-        """Дедупликация батча по event_id. Публичный метод.
-
-        Возвращает True, если батч с таким event_id уже обрабатывался.
-        Пустой event_id не дедуплицируется (Go всегда шлёт непустой).
-        """
         if not event_id:
             return False
 
@@ -243,14 +527,13 @@ class PushNotificationService:
         if event_id in self._seen_events:
             self._seen_events.move_to_end(event_id)
             self._seen_events[event_id] = now
-            self._stats["batches_duplicate"] += 1
+            self.stats["batches_duplicate"] += 1
             return True
 
         self._seen_events[event_id] = now
         return False
 
     def _is_duplicate_push(self, push: RelayPush) -> bool:
-        """Проверяет, был ли этот push уже обработан."""
         now = time.time()
         self._prune(self._seen_pushes, _SEEN_PUSHES_MAX, now)
 
@@ -262,52 +545,154 @@ class PushNotificationService:
         if key in self._seen_pushes:
             self._seen_pushes.move_to_end(key)
             self._seen_pushes[key] = now
-            self._stats["pushes_duplicate"] += 1
+            self.stats["pushes_duplicate"] += 1
             return True
 
         self._seen_pushes[key] = now
         return False
 
-    # ---------- FID ----------
+    # ---------- FID helpers ----------
 
     def resolve_fcm_id(self, fcm_id: str | None) -> str | None:
-        """Возвращает user_id по FID, если устройство онлайн."""
         if not fcm_id:
             return None
         return self._fcm_to_user.get(fcm_id)
 
     def get_fcms_for_user(self, user_id: str) -> set[str]:
-        """Возвращает множество FID, привязанных к пользователю."""
         return set(self._user_to_fcms.get(user_id, ()))
 
     def get_primary_fid(self, user_id: str) -> str | None:
-        """Возвращает один FID пользователя (для token_finish при disconnect).
-
-        Используется при разъединении WS-соединения, чтобы вызвать
-        ``ext.PA_mbl_TokenFinish_Exec``. ВАЖНО: вызывать ДО
-        ``unregister()`` — иначе FID уже будет удалён из словаря.
-
-        Args:
-            user_id: Tinode user ID (``usrXXX``).
-
-        Returns:
-            Один из FID пользователя или ``None``, если FID неизвестен.
-        """
         fcms = self._user_to_fcms.get(user_id)
         if fcms:
             return next(iter(fcms))
         return None
 
-    # ---------- доставка ----------
+    # ---------- WS message formatting ----------
+
+    @staticmethod
+    def _extract_text(content: Any) -> str:
+        if not content:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, dict):
+            txt = content.get("txt")
+            if isinstance(txt, str):
+                return txt
+        return ""
+
+    @staticmethod
+    def _to_ws_message(push: RelayPush) -> dict[str, Any]:
+        if push.silent:
+            return {}
+
+        if push.type == "msg":
+            if push.webrtc:
+                return {
+                    "type": "call",
+                    "topic": push.topic,
+                    "title": "Call",
+                    "body": push.webrtc,
+                    "seq": push.seq or 0,
+                    "aonly": bool(push.aonly),
+                }
+
+            return {
+                "type": "message",
+                "topic": push.topic,
+                "title": "New message",
+                "body": PushNotificationService._extract_text(push.content) or "New message",
+                "seq": push.seq or 0,
+            }
+
+        if push.type == "sub":
+            return {
+                "type": "subscription",
+                "topic": push.topic,
+                "title": "New chat",
+                "body": push.from_id or "",
+                "seq": 0,
+            }
+
+        return {}
+
+    # ---------- FCM building ----------
+
+    @staticmethod
+    def _to_fcm_payload(push: RelayPush) -> tuple[str, str, dict[str, str], bool] | None:
+        """Построить FCM-сообщение из RelayPush.
+
+        Возвращает (title, body, data, silent) или None, если сообщение
+        не подлежит отправке (read/recv-квитанции, неизвестный тип).
+        """
+        if push.silent:
+            # Silent-сообщение: только data, без нотификации.
+            return (
+                "",
+                "",
+                {
+                    "type": push.type,
+                    "what": push.type,
+                    "topic": push.topic,
+                    "seq": str(push.seq or 0),
+                },
+                True,
+            )
+
+        if push.type == "msg":
+            if push.webrtc:
+                return (
+                    "Call",
+                    push.webrtc,
+                    {
+                        "type": "call",
+                        "what": "msg",
+                        "topic": push.topic,
+                        "seq": str(push.seq or 0),
+                        "webrtc": push.webrtc,
+                        "aonly": "1" if push.aonly else "0",
+                    },
+                    False,
+                )
+
+            text = PushNotificationService._extract_text(push.content) or "New message"
+            return (
+                "New message",
+                text[:200],
+                {
+                    "type": "message",
+                    "what": "msg",
+                    "topic": push.topic,
+                    "seq": str(push.seq or 0),
+                },
+                False,
+            )
+
+        if push.type == "sub":
+            return (
+                "New chat",
+                push.from_id or "",
+                {
+                    "type": "subscription",
+                    "what": "sub",
+                    "topic": push.topic,
+                    "seq": "0",
+                },
+                False,
+            )
+
+        return None
+
+    # ---------- dispatch ----------
 
     async def dispatch(self, push: RelayPush) -> DeliveryStatus:
-        """Доставить один push всем активным WS-соединениям получателя.
+        """Доставить один push: WS (приоритет) + FCM (согласно режиму).
 
         Returns:
-            DeliveryStatus — статус доставки. Используется relay-обработчиком
-            для подсчёта статистики батча.
+            DeliveryStatus — статус WS-доставки. Используется
+            relay-обработчиком для подсчёта статистики батча.
         """
-        self._stats["pushes_received"] += 1
+        self.stats["pushes_received"] += 1
 
         if self._is_duplicate_push(push):
             api_logger.info(
@@ -319,35 +704,42 @@ class PushNotificationService:
             return DeliveryStatus.DUPLICATE
 
         payload = self._to_ws_message(push)
-        if not payload:
-            # Определяем причину пропуска для точной статистики/логов.
-            if push.silent:
-                self._stats["pushes_skipped_silent"] += 1
-                reason = "silent"
-                status = DeliveryStatus.SKIPPED_SILENT
-            else:
-                reason = "read-receipt" if push.type == "read" else "unknown-type"
-                status = DeliveryStatus.SKIPPED_TYPE
+        ws_status = await self._dispatch_ws(push, payload)
 
+        # FCM отправляем согласно режиму.
+        await self._dispatch_fcm(push, ws_status)
+
+        return ws_status
+
+    async def _dispatch_ws(self, push: RelayPush, payload: dict[str, Any]) -> DeliveryStatus:
+        """Отправить push по WS. Возвращает DeliveryStatus."""
+        if not payload:
+            if push.silent:
+                self.stats["pushes_skipped_silent"] += 1
+                api_logger.info(
+                    "push_service: skipped WS user=%s type=%s seq=%s reason=silent",
+                    push.user_id,
+                    push.type,
+                    push.seq,
+                )
+                return DeliveryStatus.SKIPPED_SILENT
+
+            reason = "read-receipt" if push.type == "read" else "unknown-type"
+            self.stats["pushes_skipped_silent"] += 1
             api_logger.info(
-                "push_service: skipped user=%s type=%s seq=%s reason=%s",
+                "push_service: skipped WS user=%s type=%s seq=%s reason=%s",
                 push.user_id,
                 push.type,
                 push.seq,
                 reason,
             )
-            return status
+            return DeliveryStatus.SKIPPED_TYPE
 
-        # --- Разрешение адресата (CHANGED): ---
-        # Если push.user_id — это FID (начинается не с "usr", а, например,
-        # с короткого Firebase Installation ID), пробуем найти user_id
-        # по _fcm_to_user. Это позволяет Go-адаптеру шлать push прямо на
-        # FID устройства, не зная Tinode user_id.
         target_user = push.user_id
         if not target_user.startswith("usr"):
             resolved = self.resolve_fcm_id(target_user)
             if resolved is None:
-                self._stats["pushes_fid_unresolved"] += 1
+                self.stats["pushes_fid_unresolved"] += 1
                 api_logger.info(
                     "push_service: fid unresolved fid=%s type=%s seq=%s",
                     target_user,
@@ -356,16 +748,16 @@ class PushNotificationService:
                 )
                 return DeliveryStatus.NO_CONNECTIONS
             target_user = resolved
-            self._stats["pushes_fid_resolved"] += 1
+            self.stats["pushes_fid_resolved"] += 1
 
         async with self._lock:
             targets = list(self._connections.get(target_user, ()))
             online_users = len(self._connections)
 
         if not targets:
-            self._stats["pushes_no_connections"] += 1
+            self.stats["pushes_no_connections"] += 1
             api_logger.info(
-                "push_service: dropped user=%s type=%s seq=%s reason=offline online_users=%d",
+                "push_service: WS dropped user=%s type=%s seq=%s reason=offline online_users=%d",
                 target_user,
                 push.type,
                 push.seq,
@@ -387,13 +779,13 @@ class PushNotificationService:
         dead: list[WebSocket] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                self._stats["pushes_failed_send"] += 1
+                self.stats["pushes_failed_send"] += 1
                 dead.append(targets[i])
 
         if dead:
             errors = [str(r) for r in results if isinstance(r, Exception)]
             api_logger.warning(
-                "push_service: partial delivery user=%s type=%s seq=%s failed=%d/%d errors=%s",
+                "push_service: partial WS user=%s type=%s seq=%s failed=%d/%d errors=%s",
                 target_user,
                 push.type,
                 push.seq,
@@ -415,9 +807,9 @@ class PushNotificationService:
         ok_count = len(targets) - len(dead)
 
         if ok_count > 0:
-            self._stats["pushes_dispatched"] += 1
+            self.stats["pushes_dispatched"] += 1
             api_logger.info(
-                "push_service: delivered user=%s type=%s seq=%s sockets=%d/%d",
+                "push_service: WS delivered user=%s type=%s seq=%s sockets=%d/%d",
                 target_user,
                 push.type,
                 push.seq,
@@ -430,69 +822,124 @@ class PushNotificationService:
 
         return DeliveryStatus.FAILED
 
-    @staticmethod
-    def _extract_text(content: Any) -> str:
-        """Извлекает plain-текст из Drafty-content.
+    async def _dispatch_fcm(self, push: RelayPush, ws_status: DeliveryStatus) -> None:
+        """Отправить push через FCM согласно FCM_SEND_MODE.
 
-        Drafty обычно приходит как dict {"txt": "...", "fmt": [...], "ent": [...]}.
-        Реже — как готовая строка. Всё остальное считаем «нет текста».
+        Логика:
+          - "never": не отправлять.
+          - "always": отправлять ВСЕГДА для msg/sub (WS + FCM одновременно),
+                        КРОМЕ silent-сообщений, которые уже доставлены по WS
+                        (это фоновая синхронизация данных, UI-уведомление не нужно).
+          - "fallback": для type="sub" — всегда; для msg — только если WS
+                        не доставил (NO_CONNECTIONS/FAILED/PARTIAL).
+          - silent=True: только если WS не доставил.
+          - type="read": не отправлять через FCM.
         """
-        if not content:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, dict):
-            txt = content.get("txt")
-            if isinstance(txt, str):
-                return txt
-        return ""
+        if not getattr(settings, "FCM_ENABLED", False):
+            self.stats["fcm_skipped"] += 1
+            return
 
-    @staticmethod
-    def _to_ws_message(push: RelayPush) -> dict[str, Any]:
-        """Формат сообщения для мобильного клиента (NotificationsWsService.java).
+        mode = (getattr(settings, "FCM_SEND_MODE", "fallback") or "fallback").lower()
+        if mode == "never":
+            self.stats["fcm_skipped"] += 1
+            return
 
-        Возвращает пустой dict, если push не подлежит показу:
-        - silent=true (пользователь уже видел сообщение интерактивно);
-        - тип read/recv-квитанций;
-        - неизвестный тип.
+        # read-квитанции через FCM не шлём.
+        if push.type == "read":
+            self.stats["fcm_skipped"] += 1
+            return
 
-        Контракт (см. app/src/main/java/by/aps/teamdroid/services/NotificationsWsService.java):
-            {"type": "...", "topic": "...", "title": "...", "body": "...", "seq": N}
-        """
+        # Определяем, надо ли отправлять FCM.
         if push.silent:
-            return {}
+            # Silent: только если WS не доставил.
+            should_send = ws_status == DeliveryStatus.NO_CONNECTIONS
+        elif mode == "always":
+            # ТЗ п.5: помимо WS-оповещения отправляется FCM FID.
+            # Для msg и sub — всегда.
+            should_send = True
+        elif push.type == "sub":
+            # Приглашения в чат — всегда (даже если WS доставил).
+            should_send = True
+        elif mode == "fallback":
+            should_send = ws_status in (
+                DeliveryStatus.NO_CONNECTIONS,
+                DeliveryStatus.FAILED,
+                DeliveryStatus.PARTIAL,
+            )
+        else:
+            should_send = False
 
-        # --- Сообщение ---
-        if push.type == "msg":
-            if push.webrtc:
-                return {
-                    "type": "call",
-                    "topic": push.topic,
-                    "title": "Call",
-                    "body": push.webrtc,
-                    "seq": push.seq or 0,
-                    "aonly": bool(push.aonly),
-                }
+        if not should_send:
+            self.stats["fcm_skipped"] += 1
+            return
 
-            return {
-                "type": "message",
-                "topic": push.topic,
-                "title": "New message",
-                "body": PushNotificationService._extract_text(push.content) or "New message",
-                "seq": push.seq or 0,
-            }
+        # Определяем целевого пользователя (usrXXX).
+        target_user = push.user_id
+        if not target_user.startswith("usr"):
+            resolved = self.resolve_fcm_id(target_user)
+            if resolved is None:
+                self.stats["fcm_failed"] += 1
+                api_logger.debug(
+                    "fcm: fid unresolved fid=%s type=%s seq=%s",
+                    target_user,
+                    push.type,
+                    push.seq,
+                )
+                return
+            target_user = resolved
 
-        # --- Новая подписка / новый чат ---
-        if push.type == "sub":
-            return {
-                "type": "subscription",
-                "topic": push.topic,
-                "title": "New chat",
-                "body": push.from_id or "",
-                "seq": 0,
-            }
+        if push.fid:
+            fids = [push.fid]
+        else:
+            fids = sorted(self.get_fcms_for_user(target_user))
 
-        return {}
+        if not fids:
+            self.stats["fcm_skipped"] += 1
+            api_logger.info(
+                "fcm: no FID for user=%s type=%s seq=%s",
+                target_user,
+                push.type,
+                push.seq,
+            )
+            return
+
+        payload = self._to_fcm_payload(push)
+        if payload is None:
+            self.stats["fcm_skipped"] += 1
+            return
+
+        title, body, data, silent = payload
+        ok = await self.fcm.send(
+            fids,
+            title=title,
+            body=body,
+            data=data,
+            silent=silent,
+        )
+        if ok:
+            self.stats["fcm_sent"] += 1
+            api_logger.info(
+                "fcm: sent user=%s type=%s seq=%s fids=%d mode=%s ws_status=%s",
+                target_user,
+                push.type,
+                push.seq,
+                len(fids),
+                mode,
+                ws_status.value,
+            )
+        else:
+            self.stats["fcm_failed"] += 1
+            api_logger.warning(
+                "fcm: failed user=%s type=%s seq=%s fids=%d mode=%s ws_status=%s",
+                target_user,
+                push.type,
+                push.seq,
+                len(fids),
+                mode,
+                ws_status.value,
+            )
+
+    # ---------- heartbeat ----------
 
     async def _heartbeat_loop(self) -> None:
         interval = settings.WS_NOTIFY_HEARTBEAT_INTERVAL
@@ -504,8 +951,24 @@ class PushNotificationService:
                 for ws in ws_list:
                     try:
                         await asyncio.wait_for(ws.send_json({"type": "ping"}), timeout=2.0)
-                    except Exception:  # noqa: BLE001
+                    except (TimeoutError, RuntimeError, ConnectionError, WebSocketDisconnect) as exc:
+                        api_logger.debug("heartbeat: dropping user=%s: %r", uid, exc)
                         await self.unregister(uid, ws)
+
+    # ---------- properties ----------
+
+    @property
+    def fcm_available(self) -> bool:
+        """True, если firebase-admin инициализирован и готов отправлять.
+
+        False, если:
+          - FCM_ENABLED=false;
+          - FCM_CREDENTIALS_PATH пуст или файл не найден;
+          - firebase-admin не установлен или упал при инициализации.
+        """
+        return self.fcm.available
+
+    # ---------- status ----------
 
     async def get_status(self, include_per_user: bool = False) -> dict[str, Any]:
         async with self._lock:
@@ -523,7 +986,10 @@ class PushNotificationService:
             "total_fcm_ids": total_fcms,
             "seen_pushes_cache_size": len(self._seen_pushes),
             "seen_events_cache_size": len(self._seen_events),
-            "stats": self._stats,
+            "fcm_enabled": getattr(settings, "FCM_ENABLED", False),
+            "fcm_send_mode": getattr(settings, "FCM_SEND_MODE", "fallback"),
+            "fcm_available": self.fcm.available,
+            "stats": self.stats,
         }
         if per_user is not None:
             result["per_user"] = per_user
