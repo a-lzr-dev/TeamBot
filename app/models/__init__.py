@@ -105,6 +105,7 @@ from .main import (
     AppLogRequestModel,
     # Модели мобильных клиентов
     AppModel,
+    AppPushPendingModel,
     # Модели рассылок
     BroadcastMessageLinkModel,
     BroadcastModel,
@@ -227,6 +228,7 @@ __all__ = [
     "ErrorFilterModel",
     # Модели мобильных клиентов
     "AppModel",
+    "AppPushPendingModel",
     "AppLogModel",
     "AppLogRequestModel",
     # Telegram - периодические задачи

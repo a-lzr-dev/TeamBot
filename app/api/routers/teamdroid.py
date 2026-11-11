@@ -10,6 +10,23 @@
     * GET  /user-id/{id_val} — генерация Teamdroid user id (usrXXXX).
     * GET  /health           — проверка доступности Teamdroid.
 
+CHANGED (v2) — устранены предупреждения PyCharm:
+  * `make_user_id`: `Annotated[int, Path(...)]` заменён на
+    `int = Path(...)` — PyCharm выдавал 3× "Expected a type"
+    на аннотации с `Annotated[...]` в параметрах FastAPI.
+    `Annotated` удалён из импорта `typing`.
+  * `from ...config import settings` снабжён
+    `# noinspection HttpUrlsUsage`: PyCharm эвристически
+    предупреждает про `http://...` в дефолтном значении
+    `TEAMDROID_HTTP_UPLOAD_URL`, даже для localhost.
+  * `_ctrl_summary` и `_ctrl_to_dict`: явное сужение `None`
+    (тернарник `"None" if x is None else str(x)`) — PyCharm
+    считал `getattr(..., default=None)` «None-only» и ругался
+    на `str()` / `repr()` / `format`.
+  * Добавлена `_validate_upload_url()` — предупреждает в
+    production, если `TEAMDROID_HTTP_UPLOAD_URL` использует
+    plain `http://` (кроме localhost/127.0.0.1/[::1]).
+
 CHANGED (перенос в client.py):
     Все клиентские эндпоинты мобильного приложения перенесены в
     app/api/routers/client.py и защищены набором
@@ -59,7 +76,7 @@ import re
 import struct
 import threading
 from collections.abc import Iterator, Mapping
-from typing import Annotated, Any, cast
+from typing import Any, cast
 
 import grpc
 import pyodbc
@@ -77,6 +94,7 @@ except ImportError:  # pragma: no cover
     MessageToDict = None  # type: ignore[assignment]
     Message = None  # type: ignore[assignment]
 
+# noinspection HttpUrlsUsage
 from ...config import settings
 from ...db.manager import build_teamdroid_sql_conn_str, close_teamdroid_sql
 from ...logger import api_logger
@@ -143,6 +161,9 @@ _EXTRA_MIME: dict[str, str] = {
 _HTTP_SCHEME = "http://"
 _HTTPS_SCHEME = "https://"
 
+# Исключения для _validate_upload_url: локальные адреса.
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+
 _RETRY_POLICY = Retry(
     total=3,
     backoff_factor=0.5,
@@ -161,6 +182,31 @@ def close_http_session() -> None:
         _http_session.close()
     except (requests.RequestException, OSError) as close_exc:
         api_logger.warning("[teamdroid] failed to close http session: %r", close_exc)
+
+
+def _validate_upload_url(url: str) -> None:
+    """Предупреждает, если upload-URL не HTTPS в production.
+
+    Локальные адреса (localhost/127.0.0.1/[::1]) — исключение:
+    трафик не покидает хост, шифрование не требуется.
+
+    Вызывается один раз при старте приложения (из APIManager.initialize
+    или из get_teamdroid_client). Не бросает исключений.
+    """
+    if not url:
+        return
+    env = (getattr(settings, "APP_ENV", "") or "").lower()
+    if env in ("development", "dev"):
+        return
+    if not url.startswith(_HTTP_SCHEME):
+        return
+    for host in _LOCAL_HOSTS:
+        if url.startswith(_HTTP_SCHEME + host):
+            return
+    api_logger.warning(
+        "TEAMDROID_HTTP_UPLOAD_URL uses plain http in production: %r — files will be uploaded unencrypted",
+        url,
+    )
 
 
 # ============================================================
@@ -769,16 +815,24 @@ class TeamdroidClient:
 
     @staticmethod
     def _ctrl_summary(ctrl: Any) -> str:
-        code = getattr(ctrl, "code", None)
-        text = getattr(ctrl, "text", None)
+        """Краткое представление CTRL для логов.
+
+        ИСПРАВЛЕНО (PyCharm "Type 'None' doesn't define '__str__'/'__repr__'/
+        '__format__'"): `getattr(ctrl, "code", None)` возвращает `Any`,
+        но PyCharm «доказывает», что это None, и подсвечивает `str(code)`.
+        Явное сужение (`"None" if code is None else ...`) убирает
+        предупреждение и не меняет поведение.
+        """
+        code: Any = getattr(ctrl, "code", None)
+        text: Any = getattr(ctrl, "text", None)
         try:
             params = _params_to_dict(getattr(ctrl, "params", None))
             keys = sorted(params.keys())
         except (AttributeError, TypeError):
             keys = ["<params parse error>"]
 
-        code_str = str(code)  # "None" или "200"
-        text_repr = "None" if text is None else repr(text)
+        code_str: str = "None" if code is None else str(code)
+        text_repr: str = "None" if text is None else repr(text)
         return f"code={code_str} text={text_repr} params_keys={keys!r}"
 
     def _wait_ctrl(self, request_id: str, timeout: int | None = None) -> Any:
@@ -792,11 +846,13 @@ class TeamdroidClient:
         try:
             ctrl = waiter.get(timeout=timeout)
         except queue.Empty as exc:
+            # Явное сужение: PyCharm не любит None в f-string
+            # (None.__format__ → "None", но IDE считает это ошибкой).
+            stream_alive: str = str(self.stream_thread.is_alive()) if self.stream_thread is not None else "no_thread"
             raise TimeoutError(
                 f"Timeout waiting for CTRL id={request_id} "
                 f"(timeout={timeout}s, running={self.running}, "
-                f"stream_alive="
-                f"{self.stream_thread.is_alive() if self.stream_thread else None})"
+                f"stream_alive={stream_alive})"
             ) from exc
         finally:
             with self._ctrl_waiters_lock:
@@ -1288,6 +1344,9 @@ def get_teamdroid_client() -> TeamdroidClient:
                     api_logger.warning("[teamdroid] failed to close dead client: %r", close_exc)
                 _teamdroid_client = None
 
+            # Одноразовая проверка upload-URL на HTTPS при создании клиента.
+            _validate_upload_url(settings.TEAMDROID_HTTP_UPLOAD_URL)
+
             client = TeamdroidClient(
                 host=settings.TEAMDROID_HOST,
                 username=settings.TEAMDROID_USERNAME,
@@ -1462,14 +1521,21 @@ def _params_to_dict(params: Any) -> dict[str, Any]:
 
 
 def _ctrl_to_dict(ctrl: Any) -> dict[str, Any]:
-    """Преобразует protobuf CTRL в JSON-совместимый dict."""
+    """Преобразует protobuf CTRL в JSON-совместимый dict.
+
+    ИСПРАВЛЕНО (PyCharm "Type 'None' doesn't define '__str__'/'__repr__'"):
+    `getattr(ctrl, field_name, None)` возвращает `Any`, но PyCharm
+    «доказывает», что это None, и подсвечивает форматирование. Явная
+    ветка `None if value is None else value` убирает предупреждение.
+    """
     if ctrl is None:
         return {}
 
     result: dict[str, Any] = {}
 
     for field_name in ("id", "code", "text"):
-        result[field_name] = getattr(ctrl, field_name, None)
+        value: Any = getattr(ctrl, field_name, None)
+        result[field_name] = None if value is None else value
 
     params = getattr(ctrl, "params", None)
     if params is not None:
@@ -1482,7 +1548,8 @@ def _ctrl_to_dict(ctrl: Any) -> dict[str, Any]:
             for field in descriptor_obj.fields:
                 if field.name in result:
                     continue
-                result[field.name] = _to_jsonable(getattr(ctrl, field.name, None))
+                field_value: Any = getattr(ctrl, field.name, None)
+                result[field.name] = None if field_value is None else _to_jsonable(field_value)
     except (AttributeError, TypeError) as ctrl_fields_exc:
         api_logger.debug("[teamdroid] extra ctrl fields skipped: %r", ctrl_fields_exc)
 
@@ -1787,9 +1854,15 @@ async def get_acs(topic: str) -> JSONResponse:
 )
 @log_exceptions(api_logger)
 async def make_user_id(
-    id_val: Annotated[int, Path(..., ge=0, description="Числовой ID (uint64)")],
+    id_val: int = Path(..., ge=0, description="Числовой ID (uint64)"),
 ) -> JSONResponse:
-    """Генерация Teamdroid user id из числового ID."""
+    """Генерация Teamdroid user id из числового ID.
+
+    ИСПРАВЛЕНО (PyCharm "Expected a type" × 3): аннотация
+    `id_val: Annotated[int, Path(...)]` не разворачивалась PyCharm
+    в полноценный тип параметра. Заменено на классический
+    `id_val: int = Path(...)`, который PyCharm понимает.
+    """
     _ensure_pb_available()
 
     try:
@@ -1867,4 +1940,5 @@ __all__ = [
     "TeamdroidClient",
     "_ctrl_to_dict",
     "_ensure_pb_available",
+    "_validate_upload_url",
 ]

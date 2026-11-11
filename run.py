@@ -3,6 +3,18 @@ import asyncio
 import sys
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Windows/cp1251: до любых импортов app.* переоткрываем stdout/stderr
+# в UTF-8 с errors="replace" — иначе эмодзи в логах (✅, ⚠️) валят
+# logging с UnicodeEncodeError: 'charmap' codec can't encode character.
+# ---------------------------------------------------------------------------
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
 from app.logger import app_logger
 
 # Флаг для отслеживания инициализации проекта

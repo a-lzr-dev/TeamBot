@@ -11,6 +11,7 @@ from .reminders import router as reminders_router
 from .stats import router as stats_router
 from .sync import router as sync_router
 from .teamdroid import router as teamdroid_router
+from .update import router as update_router
 from .utils import router as utils_router
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     "stats_router",
     "sync_router",
     "teamdroid_router",
+    "update_router",
     "utils_router",
 ]

@@ -118,6 +118,38 @@ class ConsoleFormatter(logging.Formatter):
         return extra_parts
 
 
+# ==================== SAFE STREAM HANDLER ====================
+
+
+class _SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler, устойчивый к UnicodeEncodeError (Windows/cp1251).
+
+    Проблема: на Windows `sys.stdout` часто открыт в cp1251. При попытке
+    записать эмодзи (✅, ⚠️) `logging` падает с `UnicodeEncodeError`,
+    печатает `--- Logging error ---` и выбрасывает трассировку в stderr.
+    Это особенно мешает при запуске `alembic`, `pytest`, `run.py` —
+    логи засоряются, а иногда и валят процесс.
+
+    Решение: ловим `UnicodeEncodeError` в `emit()` и повторяем запись
+    с `errors="replace"` (непечатаемые символы заменяются на `?`).
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            super().emit(record)
+        except UnicodeEncodeError:
+            try:
+                msg = self.format(record)
+                encoding = getattr(self.stream, "encoding", None) or "ascii"
+                safe_msg = msg.encode(encoding, errors="replace").decode(encoding, errors="replace")
+                self.stream.write(safe_msg + self.terminator)
+                self.flush()
+            except Exception:
+                self.handleError(record)
+        except Exception:
+            self.handleError(record)
+
+
 # ==================== НАСТРОЙКА ЛОГГЕРОВ ====================
 
 
@@ -280,13 +312,31 @@ class LoggerSetup:
     def _create_console_handler(formatter: logging.Formatter) -> logging.StreamHandler:
         """Создание консольного обработчика.
 
+        На Windows `sys.stdout` может быть в cp1251, которая не умеет
+        эмодзи (✅, ⚠️ и т.п.) — это валит `logging` с
+        `UnicodeEncodeError: 'charmap' codec can't encode character`.
+        Переоткрываем поток в UTF-8 с `errors="replace"`, а также
+        используем `_SafeStreamHandler`, который ловит `UnicodeEncodeError`
+        даже если `reconfigure` не сработал (например, `sys.stdout`
+        подменён `alembic`/`pytest` после импорта `app.logger`).
+
         Args:
             formatter: Форматтер
 
         Returns:
             logging.StreamHandler: Настроенный обработчик
         """
-        handler = logging.StreamHandler(sys.stdout)
+        stream = sys.stdout
+        # Python 3.7+: переоткрыть поток с явной кодировкой.
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError, OSError):
+                # Не критично: `_SafeStreamHandler` ниже сам обработает
+                # UnicodeEncodeError.
+                pass
+
+        handler = _SafeStreamHandler(stream)
         handler.setFormatter(formatter)
         return handler
 

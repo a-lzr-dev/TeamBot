@@ -128,7 +128,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # ---- Создание директорий и пользователя ДО COPY кода ----
-RUN mkdir -p /app/logs /app/temp/automation && \
+RUN mkdir -p /app/logs /app/temp/automation /app/update/apk && \
     groupadd --gid 1000 botuser && \
     useradd --uid 1000 --gid botuser --create-home --shell /bin/bash botuser && \
     chown -R botuser:botuser /app

@@ -7,6 +7,12 @@ from .error import (
     ErrorNotificationDTO,
 )
 from .reminder import ReminderNotificationDTO
+from .sync import (
+    SyncEditItem,
+    SyncEditRequest,
+    SyncLoadResponse,
+    SyncLoadRow,
+)
 
 __all__ = [
     # Chat DTOs
@@ -22,4 +28,9 @@ __all__ = [
     "ErrorDeleteResult",
     # Reminder DTOs
     "ReminderNotificationDTO",
+    # Sync DTOs
+    "SyncLoadRow",
+    "SyncLoadResponse",
+    "SyncEditRequest",
+    "SyncEditItem",
 ]

@@ -5,12 +5,10 @@
 - ``grpc``      — проверять через Tinode gRPC (production);
 - ``avanpost``  — проверять через Teamdroid SQL Server (production).
 
-CHANGED: режим ``avanpost`` теперь вызывает
-``TeamdroidProcedureRepository.verify_token`` (см.
-``app/db/repositories/teamdroid.py``), а не Avanpost (``DB_AVANPOST_*``).
-Процедура ``ext.PA_mbl_TokenVerify_Exec`` — это Teamdroid-процедура
-(``TEAMDROID_SQL_*``), так же как ``ext.PA_mbl_MsgsDeliveryStatus_Edit``
-и ``ext.PA_mbl_AuthStart_Exec``/``ext.PA_mbl_AuthFinish_Exec``.
+CHANGED (v2): режим ``avanpost`` использует
+``TeamdroidProcedureRepository.verify_token_with_sync`` (4-tuple),
+sync-часть отбрасывается. Метод ``verify_token`` (3-tuple) удалён
+из репозитория — обратной совместимости нет.
 
 Используется простой in-memory кеш с TTL, чтобы не дёргать SQL Server
 на каждое подключение.
@@ -28,9 +26,9 @@ send-text/send-files.
 Безопасность режима ``avanpost``
 --------------------------------
 Проверка токена через
-``TeamdroidProcedureRepository.verify_token`` — процедура требует
-непустые usi/api/dvc/tkn/cip; отсутствие usi обрабатывается как
-отказ (fail-closed).
+``TeamdroidProcedureRepository.verify_token_with_sync`` — процедура
+требует непустые usi/api/dvc/tkn/cip; отсутствие usi обрабатывается
+как отказ (fail-closed).
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..config import settings
-from ..db.repositories import TeamdroidProcedureRepository  # CHANGED
+from ..db.repositories import TeamdroidProcedureRepository
 from ..logger import api_logger
 from .token_crypto import decrypt_ws_token
 
@@ -56,17 +54,20 @@ class VerifiedToken:
     """Результат проверки WS-токена.
 
     Attributes:
-        user_id: Tinode user ID (``usrXXX``) или ``None``, если проверка
-            не удалась.
-        fcm_id: Firebase Installation ID, извлеченный из токена.
+        user_id: Tinode user ID или None, если проверка не удалась.
+        fcm_id: Firebase Installation ID.
+        update_json: сырой Result от SQL Server ({"fup":1,"prm":{...}}) или None.
+        force_update: True, если scs=0 (обязательное обновление).
     """
 
     user_id: str | None
     fcm_id: str | None = None
+    update_json: str | None = None
+    force_update: bool = False
 
     @property
     def ok(self) -> bool:
-        return bool(self.user_id and self.user_id.startswith("usr"))
+        return bool(self.user_id and self.user_id.startswith("usr")) and not self.force_update
 
 
 # ============================================================
@@ -83,11 +84,9 @@ class _CacheEntry:
     token_hash: str
 
 
-# In-memory кеш: token -> _CacheEntry
 _cache: dict[str, _CacheEntry] = {}
 _cache_lock = asyncio.Lock()
 
-# Отдельный клиент для проверки токенов через Tinode gRPC (лениво).
 _auth_client: Any = None
 _auth_client_lock = asyncio.Lock()
 
@@ -122,7 +121,7 @@ def _safe_int(value: Any) -> int | None:
 
 
 # ============================================================
-# Проверка через Teamdroid SQL Server (CHANGED)
+# Проверка через Teamdroid SQL Server
 # ============================================================
 
 
@@ -134,70 +133,51 @@ async def _verify_token_in_teamdroid(
     app_id: int | None,
     token_date: str | None,
     client_ip: str | None,
-) -> bool:
-    """Проверяет токен в Teamdroid SQL Server (ext.PA_mbl_TokenVerify_Exec).
+) -> tuple[bool, str | None]:
+    """Проверяет токен в Teamdroid SQL Server (PA_mbl_TokenVerify_Exec).
 
-    Вызывается через TeamdroidProcedureRepository.verify_token,
-    который использует singleton-соединение из app.db.manager
-    (TEAMDROID_SQL_*).
-
-    Поведение:
-    - Если ``fcm_id``/``user_id`` пустые или ``user_id``
-      не начинается с ``usr`` — отказ (быстрая проверка формы).
-    - В **development/dev** принимаем токен «по форме» (для отладки).
-    - В **production** вызываем TeamdroidProcedureRepository.verify_token.
-
-    Args:
-        fcm_id: Firebase Installation ID.
-        user_id: Tinode user ID.
-        app_version: Версия приложения.
-        app_version_code: Числовой код версии приложения.
-        app_id: AppID приложения (dir.TRSDirSysApps.FID).
-        token_date: Дата токена yyMMdd ($.tkn).
-        client_ip: IP клиента ($.cip).
-
-    Returns:
-        ``True`` — токен действителен, ``False`` — отказ.
+    Возвращает:
+        (ok, update_json):
+            ok=True,  update_json=None    — валиден, обновления нет.
+            ok=True,  update_json="<json>"— валиден, есть (не критичное) обновление.
+            ok=False, update_json=<...>   — force_update или NoData.
     """
-    # ---------- 1. Быстрая проверка формы ----------
     if not fcm_id or not user_id:
-        return False
+        return False, None
     if not user_id.startswith("usr"):
-        return False
+        return False, None
 
     env = (settings.APP_ENV or "").lower()
     is_dev = env in ("development", "dev")
     api_logger.debug(
-        "auth(teamdroid): _verify_token_in_teamdroid ENTER env=%s is_dev=%s app_version_code=%r user=%s",
+        "auth(teamdroid): ENTER env=%s is_dev=%s app_version_code=%r user=%s",
         env,
         is_dev,
         app_version_code,
         user_id,
     )
 
-    # ---------- 2. Dev-режим: принимаем «по форме» ----------
     if is_dev:
         api_logger.info(
             "auth(teamdroid): dev mode, accepting token by shape (fcm=%s..., usi=%s...)",
             (fcm_id or "")[-6:],
             user_id,
         )
-        return True
+        return True, None
 
-    # ---------- 3. Production: реальная проверка через Teamdroid SQL ----------
     effective_app_id = app_id
     if effective_app_id is None:
         effective_app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
 
     if not effective_app_id:
-        api_logger.error(
-            "auth(teamdroid): TEAMDROID_APP_ID is 0 — процедура вернёт THROW (AppID обязателен для поиска устройства)."
-        )
-        return False
+        api_logger.error("auth(teamdroid): TEAMDROID_APP_ID is 0")
+        return False, None
 
     try:
-        ok, err = await asyncio.to_thread(
-            TeamdroidProcedureRepository.verify_token,
+        # CHANGED: verify_token_with_sync возвращает 4-tuple;
+        # sync-часть (4-й элемент) в WS-хендшейке не нужна.
+        ok, err, update_json, _sync_package = await asyncio.to_thread(
+            TeamdroidProcedureRepository.verify_token_with_sync,
             user_id=user_id,
             fcm_id=fcm_id,
             app_id=int(effective_app_id),
@@ -207,17 +187,20 @@ async def _verify_token_in_teamdroid(
             app_version_code=_safe_int(app_version_code),
         )
     except Exception as exc:  # noqa: BLE001
-        api_logger.error("auth(teamdroid): verify_token raised: %r", exc, exc_info=True)
-        return False
+        api_logger.error("auth(teamdroid): verify_token_with_sync raised: %r", exc, exc_info=True)
+        return False, None
 
     if not ok:
         api_logger.warning(
-            "auth(teamdroid): rejected user=%s fcm=%s... err=%s",
+            "auth(teamdroid): rejected user=%s fcm=%s... err=%s update=%s",
             user_id,
             (fcm_id or "")[-6:],
             err,
+            (update_json or "")[:120],
         )
-    return bool(ok)
+        return False, update_json
+
+    return True, update_json
 
 
 # ============================================================
@@ -325,19 +308,7 @@ async def _verify_via_avanpost(
     token: str,
     client_ip: str | None = None,
 ) -> VerifiedToken:
-    """Проверка токена через Teamdroid SQL Server.
-
-    CHANGED: раньше ходили в Avanpost (DB_AVANPOST_*) — теперь в
-    Teamdroid SQL Server (TEAMDROID_SQL_*), потому что
-    ext.PA_mbl_TokenVerify_Exec — Teamdroid-процедура.
-
-    Расшифровывает токен (FID|usrXXXX|yyMMdd|ver|code), извлекает
-    FID/usrXXXX/дату/версию и вызывает _verify_token_in_teamdroid.
-
-    Args:
-        token: base64-строка токена.
-        client_ip: IP клиента (передаётся в процедуру как $.cip).
-    """
+    """Проверка токена через Teamdroid SQL Server."""
     api_logger.debug("auth(teamdroid): decrypt start client_ip=%r", client_ip)
 
     payload = decrypt_ws_token(token)
@@ -348,16 +319,14 @@ async def _verify_via_avanpost(
     api_logger.info(
         "auth(teamdroid): payload user=%s fcm=%s... ver=%s code=%s date=%s",
         payload.user_id,
-        (payload.fcm_id[-6:] if len(payload.fcm_id) >= 6 else "***"),
+        payload.fcm_id[-6:] if len(payload.fcm_id) >= 6 else "***",
         payload.app_version,
         payload.app_version_code,
         payload.date,
     )
 
     app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
-    api_logger.info("auth(teamdroid): app_id=%s", app_id)
-
-    ok = await _verify_token_in_teamdroid(
+    ok, update_json = await _verify_token_in_teamdroid(
         fcm_id=payload.fcm_id,
         user_id=payload.user_id,
         app_version=payload.app_version,
@@ -367,11 +336,27 @@ async def _verify_via_avanpost(
         client_ip=client_ip,
     )
 
-    api_logger.info("auth(teamdroid): verify_token ok=%s user=%s", ok, payload.user_id)
+    api_logger.info(
+        "auth(teamdroid): verify ok=%s user=%s update=%s",
+        ok,
+        payload.user_id,
+        (update_json or "")[:200],
+    )
 
     if not ok:
-        return VerifiedToken(user_id=None, fcm_id=payload.fcm_id)
-    return VerifiedToken(user_id=payload.user_id, fcm_id=payload.fcm_id)
+        return VerifiedToken(
+            user_id=None,
+            fcm_id=payload.fcm_id,
+            update_json=update_json,
+            force_update=bool(update_json),
+        )
+
+    return VerifiedToken(
+        user_id=payload.user_id,
+        fcm_id=payload.fcm_id,
+        update_json=update_json,
+        force_update=False,
+    )
 
 
 # ============================================================
@@ -386,11 +371,6 @@ async def verify_ws_token(
     """Проверяет токен в соответствии с режимом из настроек.
 
     Возвращает ``VerifiedToken``; ``.ok is False`` означает отказ.
-
-    Args:
-        token: base64-строка токена из query/header.
-        client_ip: IP клиента (для режима avanpost — передаётся в процедуру
-            как $.cip; для режима grpc игнорируется).
     """
     if not token:
         api_logger.warning("auth: empty token")

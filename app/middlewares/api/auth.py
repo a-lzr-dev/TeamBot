@@ -8,7 +8,8 @@ Middleware для аутентификации запросов к API.
 Основные функции:
     1. Проверка наличия API ключа в заголовке X-API-Key
     2. Валидация API ключа по списку из настроек
-    3. Пропуск публичных путей (health, docs, relay-ingest, WS)
+    3. Пропуск публичных путей (health, docs, relay-ingest, WS,
+       публичная раздача APK)
     4. Пропуск запросов с доверенных хостов (API_TRUSTED_HOSTS)
     5. Пропуск CORS preflight (OPTIONS) и WebSocket upgrade запросов
     6. Добавление информации о пользователе в request.state
@@ -26,6 +27,7 @@ Middleware для аутентификации запросов к API.
           POST   /api/v1/client/verify-code
           POST   /api/v1/client/note
           GET    /api/v1/client/health
+          GET    /api/v1/update/apk/{filename}   <-- закрытая раздача
     - APP_SERVER_SYNC_INGEST_API_KEYS — синхронизация основного сервера
       (Teamdroid):
           POST /api/v1/teamdroid/send-files
@@ -35,6 +37,12 @@ Middleware для аутентификации запросов к API.
           GET  /api/v1/teamdroid/user-id/{id_val}
           GET  /api/v1/teamdroid/acs/{topic}
           GET  /api/v1/teamdroid/health
+
+Публичные пути (без ключа):
+    - /health, /version, /api/docs, /api/redoc, /api/openapi.json
+    - /api/v1/health, /api/v1/ping, /api/v1/ready
+    - WS_NOTIFY_PATH и WS_RELAY_INGEST_PATH (если WS_NOTIFY_ENABLED)
+    - /api/v1/update/public/*  (публичная раздача APK/version.json)
 
 Технические особенности:
     - Интеграция с FastAPI/Starlette через BaseHTTPMiddleware
@@ -84,19 +92,24 @@ _LOGS_DECLINE_RE = re.compile(r"^/api/v1/logs/request/[^/]+/decline$")
 # Точный путь приёма батча диагностических логов
 _LOGS_BATCH_PATH = "/api/v1/logs/batch"
 
-# Канал client-sync (APP_CLIENT_SYNC_INGEST_API_KEYS):
-#   POST   /api/v1/client/register
-#   DELETE /api/v1/client/register
-#   POST   /api/v1/client/send-code
-#   POST   /api/v1/client/verify-code
-#   POST   /api/v1/client/note
-#   GET    /api/v1/client/health
-_CLIENT_SYNC_INGEST_PATHS: tuple[str, ...] = (
-    "/api/v1/client/register",
-    "/api/v1/client/send-code",
-    "/api/v1/client/verify-code",
-    "/api/v1/client/note",
-    "/api/v1/client/health",
+# Точные пути client-sync (без параметризованного хвоста).
+_CLIENT_SYNC_INGEST_EXACT: frozenset[str] = frozenset(
+    {
+        "/api/v1/client/register",
+        "/api/v1/client/send-code",
+        "/api/v1/client/verify-code",
+        "/api/v1/client/note",
+        "/api/v1/client/health",
+        "/api/v1/client/update-check",
+        "/api/v1/client/sync-load",
+        "/api/v1/client/sync-edit",
+        "/api/v1/client/sync-stats",
+    }
+)
+
+# Префиксы путей с параметризованным хвостом.
+_CLIENT_SYNC_INGEST_PREFIXES: tuple[str, ...] = (
+    "/api/v1/update",  # /api/v1/update/apk/{filename}, ...
 )
 
 # Канал server-sync (APP_SERVER_SYNC_INGEST_API_KEYS):
@@ -118,6 +131,7 @@ _SERVER_SYNC_INGEST_PATHS: tuple[str, ...] = (
     "/api/v1/teamdroid/user-id",
     "/api/v1/teamdroid/acs",
     "/api/v1/teamdroid/health",
+    "/api/v1/utils",
 )
 
 
@@ -127,8 +141,14 @@ def _is_server_sync_ingest_path(path: str) -> bool:
 
 
 def _is_client_sync_ingest_path(path: str) -> bool:
-    """Пути sync-каналов мобильного клиента (register/send-code/verify-code/note/health)."""
-    return path in _CLIENT_SYNC_INGEST_PATHS
+    """Пути sync-каналов мобильного клиента.
+
+    - точные пути;
+    - префиксы с параметризованным хвостом.
+    """
+    if path in _CLIENT_SYNC_INGEST_EXACT:
+        return True
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in _CLIENT_SYNC_INGEST_PREFIXES)
 
 
 def _is_logs_ingest_path(path: str) -> bool:
@@ -164,6 +184,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
     # Пути relay-ingest и WS добавляются динамически из настроек
     # (см. _get_public_paths), чтобы учитывать WS_NOTIFY_PATH
     # и WS_RELAY_INGEST_PATH из .env.
+    #
+    # ВАЖНО: _is_public_path() вызывается в dispatch() РАНЬШЕ всех
+    # проверок ingest-каналов и X-API-Key. Поэтому добавление сюда
+    # префикса делает все вложенные пути публичными.
     PUBLIC_PATHS = [
         "/api/v1/health",
         "/api/v1/ping",
@@ -173,6 +197,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         "/api/openapi.json",
         "/health",
         "/version",
+        # Публичная раздача APK/version.json — БЕЗ X-API-Key.
+        # См. app/api/routers/update.py::download_public_file.
+        # ВАЖНО: должен идти до _CLIENT_SYNC_INGEST_PREFIXES в dispatch(),
+        # но так как _is_public_path() вызывается раньше — порядок в
+        # списке не важен. /api/v1/update/apk/* при этом остаётся
+        # закрытым, т.к. он матчится по ДРУГОМУ префиксу.
+        "/api/v1/update/public",
     ]
 
     # Доверенные IP-адреса и подсети (CIDR), которым не нужен API-ключ.
@@ -223,7 +254,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
             api_logger.debug(f"🔓 CORS preflight: {path}")
             return await call_next(request)
 
-        # 1. Проверка, является ли путь публичным
+        # 1. Проверка, является ли путь публичным.
+        #    ВАЖНО: эта проверка идёт ДО всех ingest-веток и проверки
+        #    X-API-Key, поэтому префикс из PUBLIC_PATHS делает
+        #    вложенные пути публичными, не затрагивая соседние ветки.
         if self._is_public_path(path):
             api_logger.debug(f"🔓 Public path: {path}")
             return await call_next(request)
@@ -450,6 +484,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         - "/api/docs" совпадёт с "/api/docs" и "/api/docs/..."
         - "/api/v1/health" НЕ совпадёт с "/api/v1/health-check"
         - "/internal/push" — точное совпадение (не префикс)
+        - "/api/v1/update/public" совпадёт с "/api/v1/update/public/<file>"
 
         Args:
             path: Путь запроса

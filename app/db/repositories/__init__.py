@@ -1,4 +1,5 @@
 from .app import AppRepository
+from .app_push_pending import AppPushPendingRepository, app_push_pending_repo
 from .automation_requests import AutomationRequestRepository
 from .avanpost import AvanpostRepository
 from .avanpost_actions import AvanpostActionRepository
@@ -15,11 +16,14 @@ from .reminders import ReminderRepository
 from .stats import StatsRepository
 from .system import SystemRepository
 from .teamdroid import TeamdroidProcedureRepository
+from .teamdroid_service_broker import TeamdroidServiceBrokerRepository
 from .users import UserRepository
 
 __all__ = [
     # Репозиторий для работы c мобильными клиентами
     "AppRepository",
+    "AppPushPendingRepository",
+    "app_push_pending_repo",
     # Репозиторий для работы с меню действий
     "AvanpostActionRepository",
     # Основные репозитории
@@ -46,6 +50,7 @@ __all__ = [
     "AutomationRequestRepository",
     # Teamdroid SQL Server (ext.PA_mbl_*)
     "TeamdroidProcedureRepository",
+    "TeamdroidServiceBrokerRepository",
     # Общие
     "GenericRepository",
 ]

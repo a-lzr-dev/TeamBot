@@ -74,6 +74,7 @@ from .routers import (
     stats_router,
     sync_router,
     teamdroid_router,
+    update_router,
     utils_router,
 )
 
@@ -207,10 +208,31 @@ class APIManager:
         else:
             api_logger.info("ℹ️ WS_NOTIFY_ENABLED=false, push service not started")
 
+        # NEW: Service Broker listener — после push_notification_service
+        listener_started = False
+        try:
+            from ..services.teamdroid_listener_service import teamdroid_listener_service
+
+            await teamdroid_listener_service.start()
+            listener_started = True
+            api_logger.info("✅ Service Broker listener started")
+        except Exception as e:  # noqa: BLE001
+            api_logger.error(f"❌ Failed to start Service Broker listener: {e}", exc_info=True)
+
         try:
             yield
         finally:
             api_logger.info("⛔ API shutting down...")
+
+            # NEW: остановить listener ПЕРВЫМ (пока БД и SQL ещё живы)
+            if listener_started:
+                try:
+                    from ..services.teamdroid_listener_service import teamdroid_listener_service
+
+                    await teamdroid_listener_service.stop()
+                    api_logger.info("✅ Service Broker listener stopped")
+                except Exception as e:  # noqa: BLE001
+                    api_logger.error(f"❌ Failed to stop Service Broker listener: {e}", exc_info=True)
 
             if push_started:
                 try:
@@ -439,6 +461,7 @@ class APIManager:
         app.include_router(stats_router, prefix="/api/v1")
         app.include_router(sync_router, prefix="/api/v1")
         app.include_router(teamdroid_router, prefix="/api/v1")
+        app.include_router(update_router, prefix="/api/v1")
         app.include_router(utils_router, prefix="/api/v1")
 
         if settings.WS_NOTIFY_ENABLED:
@@ -773,6 +796,11 @@ class APIManager:
                 access_log=False,
                 loop="asyncio",
                 timeout_keep_alive=getattr(settings, "HTTP_TIMEOUT_KEEP_ALIVE", 30),
+                # Для отдачи 50 МБ APK: не обрывать «медленные» соединения
+                # раньше времени и не блокировать event loop одним клиентом.
+                timeout_graceful_shutdown=10,
+                limit_concurrency=1000,
+                backlog=2048,
                 lifespan="on",
             )
             # Сужаем `uvicorn.Server | None` до `uvicorn.Server` через локальную

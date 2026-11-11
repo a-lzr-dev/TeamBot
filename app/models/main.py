@@ -947,6 +947,17 @@ class AppLogRequestModel(BaseModel):
         return f"<AppLogRequest(id={self.FID}, app={self.FK_App}, created_at={self.FCreatedAt})>"
 
 
+class AppPushPendingModel(BaseModel):
+    __tablename__ = "TAppPushPending"
+    FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    FUserID: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    FTopic: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    FType: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    FSeq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
+    FAttemptCount: Mapped[int] = mapped_column(Integer, default=0)
+
+
 # ============================================================
 # 4. МОДЕЛИ ПЕРИОДИЧЕСКИХ ЗАДАЧ
 # ============================================================
@@ -1454,6 +1465,7 @@ __all__ = [
     "AppModel",
     "AppLogModel",
     "AppLogRequestModel",
+    "AppPushPendingModel",
     # Модели периодических задач
     "PeriodicTaskModel",
     # Модели напоминаний

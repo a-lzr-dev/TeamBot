@@ -6,6 +6,18 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
+# ---------------------------------------------------------------------------
+# Windows/cp1251: до любых импортов app.* переоткрываем stdout/stderr
+# в UTF-8 с errors="replace". Иначе эмодзи в логах (✅, ⚠️) валят
+# logging с UnicodeEncodeError: 'charmap' codec can't encode character.
+# ---------------------------------------------------------------------------
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
 # Добавляем корень проекта в PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent.parent))
 

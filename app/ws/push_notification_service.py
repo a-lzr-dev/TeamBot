@@ -29,10 +29,20 @@
   {"type": "call", "topic": "usrXXX", "title": "Call",
    "body": "started", "seq": 140, "aonly": false}
 
+  // NEW (v11): сигнал "сходи в sync-load"
+  {"type": "sync"}
+
 Возвращаемое значение dispatch():
   DeliveryStatus — статус доставки одного push. Используется
   relay-обработчиком (app/ws/relay_handler.py) для подсчёта статистики
   доставки батча.
+
+CHANGED (v11):
+  * добавлен публичный is_online(user_id) — используется
+    TeamdroidListenerService вместо приватного _connections;
+  * добавлен публичный dispatch_ws_raw(user_id, payload) — отправка
+    произвольного JSON-payload по всем сокетам пользователя
+    (для {"type":"sync"} из TeamdroidListenerService).
 """
 
 from __future__ import annotations
@@ -374,7 +384,12 @@ class PushNotificationService:
         """Зарегистрировать/обновить FID пользователя.
 
         Вызывается из `POST /internal/client/register`.
-        Если `fid=None` — удалить все FID пользователя.
+
+        Поддерживает НЕСКОЛЬКО FID на пользователя (телефон + планшет).
+        Ограничение — APP_CLIENT_MAX_FIDS_PER_USER (default 10).
+        При превышении вытесняется самый старый FID (FIFO).
+
+        Если `fid=None` — удалить ВСЕ FID пользователя (logout).
         """
         if not user_id or not user_id.startswith("usr"):
             raise ValueError(f"Invalid user_id: {user_id!r}")
@@ -392,18 +407,30 @@ class PushNotificationService:
             if not fid:
                 raise ValueError("empty fid")
 
-            # Удалить старые FID пользователя (обычно один), чтобы не плодить.
-            old = self._user_to_fcms.get(user_id, set())
-            for f in old:
-                if f != fid:
-                    self._fcm_to_user.pop(f, None)
-            self._user_to_fcms[user_id] = {fid}
+            max_fids = int(getattr(settings, "APP_CLIENT_MAX_FIDS_PER_USER", 10) or 10)
+            fcms = self._user_to_fcms.setdefault(user_id, set())
+
+            if fid not in fcms:
+                if len(fcms) >= max_fids:
+                    # Вытесняем самый старый FID (FIFO).
+                    evicted = next(iter(fcms))
+                    fcms.discard(evicted)
+                    self._fcm_to_user.pop(evicted, None)
+                    api_logger.warning(
+                        "push_service: evicted FID user=%s fid=...%s (max=%d)",
+                        user_id,
+                        evicted[-8:] if len(evicted) >= 8 else "***",
+                        max_fids,
+                    )
+                fcms.add(fid)
+
             self._fcm_to_user[fid] = user_id
 
         api_logger.info(
-            "push_service: fid registered user=%s fid=...%s",
+            "push_service: fid registered user=%s fid=...%s total_fids=%d",
             user_id,
             fid[-8:] if len(fid) >= 8 else "***",
+            len(fcms),
         )
 
     async def remove_fid(self, user_id: str, fid: str) -> None:
@@ -583,6 +610,79 @@ class PushNotificationService:
         if fcms:
             return next(iter(fcms))
         return None
+
+    # ---------- NEW (v11): публичные helpers для listener ----------
+
+    def is_online(self, user_id: str) -> bool:
+        """True, если у пользователя есть хотя бы одно активное WS-соединение.
+
+        Публичный аналог проверки ``user_id in self._connections``.
+        Используется TeamdroidListenerService, чтобы не лезть
+        в приватное поле.
+        """
+        return bool(self._connections.get(user_id))
+
+    async def dispatch_ws_raw(self, user_id: str, payload: dict[str, Any]) -> bool:
+        """Отправить произвольный JSON-payload по всем WS-сокетам пользователя.
+
+        Используется TeamdroidListenerService для сигнала
+        ``{"type":"sync"}``. Мёртвые сокеты удаляются из реестра.
+
+        Args:
+            user_id: Tinode user ID (usrXXX).
+            payload: JSON-сериализуемый dict.
+
+        Returns:
+            True, если доставлено хотя бы на один сокет,
+            False — если сокетов нет или все умерли при отправке.
+        """
+        if not payload:
+            return False
+
+        async with self._lock:
+            targets = list(self._connections.get(user_id, ()))
+            if not targets:
+                return False
+
+        raw = json.dumps(payload, ensure_ascii=False)
+
+        send_tasks = [
+            asyncio.wait_for(
+                ws.send_text(raw),
+                timeout=settings.WS_NOTIFY_SEND_TIMEOUT,
+            )
+            for ws in targets
+        ]
+        results = await asyncio.gather(*send_tasks, return_exceptions=True)
+
+        dead: list[WebSocket] = []
+        ok_count = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                dead.append(targets[i])
+            else:
+                ok_count += 1
+
+        if dead:
+            async with self._lock:
+                user_conns = self._connections.get(user_id)
+                if user_conns:
+                    for ws in dead:
+                        user_conns.discard(ws)
+                    if not user_conns:
+                        del self._connections[user_id]
+
+        if ok_count > 0:
+            api_logger.info(
+                "push_service: raw WS delivered user=%s type=%s sockets=%d/%d",
+                user_id,
+                payload.get("type"),
+                ok_count,
+                len(targets),
+            )
+            return True
+
+        return False
 
     # ---------- WS message formatting ----------
 
@@ -955,6 +1055,80 @@ class PushNotificationService:
                 mode,
                 ws_status.value,
             )
+
+    async def notify_update(
+        self,
+        user_id: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Отправить клиенту уведомление «доступно обновление».
+
+        WS — приоритет; если WS нет — FCM (data-only).
+
+        Args:
+            user_id: Tinode user ID (usrXXX).
+            payload: {"type":"update","force":bool,"prm":{frc,ver,vcd,fph,fsz,fhs}}
+
+        Returns:
+            True, если доставлено хотя бы одним каналом.
+        """
+        if not user_id.startswith("usr"):
+            return False
+
+        raw = json.dumps(payload, ensure_ascii=False)
+        delivered_ws = False
+
+        async with self._lock:
+            targets = list(self._connections.get(user_id, ()))
+
+        if targets:
+            send_tasks = [
+                asyncio.wait_for(ws.send_text(raw), timeout=settings.WS_NOTIFY_SEND_TIMEOUT) for ws in targets
+            ]
+            results = await asyncio.gather(*send_tasks, return_exceptions=True)
+            dead: list[WebSocket] = []
+            ok_count = 0
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    dead.append(targets[i])
+                else:
+                    ok_count += 1
+            if ok_count > 0:
+                delivered_ws = True
+            if dead:
+                async with self._lock:
+                    user_conns = self._connections.get(user_id)
+                    if user_conns:
+                        for ws in dead:
+                            user_conns.discard(ws)
+                        if not user_conns:
+                            del self._connections[user_id]
+
+        if delivered_ws:
+            self.stats["pushes_dispatched"] += 1
+            api_logger.info("push_service: update pushed via WS user=%s", user_id)
+            return True
+
+        fids = sorted(self.get_fcms_for_user(user_id))
+        if not fids:
+            api_logger.info("push_service: update not delivered — no WS, no FID user=%s", user_id)
+            return False
+
+        # data-only FCM (тип update, без notification-блока)
+        data_str: dict[str, str] = {}
+        if isinstance(payload.get("prm"), dict):
+            for k, v in payload["prm"].items():
+                data_str[k] = str(v)
+        data_str["type"] = str(payload.get("type") or "update")
+        data_str["force"] = "1" if payload.get("force") else "0"
+
+        ok = await self.fcm.send(fids, title="", body="", data=data_str, silent=False)
+        if ok:
+            self.stats["fcm_sent"] += 1
+            api_logger.info("push_service: update pushed via FCM user=%s", user_id)
+        else:
+            self.stats["fcm_failed"] += 1
+        return ok
 
     # ---------- heartbeat ----------
 

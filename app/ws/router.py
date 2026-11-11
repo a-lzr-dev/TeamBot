@@ -28,9 +28,14 @@ TokenFinish выполняется только при явном логауте
 
 from __future__ import annotations
 
+import asyncio
+import json
+from typing import Any
+
 from fastapi import WebSocket, WebSocketDisconnect
 
 from ..config import settings
+from ..db.repositories import TeamdroidProcedureRepository
 from ..logger import api_logger
 from .auth import VerifiedToken, verify_ws_token
 from .push_notification_service import push_notification_service
@@ -93,7 +98,6 @@ def _verified_for_trust_mode(websocket: WebSocket, token: str | None) -> Verifie
 
 
 async def ws_notify_handler(websocket: WebSocket) -> None:
-    # 1) token / fid / client_ip
     api_logger.info(
         "ws: connect attempt path=%s client=%r query_keys=%s headers_upgrade=%r",
         websocket.url.path,
@@ -115,16 +119,40 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
         client_ip,
     )
 
-    # 2) аутентификация
     if mode == "trust":
         verified = _verified_for_trust_mode(websocket, token)
     else:
         verified = await verify_ws_token(token, client_ip=client_ip)
 
     user_id = verified.user_id
-    # FID из query имеет приоритет, т.к. клиент передаёт его явно.
-    # Fallback — FID, извлечённый сервером из токена (SQL Server / Tinode).
     fcm_id = query_fid or verified.fcm_id
+
+    # --- force update: отдать prm и закрыть ---
+    if verified.force_update:
+        await websocket.accept()
+        try:
+            if verified.update_json:
+                try:
+                    update_obj = json.loads(verified.update_json)
+                    prm = update_obj.get("prm") if isinstance(update_obj, dict) else None
+                except (ValueError, TypeError) as parse_exc:
+                    api_logger.warning(
+                        "ws: failed to parse update_json user=%s: %r",
+                        verified.user_id,
+                        parse_exc,
+                    )
+                    prm = None
+                if prm is not None:
+                    await websocket.send_json({"type": "update", "force": True, "prm": prm})
+        except (RuntimeError, WebSocketDisconnect, OSError) as send_exc:
+            api_logger.warning(
+                "ws: failed to send force-update payload user=%s: %r",
+                verified.user_id,
+                send_exc,
+            )
+        finally:
+            await websocket.close(code=4426, reason="upgrade_required")
+        return
 
     if not user_id or not user_id.startswith("usr"):
         api_logger.warning(
@@ -136,8 +164,65 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
         await websocket.close(code=4401, reason="unauthorized")
         return
 
-    # 3) accept + регистрация
     await websocket.accept()
+
+    # --- scs=1 + есть prm: отправить клиенту, затем зафиксировать vcd ---
+    if verified.update_json:
+        try:
+            update_obj = json.loads(verified.update_json)
+        except (ValueError, TypeError):
+            update_obj = None
+
+        prm: dict[str, Any] | None = None
+        if isinstance(update_obj, dict):
+            raw_prm = update_obj.get("prm")
+            if isinstance(raw_prm, dict):
+                prm = raw_prm
+            elif isinstance(raw_prm, str):
+                try:
+                    parsed = json.loads(raw_prm)
+                    if isinstance(parsed, dict):
+                        prm = parsed
+                except (ValueError, TypeError):
+                    prm = None
+
+        if prm is not None:
+            try:
+                await websocket.send_json({"type": "update", "force": False, "prm": prm})
+                api_logger.info(
+                    "ws: update payload sent user=%s prm_keys=%s",
+                    user_id,
+                    sorted(prm.keys()),
+                )
+            except Exception as exc:  # noqa: BLE001
+                api_logger.warning(
+                    "ws: failed to send update payload user=%s: %r",
+                    user_id,
+                    exc,
+                )
+
+        # фиксируем предложенный vcd (best-effort)
+        vcd_val = prm.get("vcd") if prm else None
+        if isinstance(vcd_val, int) and vcd_val > 0 and fcm_id:
+            try:
+                await asyncio.to_thread(
+                    TeamdroidProcedureRepository.app_update_offered_batch,
+                    [
+                        {
+                            "usi": user_id,
+                            "api": int(getattr(settings, "TEAMDROID_APP_ID", 0)),
+                            "dvc": fcm_id,
+                            "vcd": int(vcd_val),
+                        }
+                    ],
+                )
+            except Exception as exc:  # noqa: BLE001
+                api_logger.warning(
+                    "ws: failed to record offered vcd user=%s: %r",
+                    user_id,
+                    exc,
+                )
+
     await push_notification_service.register(user_id, websocket, fcm_id=fcm_id)
     api_logger.info(
         "ws: connected user=%s fcm=%s",
@@ -153,12 +238,6 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        # Обычный disconnect: снимаем WS, но НЕ завершаем токен.
-        #
-        # Закрытие приложения/сети ≠ логаут. TokenFinish в SQL Server
-        # делается только через DELETE /api/v1/client/register
-        # (app/api/routers/client.py::unregister_fid), иначе FCM
-        # перестанет доставлять push на закрытое приложение.
         await push_notification_service.unregister(
             user_id,
             websocket,

@@ -155,7 +155,7 @@ class ChatType(StrEnum):
                 return cls.GROUP
             if hasattr(telethon_entity, "is_user") and telethon_entity.is_user:
                 return cls.PRIVATE
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         return None
 
@@ -236,7 +236,7 @@ class ChatMemberStatus(StrEnum):
                 return cls.ADMINISTRATOR
             if hasattr(participant, "is_member") and not participant.is_member:
                 return cls.LEFT
-        except Exception:
+        except (AttributeError, TypeError):
             pass
         return cls.MEMBER
 

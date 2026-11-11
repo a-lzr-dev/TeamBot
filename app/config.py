@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     TEAMDROID_SQL_PROC_TOKEN_FINISH: str = "ext.PA_mbl_TokenFinish_Exec"
     TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD: str = "ext.PA_mbl_TokenDevices_Load"
     TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY: str = "ext.PA_mbl_MsgsDeliveryStatus_Edit"
+    TEAMDROID_SQL_PROC_APP_UPDATE_CHECK: str = "ext.PA_mbl_AppUpdateCheck_Exec"
+    TEAMDROID_SQL_PROC_APP_UPDATE_OFFERED: str = "ext.PA_mbl_AppUpdateOffered_Exec"
+    TEAMDROID_SQL_PROC_APP_UPDATE_CHECK_ALL: str = "ext.PA_mbl_AppUpdateCheckAll_Exec"
+    TEAMDROID_SQL_PROC_SYNC_BASE_LOAD: str = "ext.PA_mbl_SyncBaseData_Load"
+    TEAMDROID_SQL_PROC_SYNC_BASE_EDIT: str = "ext.PA_mbl_SyncBaseData_Edit"
+    TEAMDROID_SQL_PROC_NOTIFIES_LOAD: str = "ext.PA_mbl_Notifies_Load"
+    TEAMDROID_SQL_PROC_NOTIFIES_SEND: str = "ext.PA_mbl_Notifies_Send"
 
     # ============ PUSH NOTIFICATIONS (WebSocket + FCM) ============
 
@@ -99,57 +106,110 @@ class Settings(BaseSettings):
     WS_RELAY_INGEST_PATH: str = "/internal/push"
     WS_TOKEN_KEY_B64: str = ""
 
-    # FCM (Firebase Cloud Messaging) — доставка, когда WS-клиента нет онлайн,
-    # или всегда (в зависимости от FCM_SEND_MODE).
     FCM_ENABLED: bool = True
     FCM_LOAD_FIDS_ON_START: bool = True
     FCM_CREDENTIALS_PATH: str = ""
-
-    # Режим отправки FCM:
-    #   "always" — всегда (WS + FCM одновременно)
-    #   "fallback" — только если WS не доставил (для msg) / всегда (для sub)
-    #   "never" — только WS
     FCM_SEND_MODE: str = "fallback"
     FCM_FID_TTL_SECONDS: int = 7 * 24 * 3600
 
     # ============ MOBILE APPS ============
 
-    # Ключи для обмена данными с основным сервером:
-    #   POST   /api/v1/teamdroid/send-files
-    #   POST   /api/v1/teamdroid/send-text
-    #   POST   /api/v1/teamdroid/delete-messages
-    #   POST   /api/v1/teamdroid/grant-user
-    #   GET    /api/v1/teamdroid/acs/{topic}
-    #   GET    /api/v1/teamdroid/user-id/{id_val}
-    #   GET    /api/v1/teamdroid/health
     APP_SERVER_SYNC_INGEST_API_KEYS: list[str] = Field(
         default_factory=lambda: [],
         description="Отдельные API-ключи для обмена данными с основным серверном",
     )
 
-    # Ключи для обмена данными с мобильными клиентами:
-    #   POST   /api/v1/client/note
-    #   POST   /api/v1/client/send-code
-    #   POST   /api/v1/client/verify-code
-    #   POST   /api/v1/client/register
-    #   DELETE /api/v1/client/register
-    #   GET    /api/v1/client/health
     APP_CLIENT_SYNC_INGEST_API_KEYS: list[str] = Field(
         default_factory=lambda: [],
         description="Отдельные API-ключи для обмена данными с мобильным клиентом",
     )
 
-    # Ключи для приёма диагностических логов мобильных клиентов:
-    #   POST /api/v1/logs/batch
-    #   POST /api/v1/logs/request/{request_id}/decline
+    APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT: int = 1000
+    APP_CLIENT_SYNC_BASE_MAX_LIMIT: int = 50_000
+    APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC: int = 30
+    APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC: int = 20
+
+    # ---- Sync session registry (in-memory, per-user) ----
+    # TTL записей реестра выданных sync-пакетов.
+    APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC: int = Field(
+        3600,
+        ge=60,
+        le=24 * 3600,
+        description="TTL записей sync-пакета в in-memory реестре (сек)",
+    )
+    # Максимум Load-ов на пользователя без Edit (защита от HasMore-цикла).
+    APP_CLIENT_SYNC_BASE_REGISTRY_MAX_ITERATIONS: int = Field(
+        100,
+        ge=1,
+        le=10_000,
+        description="Максимум Load-ов на пользователя без Edit",
+    )
+    # NEW (stale iterations): таймаут незавершившихся итераций sync-load.
+    # Считается от ПОСЛЕДНЕГО bump_iteration, а не от первого.
+    # Если клиент не сделал успешный sync-edit за это время — счётчик
+    # итераций сбрасывается фоновым cleanup-ом, и sync-load снова доступен.
+    # Дефолт 300 сек = 5 минут — требование по задаче.
+    APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC: int = Field(
+        300,
+        ge=30,
+        le=24 * 3600,
+        description="Таймаут незавершившихся итераций sync-load (сек)",
+    )
+    # Максимум одновременных пакетов (разных ts) на пользователя.
+    # По контракту Load клиент может сделать несколько вызовов (HasMore=1),
+    # каждый со своим ts. Держим разумный запас.
+    APP_CLIENT_SYNC_BASE_REGISTRY_MAX_PACKETS_PER_USER: int = Field(
+        10,
+        ge=1,
+        le=1000,
+        description="Максимум пакетов (разных ts) на пользователя в реестре",
+    )
+
     APP_CLIENT_SUPPORT_INGEST_API_KEYS: list[str] = Field(
         default_factory=lambda: [],
         description="Отдельные API-ключи для работы мобильным клиентом",
     )
 
-    # Диагностические логи удаленных клиентов
+    # CHANGED (v5): комментарий уточнён. Рекомендуется false в продакшене —
+    # клиент может подтверждать пачку пакетов одним Edit. При true —
+    # Edit со старым ts отвергается (защита от рассинхрона часов),
+    # но клиент обязан подтверждать ТОЛЬКО последний выданный ts.
+    # Если растёт sync-stats.metrics.invalid_edit_total — проверьте,
+    # не включён ли REQUIRE_LATEST без необходимости.
+    APP_CLIENT_SYNC_BASE_REGISTRY_REQUIRE_LATEST: bool = Field(
+        False,
+        description="Требовать подтверждения только последнего выданного sync-пакета",
+    )
+
+    # Жёсткий лимит на размер одной RecordData (защита от OOM/таймаута).
+    # При превышении sync-load вернёт 413. Клиент должен уменьшить lmt
+    # или разбить тип (если серверная процедура поддерживает HasMore
+    # для одного типа — сейчас НЕ поддерживает, тип отдаётся целиком).
+    APP_CLIENT_SYNC_BASE_MAX_RECORD_BYTES: int = Field(
+        10 * 1024 * 1024,
+        ge=1024,
+        le=100 * 1024 * 1024,
+        description="Максимальный размер RecordData в байтах",
+    )
+
+    # Максимум items в одном POST /client/sync-edit.
+    APP_CLIENT_SYNC_BASE_MAX_EDIT_ITEMS: int = Field(
+        100,
+        ge=1,
+        le=10_000,
+        description="Максимум items в одном POST /client/sync-edit",
+    )
+
+    # Максимум FID (устройств) на одного пользователя.
+    APP_CLIENT_MAX_FIDS_PER_USER: int = Field(
+        10,
+        ge=1,
+        le=100,
+        description="Максимум Firebase Installation ID на пользователя",
+    )
+
     APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED: bool = True
-    APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_BYTES: int = 1 * 1024 * 1024  # сжатый размер
+    APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_BYTES: int = 1 * 1024 * 1024
     APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_UNCOMPRESSED_BYTES: int = 4 * 1024 * 1024
     APP_CLIENT_SUPPORT_LOGS_MAX_RECORDS_PER_BATCH: int = 5000
     APP_CLIENT_SUPPORT_LOGS_MAX_MSG_LEN: int = 4096
@@ -164,6 +224,12 @@ class Settings(BaseSettings):
     APP_CLIENT_SUPPORT_LOGS_RETENTION_ERROR_DAYS: int = 90
     APP_CLIENT_SUPPORT_LOGS_REQUESTS_RETENTION_DAYS: int = 30
     APP_CLIENT_SUPPORT_LOGS_PUSH_TYPE: str = "logs_request"
+
+    APP_UPDATE_APK_DIR: str = "/app/update/apk"
+    APP_UPDATE_PUBLIC_DIR: str = "/app/update/public"
+    APP_UPDATE_POLLING_ENABLED: bool = True
+    APP_UPDATE_CHECK_INTERVAL_SEC: int = 300
+    APP_UPDATE_NOTIFY_COOLDOWN_SEC: int = 12 * 3600
 
     # ============ API ============
 
@@ -332,7 +398,6 @@ class Settings(BaseSettings):
     )
     @classmethod
     def parse_ingest_api_keys(cls, v: str | list[str] | None) -> list[str]:
-        """Парсинг JSON-массива или CSV-строки в список ключей."""
         if v is None:
             return []
         if isinstance(v, list):
@@ -560,35 +625,148 @@ class Settings(BaseSettings):
             raise ValueError(f"FCM_SEND_MODE must be one of: always, fallback, never; got {v!r}")
         return mode
 
+    @field_validator("APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT")
+    @classmethod
+    def validate_sync_base_default_limit(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT must be at least 1")
+        if v > 50_000:
+            raise ValueError("APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT must not exceed 50_000")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_MAX_LIMIT")
+    @classmethod
+    def validate_sync_base_max_limit(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_LIMIT must be at least 1")
+        if v > 500_000:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_LIMIT must not exceed 500_000")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC")
+    @classmethod
+    def validate_sync_base_load_timeout(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC must be at least 1")
+        if v > 600:
+            raise ValueError("APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC must not exceed 600")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC")
+    @classmethod
+    def validate_sync_base_edit_timeout(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC must be at least 1")
+        if v > 600:
+            raise ValueError("APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC must not exceed 600")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC")
+    @classmethod
+    def validate_registry_ttl(cls, v: int) -> int:
+        if v < 60:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC must be at least 60")
+        if v > 24 * 3600:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC must not exceed 24 hours")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_ITERATIONS")
+    @classmethod
+    def validate_registry_iterations(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_ITERATIONS must be at least 1")
+        if v > 10_000:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_ITERATIONS must not exceed 10000")
+        return v
+
+    # NEW (stale iterations): валидатор для нового таймаута.
+    @field_validator("APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC")
+    @classmethod
+    def validate_registry_iterations_stale(cls, v: int) -> int:
+        if v < 30:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC must be at least 30")
+        if v > 24 * 3600:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC must not exceed 24 hours")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_PACKETS_PER_USER")
+    @classmethod
+    def validate_registry_max_packets(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_PACKETS_PER_USER must be at least 1")
+        if v > 1000:
+            raise ValueError("APP_CLIENT_SYNC_BASE_REGISTRY_MAX_PACKETS_PER_USER must not exceed 1000")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_MAX_RECORD_BYTES")
+    @classmethod
+    def validate_max_record_bytes(cls, v: int) -> int:
+        if v < 1024:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_RECORD_BYTES must be at least 1024")
+        if v > 100 * 1024 * 1024:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_RECORD_BYTES must not exceed 100 MB")
+        return v
+
+    @field_validator("APP_CLIENT_SYNC_BASE_MAX_EDIT_ITEMS")
+    @classmethod
+    def validate_max_edit_items(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_EDIT_ITEMS must be at least 1")
+        if v > 10_000:
+            raise ValueError("APP_CLIENT_SYNC_BASE_MAX_EDIT_ITEMS must not exceed 10000")
+        return v
+
+    @field_validator("APP_CLIENT_MAX_FIDS_PER_USER")
+    @classmethod
+    def validate_max_fids(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("APP_CLIENT_MAX_FIDS_PER_USER must be at least 1")
+        if v > 100:
+            raise ValueError("APP_CLIENT_MAX_FIDS_PER_USER must not exceed 100")
+        return v
+
     # ============ КРОСС-ВАЛИДАЦИЯ ============
 
     @model_validator(mode="after")
     def validate_fcm_credentials(self) -> "Settings":
-        """
-        Проверяет, что при FCM_ENABLED=True и FCM_SEND_MODE != 'never'
-        указан путь к service account JSON и файл существует.
-
-        Не бросает исключение, но оставляет FCM_CREDENTIALS_PATH пустым
-        при отсутствии файла — это позволяет приложению стартовать,
-        а сервис push_notification_service зафиксирует
-        fcm_available=False в /api/v1/ws/stats.
-        """
         if not self.FCM_ENABLED or self.FCM_SEND_MODE == "never":
             return self
-
         path_str = (self.FCM_CREDENTIALS_PATH or "").strip()
         if not path_str:
             return self
-
         path = Path(path_str)
         if not path.exists():
-            # Не падаем — просто предупреждаем. Реальную проверку
-            # делает _FcmClient._ensure_initialized при первом использовании.
             import logging
 
             logging.getLogger("app.config").warning(
                 "FCM_CREDENTIALS_PATH=%r does not exist; FCM will be unavailable",
                 path_str,
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_sync_base_limits(self) -> "Settings":
+        if self.APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT > self.APP_CLIENT_SYNC_BASE_MAX_LIMIT:
+            raise ValueError(
+                f"APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT ({self.APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT}) "
+                f"must not exceed APP_CLIENT_SYNC_BASE_MAX_LIMIT "
+                f"({self.APP_CLIENT_SYNC_BASE_MAX_LIMIT})"
+            )
+        return self
+
+    # NEW (stale iterations): предупреждение, если stale > ttl (по смыслу
+    # это лишено смысла — итерации будут сбрасываться по общему TTL раньше).
+    @model_validator(mode="after")
+    def validate_iterations_stale_vs_ttl(self) -> "Settings":
+        if self.APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC > self.APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC:
+            import logging
+
+            logging.getLogger("app.config").warning(
+                "APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC (%d) > "
+                "APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC (%d): счётчик итераций "
+                "будет сбрасываться по общему TTL раньше, чем по stale-таймауту",
+                self.APP_CLIENT_SYNC_BASE_REGISTRY_ITERATIONS_STALE_SEC,
+                self.APP_CLIENT_SYNC_BASE_REGISTRY_TTL_SEC,
             )
         return self
 
@@ -600,7 +778,6 @@ class Settings(BaseSettings):
 
     @property
     def all_ingest_api_keys(self) -> list[str]:
-        """Объединённый список всех ingest-ключей (только для диагностики)."""
         return (
             list(self.APP_SERVER_SYNC_INGEST_API_KEYS)
             + list(self.APP_CLIENT_SYNC_INGEST_API_KEYS)

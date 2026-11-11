@@ -340,5 +340,62 @@ class AppRepository:
         await session.commit()
         return _rowcount(result)
 
+    @staticmethod
+    @log_exceptions(db_logger)
+    async def run_retention(
+        session: AsyncSession,
+        *,
+        info_days: int,
+        error_days: int,
+        requests_retention_days: int,
+    ) -> dict[str, int]:
+        """Комплексная очистка устаревших диагностических логов и запросов.
+
+        Объединяет операции cleanup_logs и cleanup_requests в один вызов,
+        чтобы фоновая задача retention в ApplicationManager работала
+        с единой точкой входа.
+
+        Args:
+            session: Асинхронная сессия SQLAlchemy.
+            info_days: Срок хранения логов уровня < ERROR (INFO/DEBUG/...).
+            error_days: Срок хранения логов уровня >= ERROR.
+            requests_retention_days: Срок хранения записей TAppLogsRequests.
+
+        Returns:
+            dict[str, int]: Статистика удаления:
+                - logs_deleted:       количество удалённых записей TAppLogs;
+                - requests_deleted:   количество удалённых TAppLogsRequests;
+                - requests_expired:   количество записей с истёкшим TTL
+                                      (FExpiresAt < now) — на текущий момент
+                                      не вычисляется отдельно, возвращается 0
+                                      для совместимости с вызывающим кодом.
+        """
+        logs_deleted = await AppRepository.cleanup_logs(
+            session,
+            info_days=info_days,
+            error_days=error_days,
+        )
+
+        requests_deleted = await AppRepository.cleanup_requests(
+            session,
+            retention_days=requests_retention_days,
+        )
+
+        db_logger.info(
+            "🧹 [run_retention] logs_deleted=%d requests_deleted=%d "
+            "(info_days=%d, error_days=%d, requests_retention_days=%d)",
+            logs_deleted,
+            requests_deleted,
+            info_days,
+            error_days,
+            requests_retention_days,
+        )
+
+        return {
+            "logs_deleted": logs_deleted,
+            "requests_deleted": requests_deleted,
+            "requests_expired": 0,
+        }
+
 
 __all__ = ["AppRepository"]
