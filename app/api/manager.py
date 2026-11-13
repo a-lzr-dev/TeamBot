@@ -725,7 +725,7 @@ class APIManager:
                     "path": path_repr,
                     "name": getattr(route, "name", None),
                     "methods": (
-                        sorted(str(m) for m in methods) if isinstance(methods, (set, frozenset, list, tuple)) else []
+                        sorted(str(m) for m in methods) if isinstance(methods, set | frozenset | list | tuple) else []
                     ),
                 }
                 routes.append(info)

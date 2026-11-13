@@ -462,8 +462,7 @@ def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
         return None
 
     api_logger.info(
-        "ws_token[new]: OK fcm=%s... sch=%s prm1_len=%d prm2_len=%d "
-        "ver=%s code=%d date=%s",
+        "ws_token[new]: OK fcm=%s... sch=%s prm1_len=%d prm2_len=%d ver=%s code=%d date=%s",
         fcm_id[-6:],
         sch,
         len(prm1),

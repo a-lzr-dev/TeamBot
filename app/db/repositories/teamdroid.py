@@ -1231,7 +1231,7 @@ class TeamdroidProcedureRepository:
                 dt_val = item.get("dt")
                 if dt_val is None:
                     continue
-                if not isinstance(dt_val, (int, str)):
+                if not isinstance(dt_val, int | str):
                     continue
                 try:
                     dt_int = int(dt_val)
@@ -1240,7 +1240,7 @@ class TeamdroidProcedureRepository:
 
                 exp_val = item.get("exp")
                 exp_int: int | None = None
-                if isinstance(exp_val, (int, str)):
+                if isinstance(exp_val, int | str):
                     try:
                         exp_int = int(exp_val)
                     except (ValueError, TypeError):
@@ -1421,7 +1421,7 @@ class TeamdroidProcedureRepository:
                         row = cur.fetchone()
                         if row is not None:
                             raw_cell = row[0]
-                            if isinstance(raw_cell, (str, bytes)):
+                            if isinstance(raw_cell, str | bytes):
                                 text = (
                                     raw_cell.decode("utf-8", errors="replace")
                                     if isinstance(raw_cell, bytes)

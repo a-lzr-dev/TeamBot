@@ -1472,7 +1472,7 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, bool):
         return value
 
-    if isinstance(value, (int, float, str)):
+    if isinstance(value, int | float | str):
         return value
 
     if isinstance(value, bytes):
@@ -1494,10 +1494,10 @@ def _to_jsonable(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(k): _to_jsonable(v) for k, v in value.items()}
 
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_to_jsonable(v) for v in value]
 
-    if hasattr(value, "__iter__") and not isinstance(value, (str, bytes, bytearray)):
+    if hasattr(value, "__iter__") and not isinstance(value, str | bytes | bytearray):
         try:
             return [_to_jsonable(v) for v in value]
         except TypeError:

@@ -447,7 +447,7 @@ class Settings(BaseSettings):
                 if v.startswith("[") and v.endswith("]"):
                     parsed = ast.literal_eval(v)
                     if isinstance(parsed, list):
-                        return [int(x) if isinstance(x, int) else int(x) for x in parsed if isinstance(x, (int, str))]
+                        return [int(x) if isinstance(x, int) else int(x) for x in parsed if isinstance(x, int | str)]
                 elif "," in v:
                     return [int(p.strip()) for p in v.split(",") if p.strip()]
             except (ValueError, SyntaxError):
