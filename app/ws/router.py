@@ -127,23 +127,22 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     user_id = verified.user_id
     fcm_id = query_fid or verified.fcm_id
 
-    # --- force update: отдать prm и закрыть ---
+    # --- force update: отдать prm как есть и закрыть ---
     if verified.force_update:
         await websocket.accept()
         try:
-            if verified.update_json:
+            if verified.prm_raw:
                 try:
-                    update_obj = json.loads(verified.update_json)
-                    prm = update_obj.get("prm") if isinstance(update_obj, dict) else None
+                    prm_obj = json.loads(verified.prm_raw)
                 except (ValueError, TypeError) as parse_exc:
                     api_logger.warning(
-                        "ws: failed to parse update_json user=%s: %r",
+                        "ws: failed to parse prm_raw user=%s: %r",
                         verified.user_id,
                         parse_exc,
                     )
-                    prm = None
-                if prm is not None:
-                    await websocket.send_json({"type": "update", "force": True, "prm": prm})
+                    prm_obj = None
+                if prm_obj is not None:
+                    await websocket.send_json({"type": "update", "force": True, "prm": prm_obj})
         except (RuntimeError, WebSocketDisconnect, OSError) as send_exc:
             api_logger.warning(
                 "ws: failed to send force-update payload user=%s: %r",
@@ -167,32 +166,42 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # --- scs=1 + есть prm: отправить клиенту, затем зафиксировать vcd ---
-    if verified.update_json:
+    if verified.prm_raw:
+        prm_obj: dict[str, Any] | None = None
+        vcd_val: int | None = None
         try:
-            update_obj = json.loads(verified.update_json)
+            items = json.loads(verified.prm_raw)
         except (ValueError, TypeError):
-            update_obj = None
+            items = None
 
-        prm: dict[str, Any] | None = None
-        if isinstance(update_obj, dict):
-            raw_prm = update_obj.get("prm")
-            if isinstance(raw_prm, dict):
-                prm = raw_prm
-            elif isinstance(raw_prm, str):
-                try:
-                    parsed = json.loads(raw_prm)
-                    if isinstance(parsed, dict):
-                        prm = parsed
-                except (ValueError, TypeError):
-                    prm = None
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                if "fup" in item and vcd_val is None:
+                    raw_inner = item.get("prm")
+                    inner = None
+                    if isinstance(raw_inner, str):
+                        try:
+                            inner = json.loads(raw_inner)
+                        except (ValueError, TypeError):
+                            inner = None
+                    elif isinstance(raw_inner, dict):
+                        inner = raw_inner
+                    if isinstance(inner, dict):
+                        v = inner.get("vcd")
+                        if isinstance(v, int) and v > 0:
+                            vcd_val = v
+                        prm_obj = inner
+                    break
 
-        if prm is not None:
+        if prm_obj is not None:
             try:
-                await websocket.send_json({"type": "update", "force": False, "prm": prm})
+                await websocket.send_json({"type": "update", "force": False, "prm": prm_obj})
                 api_logger.info(
                     "ws: update payload sent user=%s prm_keys=%s",
                     user_id,
-                    sorted(prm.keys()),
+                    sorted(prm_obj.keys()),
                 )
             except Exception as exc:  # noqa: BLE001
                 api_logger.warning(
@@ -201,8 +210,6 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
                     exc,
                 )
 
-        # фиксируем предложенный vcd (best-effort)
-        vcd_val = prm.get("vcd") if prm else None
         if isinstance(vcd_val, int) and vcd_val > 0 and fcm_id:
             try:
                 await asyncio.to_thread(

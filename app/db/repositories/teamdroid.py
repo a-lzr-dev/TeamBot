@@ -5,7 +5,7 @@
 TEAMDROID_SQL_*:
 
     TEAMDROID_SQL_PROC_AUTH_START               ext.PA_mbl_AuthStart_Exec
-    TEAMDROID_SQL_PROC_AUTH_FINISH              ext.PA_mbl_AuthFinish_Exec
+    TEAMDROID_SQL_PROC_AUTH_LOGIN               ext.PA_mbl_AuthLogin_Exec
     TEAMDROID_SQL_PROC_TOKEN_VERIFY             ext.PA_mbl_TokenVerify_Exec
     TEAMDROID_SQL_PROC_TOKEN_FINISH             ext.PA_mbl_TokenFinish_Exec
     TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD       ext.PA_mbl_TokenDevices_Load
@@ -23,20 +23,46 @@ TEAMDROID_SQL_*:
     Выход: одна строка (Success BIT, prm NVARCHAR(MAX),
                         sid VARCHAR(36), snc DATETIME, dtp NVARCHAR(MAX))
 
-    prm — JSON-массив из двух возможных элементов:
+    Колонка prm — JSON-массив из двух возможных элементов:
       * {"fup":1,"prm":{frc,ver,vcd,fph,fsz,fhs}} — обновление приложения;
       * {"sid":...,"snc":...,"dtp":[...],"prm":[...]} — sync-пакет.
 
-    Python-парсер verify_token_with_sync возвращает 4-tuple:
-      (ok, err, update_json, sync_package)
-        ok            — True при Success=1.
-        err           — текст ошибки (None при ok=True).
-        update_json   — строка JSON элемента "fup" (или None).
-        sync_package  — {"sid","snc","dtp","prm"} (или None).
+    Колонки sid/snc/dtp в контракте оставлены как legacy и
+    методом verify_token НЕ читаются: sync-пакет приходит внутри prm.
 
-Метода verify_token (3-tuple) БОЛЬШЕ НЕТ. Все вызывающие места
-(app/ws/auth.py, app/api/routers/client.py) используют
-verify_token_with_sync и отбрасывают ненужную часть.
+    Python-парсер verify_token возвращает 3-tuple:
+      (ok, err, prm_raw)
+        ok       — True при Success=1.
+        err      — текст ошибки (None при ok=True).
+        prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
+                   None, если колонка NULL.
+
+Контракт ext.PA_mbl_AuthLogin_Exec (mid=1: логин+пароль, mid=2: request_id+код):
+
+    EXEC <proc> @Params = N'<json>'
+
+    Выход: одна строка
+        (Success BIT, usi NVARCHAR(64), prm NVARCHAR(MAX),
+         sid VARCHAR(36), snc DATETIME, dtp NVARCHAR(MAX))
+
+    Колонка prm — тот же JSON-массив, что и у TokenVerify.
+
+    Колонки sid/snc/dtp в контракте оставлены как legacy и
+    методом login НЕ читаются: sync-пакет приходит внутри prm.
+
+    Python-парсер login возвращает 4-tuple:
+      (ok, err, usi, prm_raw)
+        ok       — True при Success=1.
+        err      — текст ошибки (None при ok=True).
+        usi      — usrXXX из колонки usi (может быть заполнен и при
+                   Success=0, если SQL успел резолвнуть пользователя
+                   до force-update).
+        prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
+                   None, если колонка NULL.
+
+    Ошибки (THROW):
+      PRC_mbl_AuthLogin_BadAuth — неверные учётные данные;
+      PRC_mbl_AuthLogin_NoData  — сессия устройства не найдена.
 
 Все методы синхронные (pyodbc блокирующий). Из async-кода вызывать так:
 
@@ -81,60 +107,15 @@ def _normalize_ts_for_sql(ts: str) -> str:
     return parsed.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _parse_dtp(v: Any) -> list[int]:
-    """Парсит JSON-массив DataTypeId из строки/bytes/list."""
-    if isinstance(v, list):
-        out: list[int] = []
-        for x in v:
-            try:
-                out.append(int(x))
-            except (ValueError, TypeError):
-                continue
-        return out
+def _as_str(v: Any) -> str | None:
+    """Приводит значение к ``str | None`` без вызова ``str()`` от ``None``."""
     if v is None:
-        return []
+        return None
     if isinstance(v, bytes):
-        v = v.decode("utf-8", errors="replace")
-    if not isinstance(v, str):
-        return []
-    s = v.strip()
-    if not s:
-        return []
-    try:
-        parsed = json.loads(s)
-    except (ValueError, TypeError):
-        return []
-    if not isinstance(parsed, list):
-        return []
-    out = []
-    for x in parsed:
-        try:
-            out.append(int(x))
-        except (ValueError, TypeError):
-            continue
-    return out
-
-
-def _parse_prm(v: Any) -> list[dict[str, Any]]:
-    """Парсит JSON-массив записей prm (list[dict]) из строки/bytes/list."""
-    if isinstance(v, list):
-        return [x for x in v if isinstance(x, dict)]
-    if v is None:
-        return []
-    if isinstance(v, bytes):
-        v = v.decode("utf-8", errors="replace")
-    if not isinstance(v, str):
-        return []
-    s = v.strip()
-    if not s:
-        return []
-    try:
-        parsed = json.loads(s)
-    except (ValueError, TypeError):
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [x for x in parsed if isinstance(x, dict)]
+        return v.decode("utf-8", errors="replace") or None
+    if isinstance(v, str):
+        return v or None
+    return str(v)
 
 
 # ============================================================
@@ -204,18 +185,18 @@ class TeamdroidProcedureRepository:
         )
 
     @staticmethod
-    def auth_finish(params: dict[str, Any]) -> dict[str, Any]:
+    def auth_login(params: dict[str, Any]) -> dict[str, Any]:
         return TeamdroidProcedureRepository._run_json_proc(
-            settings.TEAMDROID_SQL_PROC_AUTH_FINISH,
+            settings.TEAMDROID_SQL_PROC_AUTH_LOGIN,
             params,
         )
 
     # ============================================================
-    # VERIFY TOKEN (единственный контракт — 4-tuple)
+    # VERIFY TOKEN
     # ============================================================
 
     @staticmethod
-    def verify_token_with_sync(
+    def verify_token(
         *,
         user_id: str,
         fcm_id: str,
@@ -224,36 +205,48 @@ class TeamdroidProcedureRepository:
         client_ip: str | None,
         app_version: str | None = None,
         app_version_code: int | None = None,
-    ) -> tuple[bool, str | None, str | None, dict[str, Any] | None]:
+    ) -> tuple[bool, str | None, str | None]:
         """EXEC settings.TEAMDROID_SQL_PROC_TOKEN_VERIFY @Params = N'<json>'.
 
+        Вызывает ext.PA_mbl_TokenVerify_Exec с @Params = N'<json>', где:
+
+            {
+              "usi": "usrXXXX",    -- Teamdroid user hash
+              "api": 1,            -- AppID (TEAMDROID_APP_ID)
+              "dvc": "...",        -- FID устройства
+              "tkn": "yyMMdd",     -- дата токена
+              "cip": "...",        -- IP клиента
+              "ver": "2.5.1",      -- versionName (опционально)
+              "vcd": 251           -- versionCode (опционально)
+            }
+
+        Процедура возвращает одну строку:
+
+            Success BIT,           -- 1 = OK, 0 = отказ (force-update)
+            prm NVARCHAR(MAX),     -- JSON-массив (см. docstring модуля)
+            sid VARCHAR(36),       -- legacy, не читается
+            snc DATETIME,          -- legacy, не читается
+            dtp NVARCHAR(MAX)      -- legacy, не читается
+
         Возвращает:
-            (ok, err, update_json, sync_package)
+            (ok, err, prm_raw)
+              ok       — True при Success=1.
+              err      — текст ошибки (None при ok=True).
+              prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
+                         None, если колонка NULL.
 
-            ok            — True при Success=1.
-            err           — текст ошибки (None при ok=True).
-            update_json   — строка JSON элемента "fup" (или None):
-                            {"fup":1,"prm":{frc,ver,vcd,fph,fsz,fhs}}.
-            sync_package  — {"sid":str,"snc":str|None,
-                             "dtp":list[int],"prm":list[dict]} или None.
+        Ошибки (THROW):
+          PRC_mbl_TokenVerify_NoData — устройство/сессия не найдены.
 
-        ВАЖНО:
-            Процедура возвращает одну строку:
-                (Success BIT, prm NVARCHAR(MAX), sid VARCHAR(36),
-                 snc DATETIME, dtp NVARCHAR(MAX))
-            Но колонки sid/snc/dtp в текущем контракте НЕ читаются:
-            sync-пакет приходит внутри prm (элемент {"sid":...,"snc":...}).
-            Отдельные колонки оставлены в процедуре как legacy и здесь
-            игнорируются намеренно, чтобы ruff не ругался на «unused».
-
-        Обратной совместимости со старым (ok, err, update_json) НЕТ.
+        При любой pyodbc/unexpected-ошибке возвращает
+        (False, "<описание>", None) — не бросает исключение.
         """
         if not fcm_id:
-            return False, "empty_fcm_id", None, None
+            return False, "empty_fcm_id", None
         if not user_id or not user_id.startswith("usr"):
-            return False, "invalid_user_id", None, None
+            return False, "invalid_user_id", None
         if not app_id or int(app_id) <= 0:
-            return False, "invalid_app_id", None, None
+            return False, "invalid_app_id", None
 
         params: dict[str, Any] = {
             "usi": user_id[:64],
@@ -311,7 +304,7 @@ class TeamdroidProcedureRepository:
                     fcm_id[-6:] if len(fcm_id) >= 6 else "***",
                     err_text,
                 )
-                return False, "PRC_mbl_TokenVerify_NoData", None, None
+                return False, "PRC_mbl_TokenVerify_NoData", None
 
             db_logger.error(
                 "❌ [verify_token] pyodbc error user=%s: %s",
@@ -319,7 +312,7 @@ class TeamdroidProcedureRepository:
                 err_text,
                 exc_info=True,
             )
-            return False, f"pyodbc: {err_text}", None, None
+            return False, f"pyodbc: {err_text}", None
 
         except Exception as e:  # noqa: BLE001
             db_logger.error(
@@ -328,159 +321,299 @@ class TeamdroidProcedureRepository:
                 e,
                 exc_info=True,
             )
-            return False, repr(e), None, None
+            return False, repr(e), None
 
         if row is None:
             db_logger.warning("⚠️ [verify_token] procedure returned no rows for user=%s", user_id)
-            return False, "no_rows", None, None
+            return False, "no_rows", None
 
         raw_success: Any = row[0]
         raw_prm: Any = row[1] if len(row) > 1 else None
-        # row[2..4] (sid/snc/dtp) намеренно НЕ читаем: sync-пакет
-        # приходит внутри prm (элемент {"sid":...,"snc":...}).
-        # Отдельные колонки оставлены в процедуре как legacy и здесь
-        # игнорируются намеренно — см. docstring метода.
 
         ok = bool(raw_success == 1 or raw_success is True)
 
-        def _as_str(v: Any) -> str | None:
-            if v is None:
-                return None
-            if isinstance(v, bytes):
-                return v.decode("utf-8", errors="replace") or None
-            if isinstance(v, str):
-                return v or None
-            return str(v)
-
-        # --- Разбор prm[] на две части: fup → update_json, sid → sync_package.
-        update_json: str | None = None
-        sync_package: dict[str, Any] | None = None
-
         prm_raw = _as_str(raw_prm)
-        if prm_raw:
-            try:
-                prm_arr = json.loads(prm_raw)
-            except (ValueError, TypeError):
-                prm_arr = None
-
-            if isinstance(prm_arr, list):
-                for item in prm_arr:
-                    if not isinstance(item, dict):
-                        continue
-                    if "fup" in item and update_json is None:
-                        update_json = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
-                    elif "sid" in item and sync_package is None:
-                        sync_package = {
-                            "sid": _as_str(item.get("sid")),
-                            "snc": _as_str(item.get("snc")),
-                            "dtp": _parse_dtp(item.get("dtp")),
-                            "prm": _parse_prm(item.get("prm")),
-                        }
 
         if not ok:
             db_logger.warning(
-                "⚠️ [verify_token] force update user=%s update=%s",
+                "⚠️ [verify_token] force update user=%s prm=%s",
                 user_id,
-                (update_json or "")[:200],
+                (prm_raw or "")[:200],
             )
-            return False, "force_update", update_json, sync_package
+            return False, "force_update", prm_raw
 
         db_logger.info(
-            "✅ [verify_token] OK user=%s has_upd=%s has_sync=%s",
+            "✅ [verify_token] OK user=%s prm_len=%d",
             user_id,
-            update_json is not None,
-            sync_package is not None,
+            len(prm_raw) if prm_raw else 0,
         )
-        return True, None, update_json, sync_package
+        return True, None, prm_raw
 
     # ============================================================
-    # TOKEN FINISH (logout / WS disconnect)
+    # LOGIN (mid=1: логин+пароль, mid=2: request_id+код)
     # ============================================================
 
     @staticmethod
-    def token_finish(
+    def login(
         *,
-        user_id: str,
+        mid: int,
+        pr1: str,
+        pr2: str,
+        fcm_id: str,
+        token_date: str | None,
+        client_ip: str | None,
+        app_version: str | None,
+        app_version_code: int | None,
+        app_id: int,
+    ) -> tuple[bool, str | None, str | None, str | None]:
+        """mid=1|2: проверка учётных данных + TokenVerify внутри SQL.
+
+        Вызывает TEAMDROID_SQL_PROC_AUTH_LOGIN (ext.PA_mbl_AuthLogin_Exec)
+        с @Params = N'<json>', где:
+
+            {
+              "mid": 1 | 2,        -- 1=логин+пароль, 2=request_id+код
+              "pr1": "..." ,       -- логин | request_id
+              "pr2": "..." ,       -- пароль | код
+              "dvc": "..." ,       -- FID устройства
+              "tkn": "yyMMdd",     -- дата токена
+              "cip": "..." ,       -- IP клиента
+              "ver": "2.5.1",      -- versionName (опционально)
+              "vcd": 251,          -- versionCode (опционально)
+              "api": 1             -- AppID (TEAMDROID_APP_ID)
+            }
+
+        Процедура возвращает одну строку:
+
+            Success BIT,           -- 1 = OK, 0 = отказ (force-update)
+            Usi VARCHAR(64),       -- usrXXXX
+            prm NVARCHAR(MAX),     -- JSON-массив (см. docstring модуля)
+            sid VARCHAR(36),       -- legacy, не читается
+            snc DATETIME,          -- legacy, не читается
+            dtp NVARCHAR(MAX)      -- legacy, не читается
+
+        Возвращает:
+            (ok, err, usi, prm_raw)
+              ok       — True при Success=1.
+              err      — текст ошибки (None при ok=True).
+              usi      — usrXXX из колонки usi (может быть заполнен и при
+                         Success=0, если SQL успел резолвнуть пользователя
+                         до force-update).
+              prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
+                         None, если колонка NULL.
+
+        Ошибки (THROW):
+          PRC_mbl_AuthLogin_BadAuth — неверные учётные данные;
+          PRC_mbl_AuthLogin_NoData  — сессия устройства не найдена.
+
+        При любой pyodbc/unexpected-ошибке возвращает
+        (False, "<описание>", None, None) — не бросает исключение.
+        """
+        if mid not in (1, 2):
+            return False, f"invalid_mid:{mid!r}", None, None
+        if not fcm_id:
+            return False, "empty_dvc", None, None
+        if not pr1 or not pr2:
+            return False, "empty_pr1_or_pr2", None, None
+        if not app_id or int(app_id) <= 0:
+            return False, "invalid_app_id", None, None
+
+        params: dict[str, Any] = {
+            "mid": int(mid),
+            "pr1": pr1[:256],
+            "pr2": pr2[:256],
+            "dvc": fcm_id[:255],
+            "tkn": (token_date or "")[:16],
+            "cip": (client_ip or "")[:64],
+            "api": int(app_id),
+        }
+        if app_version:
+            params["ver"] = str(app_version)[:32]
+        if app_version_code is not None:
+            try:
+                params["vcd"] = int(app_version_code)
+            except (ValueError, TypeError):
+                pass
+
+        proc_name = settings.TEAMDROID_SQL_PROC_AUTH_LOGIN
+        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+
+        db_logger.debug(
+            "🔑 [login] proc=%s mid=%s pr1_len=%d pr2_len=%d dvc=%s api=%d ip=%r",
+            proc_name,
+            mid,
+            len(pr1),
+            len(pr2),
+            fcm_id[-6:] if len(fcm_id) >= 6 else "***",
+            int(app_id),
+            client_ip,
+        )
+
+        params_json = json.dumps(params, ensure_ascii=False)
+
+        row: pyodbc.Row | None = None
+        try:
+            with teamdroid_sql_cursor() as cur:
+                try:
+                    cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    row = cur.fetchone() if cur.description is not None else None
+                    while cur.nextset():
+                        pass
+                    cur.connection.commit()
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except pyodbc.Error as rb_exc:
+                        db_logger.error("[login] rollback failed: %r", rb_exc, exc_info=True)
+                    raise
+        except pyodbc.Error as e:
+            err_text = str(e)
+
+            if "PRC_mbl_AuthLogin_BadAuth" in err_text:
+                db_logger.warning("⚠️ [login] BadAuth mid=%s: %s", mid, err_text)
+                return False, "invalid_credentials", None, None
+
+            if "PRC_mbl_AuthLogin_NoData" in err_text or "50000" in err_text:
+                db_logger.warning("⚠️ [login] NoData mid=%s: %s", mid, err_text)
+                return False, "PRC_mbl_AuthLogin_NoData", None, None
+
+            db_logger.error("❌ [login] pyodbc error: %s", err_text, exc_info=True)
+            return False, f"pyodbc: {err_text}", None, None
+        except Exception as e:
+            db_logger.error("❌ [login] unexpected error: %r", e, exc_info=True)
+            return False, repr(e), None, None
+
+        if row is None:
+            return False, "no_rows", None, None
+
+        raw_success: Any = row[0]
+        raw_usi: Any = row[1] if len(row) > 1 else None
+        raw_prm: Any = row[2] if len(row) > 2 else None
+
+        ok = bool(raw_success == 1 or raw_success is True)
+
+        result_usi = _as_str(raw_usi)
+        if result_usi is not None and not result_usi.startswith("usr"):
+            db_logger.warning("⚠️ [login] invalid usi in result: %r", raw_usi)
+            result_usi = None
+
+        prm_raw = _as_str(raw_prm)
+
+        if not ok:
+            db_logger.warning(
+                "⚠️ [login] force-update mid=%s has_prm=%s usi=%r",
+                mid,
+                prm_raw is not None,
+                result_usi,
+            )
+            return False, "force_update", result_usi, prm_raw
+
+        if not result_usi:
+            db_logger.warning("⚠️ [login] Success=1, но usi=NULL")
+            return False, "no_usi_in_result", None, None
+
+        db_logger.info(
+            "✅ [login] OK mid=%s usi=%s prm_len=%d",
+            mid,
+            result_usi,
+            len(prm_raw) if prm_raw else 0,
+        )
+        return True, None, result_usi, prm_raw
+
+    # ============================================================
+    # LOGOUT (TokenFinish)
+    # ============================================================
+
+    @staticmethod
+    def logout(
+        *,
+        usi: str,
         fcm_id: str,
         app_id: int,
     ) -> tuple[bool, str | None]:
+        """mid=0: завершение сессии устройства (TokenFinish).
+
+        Вызывает ext.PA_mbl_TokenFinish_Exec с @Params = N'<json>', где:
+
+            {
+              "usi": "usr...",   -- Teamdroid user hash
+              "api": 1,          -- AppID (TEAMDROID_APP_ID)
+              "dvc": "..."       -- FID устройства
+            }
+
+        Процедура возвращает одну строку: Success BIT.
+
+        При отсутствии активной сессии процедура делает RETURN -1
+        (без THROW). pyodbc увидит либо пустой resultset, либо
+        строку с Success=0 — трактуем как "logout не выполнен".
+
+        Возвращает:
+            (ok, err)
+        """
         if not fcm_id:
-            return False, "empty_fcm_id"
-        if not user_id or not user_id.startswith("usr"):
-            return False, "invalid_user_id"
+            return False, "empty_dvc"
+        if not usi or not usi.startswith("usr"):
+            return False, "invalid_usi"
         if not app_id or int(app_id) <= 0:
             return False, "invalid_app_id"
 
         params: dict[str, Any] = {
-            "usi": user_id[:64],
+            "usi": usi[:64],
             "api": int(app_id),
             "dvc": fcm_id[:255],
         }
 
         proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_FINISH
+        TeamdroidProcedureRepository._validate_proc_name(proc_name)
 
         db_logger.debug(
-            "🔚 [token_finish] proc=%s user=%s fcm=%s api=%d",
+            "🔚 [logout] proc=%s usi=%s dvc=%s api=%d",
             proc_name,
-            user_id,
+            usi,
             fcm_id[-6:] if len(fcm_id) >= 6 else "***",
             int(app_id),
         )
 
+        params_json = json.dumps(params, ensure_ascii=False)
+
+        row: pyodbc.Row | None = None
         try:
-            result = TeamdroidProcedureRepository._run_json_proc(proc_name, params)
-            raw = result.get("raw")
-
-            if raw is None:
-                db_logger.warning("⚠️ [token_finish] procedure returned no rows for user=%s", user_id)
-                return False, "no_rows"
-
-            raw_value: Any = raw
-            ok = raw_value == 1 or raw_value is True
-
-            if ok:
-                db_logger.info(
-                    "✅ [token_finish] OK user=%s fcm=%s...",
-                    user_id,
-                    fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-                )
-                return True, None
-
-            raw_str = str(raw_value)
-            db_logger.warning(
-                "⚠️ [token_finish] rejected user=%s value=%s",
-                user_id,
-                raw_str,
-            )
-            return False, f"rejected_value={raw_str}"
-
+            with teamdroid_sql_cursor() as cur:
+                try:
+                    cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    row = cur.fetchone() if cur.description is not None else None
+                    while cur.nextset():
+                        pass
+                    cur.connection.commit()
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except pyodbc.Error as rb_exc:
+                        db_logger.error("[logout] rollback failed: %r", rb_exc, exc_info=True)
+                    raise
         except pyodbc.Error as e:
             err_text = str(e)
             if "PRC_mbl_TokenFinish_NoData" in err_text or "50000" in err_text:
-                db_logger.warning(
-                    "⚠️ [token_finish] THROW NoData user=%s fcm=%s...: %s",
-                    user_id,
-                    fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-                    err_text,
-                )
+                db_logger.warning("⚠️ [logout] NoData usi=%s: %s", usi, err_text)
                 return False, "PRC_mbl_TokenFinish_NoData"
-
-            db_logger.error(
-                "❌ [token_finish] pyodbc error user=%s: %s",
-                user_id,
-                err_text,
-                exc_info=True,
-            )
+            db_logger.error("❌ [logout] pyodbc error: %s", err_text, exc_info=True)
             return False, f"pyodbc: {err_text}"
-
         except Exception as e:
-            db_logger.error(
-                "❌ [token_finish] unexpected error user=%s: %r",
-                user_id,
-                e,
-                exc_info=True,
-            )
+            db_logger.error("❌ [logout] unexpected error: %r", e, exc_info=True)
             return False, repr(e)
+
+        if row is None:
+            db_logger.warning("⚠️ [logout] no rows (RETURN -1?) usi=%s", usi)
+            return False, "no_rows"
+
+        raw_success: Any = row[0]
+        ok = bool(raw_success == 1 or raw_success is True)
+        if ok:
+            db_logger.info("✅ [logout] OK usi=%s", usi)
+            return True, None
+
+        db_logger.warning("⚠️ [logout] Success=0 usi=%s raw=%r", usi, raw_success)
+        return False, f"rejected_value={raw_success!r}"
 
     # ============================================================
     # TOKEN DEVICES (FID registry, read-only)

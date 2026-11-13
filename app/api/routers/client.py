@@ -3,36 +3,45 @@
 Эндпоинты client-sync канала (X-API-Key из APP_CLIENT_SYNC_INGEST_API_KEYS):
 
     POST   /api/v1/client/register       — регистрация FID + TokenVerify
-    DELETE /api/v1/client/register       — снятие FID + TokenFinish
+    DELETE /api/v1/client/register       — снятие FID + logout (TokenFinish)
+    POST   /api/v1/client/login          — логин (mid=1 логин+пароль, mid=2 req_id+код)
     POST   /api/v1/client/update-check   — проверка версии клиента
     POST   /api/v1/client/send-code      — AuthStart
-    POST   /api/v1/client/verify-code    — AuthFinish
     POST   /api/v1/client/note           — relay {note} в Tinode
     POST   /api/v1/client/sync-load      — запрос пакета базовых данных
     POST   /api/v1/client/sync-edit      — подтверждение пакета
     GET    /api/v1/client/sync-stats     — диагностика sync-механизма
     GET    /api/v1/client/health         — health-check client-sync канала
 
-Контракт ответа /register (финальный):
+Контракт ответа /register и /login (единый):
 
     Успех:
-        {"scs": 1}                                   — ни upd, ни snc
-        {"scs": 1, "prm": 1, "upd": "<json>"}        — только upd
-        {"scs": 1, "prm": 2, "snc": "<json>"}        — только snc
-        {"scs": 1, "prm": 3,
-         "upd": "<json>", "snc": "<json>"}           — upd + snc
-        + опционально "psh": [{"type":"sync"}, ...]
+        {"scs": 1, "usi": "<usrXXX>", "prm": "<json-строка>"}
+        — prm отдаётся как есть из колонки prm процедуры
+          (без разбора на upd/snc/prm-индекс);
+        — psh (если есть pending-сигналы) добавляется отдельным полем;
+        — timestamp отсутствует.
 
     Неуспех:
-        {"scs": 0, "error": "<код>", "message": "...", ...}
-        - force-update: scs=0, error="force_update", prm=1, upd="<json>"
-        - прочее:       scs=0, error="<код>", без prm/upd/snc/psh
+        {"scs": 0, "error": "<код>", "message": "...", "usi": "<usrXXX>"?}
+        — prm присутствует только для force_update (сырая строка);
+        — timestamp отсутствует.
 
-    upd — строка JSON из prm[0] ext.PA_mbl_TokenVerify_Exec
-          ({"fup":1,"prm":{frc,ver,vcd,fph,fsz,fhs}}).
-    snc — строка JSON {"sid","snc","dtp","prm"} из prm[1] той же процедуры.
-          Не отдаётся, если "psh" непуст (клиент всё равно пойдёт в sync-load).
-    psh — сигналы из TPushPending (ранее pending_pushes).
+Формат WS-токена для /login (7 полей, разделитель ``|``):
+
+    fid|sch|prm1|prm2|yyMMdd|appVer|appCode
+
+    - fid:     UUID Firebase, [A-Za-z0-9_\\-]{20,}
+    - sch:     "1" | "2" (mid при вызове PA_mbl_AuthLogin_Exec)
+    - prm1:    логин (sch=1) | request_id (sch=2), '|' → '_'
+    - prm2:    пароль (sch=1) | код (sch=2), '|' → '_'
+    - yyMMdd:  6 цифр, дата токена
+    - appVer:  versionName, '|' → '_'
+    - appCode: versionCode, десятичное число
+
+Для /register сохраняется legacy-формат (5 полей):
+
+    fid|usrXXXX|yyMMdd|ver|code
 """
 
 from __future__ import annotations
@@ -58,10 +67,9 @@ from ...dtos.sync import (
 from ...logger import api_logger
 from ...models import datetime_now
 from ...services.sync_session_registry import sync_session_registry
-from ...utils.datetime import get_timestamp
 from ...utils.decorators import log_exceptions
 from ...ws.push_notification_service import push_notification_service
-from ...ws.token_crypto import decrypt_ws_token
+from ...ws.token_crypto import decrypt_ws_token, decrypt_ws_token_legacy
 
 router = APIRouter(prefix="/client", tags=["Client"])
 
@@ -103,17 +111,13 @@ def _extract_client_ip(request: Request) -> str:
 
 def _error_response(status_code: int, error: str) -> JSONResponse:
     """Стандартный JSON-ответ об ошибке для sync-load / sync-edit / note /
-    send-code / verify-code (контракт {"scs":0, ...}).
-
-    Для /register используется отдельный _fail() с полем scs.
-    """
+    send-code (контракт {"scs":0, ...})."""
     return JSONResponse(
         status_code=status_code,
         content={
             "scs": 0,
             "status_code": status_code,
             "error": error,
-            "timestamp": get_timestamp(),
         },
     )
 
@@ -124,21 +128,112 @@ def _fail(
     message: str | None = None,
     **extra: Any,
 ) -> JSONResponse:
-    """Единый формат неуспеха /register: scs=0 + инфо об ошибке."""
+    """Единый формат неуспеха /register и /login: scs=0 + инфо об ошибке."""
     body: dict[str, Any] = {"scs": 0, "error": error}
     if message is not None:
         body["message"] = message
     if extra:
         body.update(extra)
-    body["timestamp"] = get_timestamp()
     return JSONResponse(status_code=status_code, content=body)
+
+
+def _as_str(value: Any) -> str | None:
+    """Приводит значение к ``str | None``."""
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace") or None
+    if isinstance(value, str):
+        return value or None
+    return str(value)
+
+
+def _extract_prm_parts(prm_raw: str | None) -> tuple[str | None, str | None, int | None]:
+    """Извлечь из prm_raw (сырой строки) sid, snc и предложенный vcd.
+
+    Возвращает (sid, snc, vcd). Любой элемент может быть None.
+    Парсинг best-effort: при любой ошибке возвращает (None, None, None).
+    """
+    if not prm_raw:
+        return None, None, None
+
+    try:
+        items = json.loads(prm_raw)
+    except (ValueError, TypeError):
+        return None, None, None
+
+    if not isinstance(items, list):
+        return None, None, None
+
+    sid_val: str | None = None
+    snc_val: str | None = None
+    vcd_val: int | None = None
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        if "fup" in item and vcd_val is None:
+            raw_inner = item.get("prm")
+            inner = None
+            if isinstance(raw_inner, str):
+                try:
+                    inner = json.loads(raw_inner)
+                except (ValueError, TypeError):
+                    inner = None
+            elif isinstance(raw_inner, dict):
+                inner = raw_inner
+            if isinstance(inner, dict):
+                v = inner.get("vcd")
+                if isinstance(v, int) and v > 0:
+                    vcd_val = v
+
+        if "sid" in item and sid_val is None:
+            sid_val = _as_str(item.get("sid"))
+            snc_val = _as_str(item.get("snc"))
+
+    return sid_val, snc_val, vcd_val
+
+
+def _extract_dtp_from_prm(prm_raw: str | None) -> list[int]:
+    """Извлечь dtp из элемента {"sid":...} в prm_raw.
+
+    Возвращает [] при любой ошибке или отсутствии элемента.
+    """
+    if not prm_raw:
+        return []
+    try:
+        items = json.loads(prm_raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(items, list):
+        return []
+    for item in items:
+        if not isinstance(item, dict) or "sid" not in item:
+            continue
+        dtp_val = item.get("dtp")
+        if isinstance(dtp_val, str):
+            try:
+                dtp_val = json.loads(dtp_val)
+            except (ValueError, TypeError):
+                return []
+        if not isinstance(dtp_val, list):
+            return []
+        result: list[int] = []
+        for x in dtp_val:
+            try:
+                result.append(int(x))
+            except (ValueError, TypeError):
+                continue
+        return result
+    return []
 
 
 def _decrypt_and_get_ids(
     token: str,
 ) -> tuple[str, str, int] | JSONResponse | None:
-    """Расшифровывает WS-токен и возвращает (usi, dvc, api)."""
-    data = decrypt_ws_token(token)
+    """Расшифровывает legacy WS-токен и возвращает (usi, dvc, api)."""
+    data = decrypt_ws_token_legacy(token)
     if data is None:
         return None
     app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
@@ -151,7 +246,6 @@ def _decrypt_and_get_ids(
                 "error": "server_misconfigured",
                 "message": "TEAMDROID_APP_ID is not configured",
                 "retry": None,
-                "timestamp": get_timestamp(),
             },
         )
     return data.user_id, data.fcm_id, app_id
@@ -212,7 +306,8 @@ class SyncLoadRequest(_TokenPayload, _BaseSyncLoadRequest):
 
 
 def _decrypt_or_error(token: str) -> tuple[object | None, JSONResponse | None]:
-    payload = decrypt_ws_token(token)
+    """Расшифровать legacy-токен (5 полей) — для /register."""
+    payload = decrypt_ws_token_legacy(token)
     if payload is None:
         return None, JSONResponse(
             status_code=400,
@@ -221,7 +316,6 @@ def _decrypt_or_error(token: str) -> tuple[object | None, JSONResponse | None]:
                 "error": "invalid_token",
                 "message": "Token decryption or validation failed",
                 "retry": None,
-                "timestamp": get_timestamp(),
             },
         )
     return payload, None
@@ -233,16 +327,17 @@ def _decrypt_or_error(token: str) -> tuple[object | None, JSONResponse | None]:
 )
 @log_exceptions(api_logger)
 async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse:
-    """Регистрация FID по WS-токену.
+    """Регистрация FID по legacy WS-токену (5 полей).
 
-    Контракт ответа — см. docstring модуля. Обратной совместимости нет.
+    Контракт ответа — см. docstring модуля.
     """
-    from ...ws.token_crypto import WsTokenData
+    from ...ws.token_crypto import WsTokenDataLegacy
 
     data, err = _decrypt_or_error(payload.token)
     if err is not None:
         return _fail(400, "invalid_token", "Token decryption or validation failed")
-    assert isinstance(data, WsTokenData)
+    if not isinstance(data, WsTokenDataLegacy):
+        return _fail(400, "invalid_token", "Unexpected token payload format")
 
     user_id = data.user_id
     fid = data.fcm_id
@@ -253,11 +348,11 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
         api_logger.error("client.register: TEAMDROID_APP_ID=0 — TokenVerify невозможен")
         return _fail(503, "server_misconfigured", "TEAMDROID_APP_ID is not configured")
 
-    # 1) TokenVerify (+ sync-load внутри SQL).
+    # 1) TokenVerify.
     try:
-        ok, verify_err, update_json, sync_package = await asyncio.wait_for(
+        ok, verify_err, prm_raw = await asyncio.wait_for(
             asyncio.to_thread(
-                TeamdroidProcedureRepository.verify_token_with_sync,
+                TeamdroidProcedureRepository.verify_token,
                 user_id=user_id,
                 fcm_id=fid,
                 app_id=app_id,
@@ -272,32 +367,42 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
         api_logger.warning("client.register: verify_token timeout user=%s", user_id)
         return _fail(504, "verify_timeout", "TokenVerify timeout", retry="register")
 
-    # 2) Разбор update_json → prm_obj (для _record_offered_vcd).
-    prm_obj: dict[str, Any] | None = None
-    if update_json:
-        try:
-            update_obj = json.loads(update_json)
-        except (ValueError, TypeError):
-            update_obj = None
-        if isinstance(update_obj, dict):
-            raw_prm = update_obj.get("prm")
-            if isinstance(raw_prm, dict):
-                prm_obj = raw_prm
-            elif isinstance(raw_prm, str):
-                try:
-                    parsed = json.loads(raw_prm)
-                    if isinstance(parsed, dict):
-                        prm_obj = parsed
-                except (ValueError, TypeError):
-                    prm_obj = None
+    # 2) Отказ / force-update.
+    if not ok:
+        api_logger.warning(
+            "client.register: rejected user=%s fid_suffix=%s err=%s has_prm=%s",
+            user_id,
+            fid[-6:] if len(fid) >= 6 else "***",
+            verify_err,
+            prm_raw is not None,
+        )
 
-    # 3) Best-effort фиксация предложенного vcd.
-    async def _record_offered_vcd() -> None:
-        if not isinstance(prm_obj, dict):
-            return
-        vcd_val = prm_obj.get("vcd")
-        if not isinstance(vcd_val, int) or vcd_val <= 0:
-            return
+        if prm_raw:
+            return _fail(
+                401,
+                "force_update",
+                verify_err or "TokenVerify failed",
+                prm=prm_raw,
+            )
+
+        return _fail(
+            401,
+            "token_rejected",
+            verify_err or "TokenVerify failed",
+        )
+
+    # 3) scs=1 — регистрируем FID.
+    await push_notification_service.update_fid(user_id, fid)
+    api_logger.info(
+        "client.register: OK user=%s fid_suffix=...%s prm_len=%d",
+        user_id,
+        fid[-8:] if len(fid) >= 8 else "***",
+        len(prm_raw) if prm_raw else 0,
+    )
+
+    # 4) best-effort фиксация предложенного vcd.
+    sid_val, snc_val, vcd_val = _extract_prm_parts(prm_raw)
+    if isinstance(vcd_val, int) and vcd_val > 0:
         try:
             await asyncio.wait_for(
                 asyncio.to_thread(
@@ -314,45 +419,7 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
                 vcd_exc,
             )
 
-    # 4) scs=0 — отказ / force-update.
-    if not ok:
-        api_logger.warning(
-            "client.register: rejected user=%s fid_suffix=%s err=%s has_upd=%s",
-            user_id,
-            fid[-6:] if len(fid) >= 6 else "***",
-            verify_err,
-            prm_obj is not None,
-        )
-        await _record_offered_vcd()
-
-        if prm_obj is not None and update_json:
-            return _fail(
-                401,
-                "force_update",
-                verify_err or "TokenVerify failed",
-                prm=1,
-                upd=update_json,
-            )
-
-        return _fail(
-            401,
-            "token_rejected",
-            verify_err or "TokenVerify failed",
-        )
-
-    # 5) scs=1 — регистрируем FID.
-    await push_notification_service.update_fid(user_id, fid)
-    api_logger.info(
-        "client.register: OK user=%s fid_suffix=...%s has_upd=%s has_sync=%s",
-        user_id,
-        fid[-8:] if len(fid) >= 8 else "***",
-        prm_obj is not None,
-        sync_package is not None and bool(sync_package.get("sid")),
-    )
-
-    await _record_offered_vcd()
-
-    # 6) TApps sync (best-effort).
+    # 5) TApps sync (best-effort).
     try:
         from ...db import db_manager
         from ...db.repositories import AppRepository
@@ -364,39 +431,31 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
     except Exception as tapps_exc:  # noqa: BLE001
         api_logger.warning("client.register: TApps sync failed user=%s: %r", user_id, tapps_exc)
 
-    # 7) Регистрируем sid в реестре (для последующего sync-edit).
-    sync_sid: str | None = None
-    sync_snc: str | None = None
-    sync_dtp: list[int] = []
-    sync_prm: list[dict[str, Any]] = []
-
-    if sync_package and sync_package.get("sid"):
-        sync_sid = sync_package["sid"]
-        sync_snc = sync_package.get("snc")
-        sync_dtp = list(sync_package.get("dtp") or [])
-        sync_prm = list(sync_package.get("prm") or [])
+    # 6) Регистрируем sid в реестре (для последующего sync-edit).
+    if sid_val:
+        dtp_int = _extract_dtp_from_prm(prm_raw)
         try:
             await sync_session_registry.record_sid(
                 user_id=user_id,
-                sid=sync_sid,
-                snc=sync_snc,
-                dtp=sync_dtp,
+                sid=sid_val,
+                snc=snc_val,
+                dtp=dtp_int,
             )
-            if sync_snc and sync_dtp:
+            if snc_val and dtp_int:
                 await sync_session_registry.record_load(
                     user_id=user_id,
-                    sync_time=sync_snc,
-                    data_types=set(sync_dtp),
+                    sync_time=snc_val,
+                    data_types=set(dtp_int),
                 )
         except Exception as reg_exc:  # noqa: BLE001
             api_logger.warning(
                 "client.register: failed to record sid user=%s sid=%s: %r",
                 user_id,
-                sync_sid,
+                sid_val,
                 reg_exc,
             )
 
-    # 8) pending-сигналы из TPushPending → поле psh.
+    # 7) pending-сигналы из TPushPending → поле psh.
     psh: list[dict[str, Any]] = []
     try:
         from ...db import db_manager
@@ -418,46 +477,17 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
             pending_exc,
         )
 
-    # ============================================================
-    # 9) Сборка успешного ответа: scs + (prm/upd/snc) + psh
-    # ============================================================
-    has_upd = bool(update_json)
-    has_snc = bool(sync_sid) and not psh
-
+    # 8) Сборка успешного ответа.
     body: dict[str, Any] = {"scs": 1}
-
-    if has_upd:
-        body["upd"] = update_json
-
-    if has_snc:
-        body["snc"] = json.dumps(
-            {
-                "sid": sync_sid,
-                "snc": sync_snc,
-                "dtp": sync_dtp,
-                "prm": sync_prm,
-            },
-            ensure_ascii=False,
-        )
-
-    if has_upd and has_snc:
-        body["prm"] = 3
-    elif has_upd:
-        body["prm"] = 1
-    elif has_snc:
-        body["prm"] = 2
-
+    if prm_raw:
+        body["prm"] = prm_raw
     if psh:
         body["psh"] = psh
 
-    body["timestamp"] = get_timestamp()
-
     api_logger.info(
-        "client.register: response user=%s scs=1 prm=%s has_upd=%s has_snc=%s psh=%d",
+        "client.register: response user=%s scs=1 prm_len=%d psh=%d",
         user_id,
-        body.get("prm"),
-        has_upd,
-        has_snc,
+        len(prm_raw) if prm_raw else 0,
         len(psh),
     )
 
@@ -465,7 +495,238 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
 
 
 # ===========================================================================
-# 2. FID UNREGISTRATION — DELETE /register
+# 1.1. LOGIN — POST /login (mid=1|2)
+# ===========================================================================
+
+
+@router.post(
+    "/login",
+    summary="Логин по WS-токену (расширенный формат)",
+)
+@log_exceptions(api_logger)
+async def client_login(payload: _TokenPayload, request: Request) -> JSONResponse:
+    """Логин по WS-токену нового формата (7 полей).
+
+    Контракт токена (plaintext)::
+
+        fid|sch|prm1|prm2|yyMMdd|appVer|appCode
+
+    - ``sch``   — "1" (логин+пароль) | "2" (request_id + код);
+    - ``prm1``  — логин (sch=1) | request_id (sch=2);
+    - ``prm2``  — пароль (sch=1) | код (sch=2).
+
+    Сервер:
+      1) расшифровывает токен (без usi — его в plaintext нет);
+      2) вызывает ext.PA_mbl_AuthLogin_Exec через
+         TeamdroidProcedureRepository.login(mid=sch, pr1=prm1, pr2=prm2,
+                                             dvc=fid, tkn=yyMMdd, cip=IP,
+                                             ver=appVer, vcd=appCode,
+                                             api=TEAMDROID_APP_ID);
+         процедура сама проверяет учётные данные и делает TokenVerify,
+         возвращает (Success, Usi, prm);
+      3) best-effort пишет offered vcd;
+      4) scs=0 при отказе / force-update;
+      5) scs=1 + usi + update_fid + запись sid в реестр + pending-сигналы.
+    """
+    from ...ws.token_crypto import WsTokenData
+
+    data = decrypt_ws_token(payload.token)
+    if data is None:
+        return _fail(
+            400,
+            "invalid_token",
+            "Token decryption or validation failed",
+        )
+    assert isinstance(data, WsTokenData)
+
+    fid = data.fcm_id
+    client_ip = _extract_client_ip(request)
+
+    app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
+    if not app_id:
+        api_logger.error("client.login: TEAMDROID_APP_ID=0 — Login невозможен")
+        return _fail(503, "server_misconfigured", "TEAMDROID_APP_ID is not configured")
+
+    api_logger.info(
+        "client.login: START mid=%s pr1_len=%d pr2_len=%d fid_suffix=...%s ver=%s vcd=%d",
+        data.sch,
+        len(data.prm1),
+        len(data.prm2),
+        fid[-8:] if len(fid) >= 8 else "***",
+        data.app_version,
+        data.app_version_code,
+    )
+
+    # ── Шаг 1: единый вызов ext.PA_mbl_AuthLogin_Exec (mid=1|2) ──
+    try:
+        ok, err, user_id, prm_raw = await asyncio.wait_for(
+            asyncio.to_thread(
+                TeamdroidProcedureRepository.login,
+                mid=int(data.sch),
+                pr1=data.prm1,
+                pr2=data.prm2,
+                fcm_id=fid,
+                token_date=data.date,
+                client_ip=client_ip,
+                app_version=data.app_version,
+                app_version_code=data.app_version_code,
+                app_id=app_id,
+            ),
+            timeout=30.0,
+        )
+    except TimeoutError:
+        api_logger.warning("client.login: timeout fid_suffix=...%s", fid[-6:])
+        return _fail(504, "login_timeout", "Login timeout", retry="login")
+
+    # ── Шаг 2: разбор prm_raw для offered vcd ──
+    sid_val, snc_val, vcd_val = _extract_prm_parts(prm_raw)
+
+    async def _record_offered_vcd(usi_for_vcd: str | None) -> None:
+        if not usi_for_vcd or not isinstance(vcd_val, int) or vcd_val <= 0:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    TeamdroidProcedureRepository.app_update_offered_batch,
+                    [{"usi": usi_for_vcd, "api": int(app_id), "dvc": fid, "vcd": int(vcd_val)}],
+                ),
+                timeout=10.0,
+            )
+            api_logger.info("client.login: offered vcd recorded user=%s vcd=%d", usi_for_vcd, vcd_val)
+        except Exception as vcd_exc:  # noqa: BLE001
+            api_logger.warning("client.login: failed to record offered vcd: %r", vcd_exc)
+
+    # ── Шаг 3: отказ / force-update ──
+    if not ok:
+        api_logger.warning(
+            "client.login: REJECTED mid=%s fid_suffix=...%s err=%s has_prm=%s has_usi=%s",
+            data.sch,
+            fid[-6:] if len(fid) >= 6 else "***",
+            err,
+            prm_raw is not None,
+            bool(user_id),
+        )
+        await _record_offered_vcd(user_id)
+
+        if err == "invalid_credentials":
+            return _fail(
+                401,
+                "auth_failed",
+                "Invalid login/password or request_id/code",
+                usi=user_id,
+            )
+        if err == "force_update":
+            return _fail(
+                401,
+                "force_update",
+                "Force update required",
+                usi=user_id,
+                prm=prm_raw or "[]",
+            )
+        if err == "PRC_mbl_AuthLogin_NoData":
+            return _fail(
+                409,
+                "device_session_not_found",
+                "Re-register via /client/register",
+                retry="register",
+                usi=user_id,
+            )
+        return _fail(
+            401,
+            "token_rejected",
+            err or "Login failed",
+            usi=user_id,
+        )
+
+    assert user_id is not None
+
+    # ── Шаг 4: scs=1 — регистрируем FID ──
+    await push_notification_service.update_fid(user_id, fid)
+    api_logger.info(
+        "client.login: OK user=%s prm_len=%d",
+        user_id,
+        len(prm_raw) if prm_raw else 0,
+    )
+
+    await _record_offered_vcd(user_id)
+
+    # ── Шаг 5: TApps sync (best-effort) ──
+    try:
+        from ...db import db_manager
+        from ...db.repositories import AppRepository
+
+        async with db_manager.get_session() as session:
+            app = await AppRepository.get_or_create_app(session, fid, user_id=user_id)
+            app.FLastSeenAt = datetime_now()
+            await session.commit()
+    except Exception as tapps_exc:  # noqa: BLE001
+        api_logger.warning("client.login: TApps sync failed user=%s: %r", user_id, tapps_exc)
+
+    # ── Шаг 6: запись sid в реестр (для последующего sync-edit) ──
+    if sid_val:
+        dtp_int = _extract_dtp_from_prm(prm_raw)
+        try:
+            await sync_session_registry.record_sid(
+                user_id=user_id,
+                sid=sid_val,
+                snc=snc_val,
+                dtp=dtp_int,
+            )
+            if snc_val and dtp_int:
+                await sync_session_registry.record_load(
+                    user_id=user_id,
+                    sync_time=snc_val,
+                    data_types=set(dtp_int),
+                )
+        except Exception as reg_exc:  # noqa: BLE001
+            api_logger.warning(
+                "client.login: failed to record sid user=%s sid=%s: %r",
+                user_id,
+                sid_val,
+                reg_exc,
+            )
+
+    # ── Шаг 7: pending-сигналы из TPushPending → поле psh ──
+    psh: list[dict[str, Any]] = []
+    try:
+        from ...db import db_manager
+        from ...db.repositories.app_push_pending import app_push_pending_repo
+
+        async with db_manager.get_session() as session:
+            psh = await app_push_pending_repo.take_for_user(session, user_id)
+            await session.commit()
+        if psh:
+            api_logger.info(
+                "client.login: delivered %d pending pushes user=%s",
+                len(psh),
+                user_id,
+            )
+    except Exception as pending_exc:  # noqa: BLE001
+        api_logger.warning(
+            "client.login: failed to take pending pushes user=%s: %r",
+            user_id,
+            pending_exc,
+        )
+
+    # ── Шаг 8: ответ ──
+    body: dict[str, Any] = {"scs": 1, "usi": user_id}
+    if prm_raw:
+        body["prm"] = prm_raw
+    if psh:
+        body["psh"] = psh
+
+    api_logger.info(
+        "client.login: response user=%s scs=1 prm_len=%d psh=%d",
+        user_id,
+        len(prm_raw) if prm_raw else 0,
+        len(psh),
+    )
+
+    return JSONResponse(status_code=200, content=body)
+
+
+# ===========================================================================
+# 2. FID UNREGISTRATION — DELETE /register (logout → TokenFinish)
 # ===========================================================================
 
 
@@ -475,12 +736,17 @@ async def register_fid(payload: _TokenPayload, request: Request) -> JSONResponse
 )
 @log_exceptions(api_logger)
 async def unregister_fid(payload: _TokenPayload) -> JSONResponse:
-    from ...ws.token_crypto import WsTokenData
+    """Удаление FID и завершение сессии токена.
+
+    Вызывает ext.PA_mbl_TokenFinish_Exec через
+    TeamdroidProcedureRepository.logout(usi, dvc, api).
+    """
+    from ...ws.token_crypto import WsTokenDataLegacy
 
     data, err = _decrypt_or_error(payload.token)
     if err is not None:
         return err
-    assert isinstance(data, WsTokenData)
+    assert isinstance(data, WsTokenDataLegacy)
 
     user_id = data.user_id
     fid = data.fcm_id
@@ -492,23 +758,23 @@ async def unregister_fid(payload: _TokenPayload) -> JSONResponse:
         try:
             finish_ok, finish_err = await asyncio.wait_for(
                 asyncio.to_thread(
-                    TeamdroidProcedureRepository.token_finish,
-                    user_id=user_id,
+                    TeamdroidProcedureRepository.logout,
+                    usi=user_id,
                     fcm_id=fid,
                     app_id=app_id,
                 ),
-                timeout=10.0,
+                timeout=30.0,
             )
             if not finish_ok:
                 api_logger.warning(
-                    "client.unregister: token_finish non-OK user=%s err=%s",
+                    "client.unregister: logout non-OK user=%s err=%s",
                     user_id,
                     finish_err,
                 )
         except TimeoutError:
-            api_logger.warning("client.unregister: token_finish timeout user=%s", user_id)
+            api_logger.warning("client.unregister: logout timeout user=%s", user_id)
     else:
-        api_logger.warning("client.unregister: TEAMDROID_APP_ID=0 — TokenFinish пропущен")
+        api_logger.warning("client.unregister: TEAMDROID_APP_ID=0 — logout пропущен")
 
     await push_notification_service.remove_fid(user_id, fid)
 
@@ -525,7 +791,7 @@ async def unregister_fid(payload: _TokenPayload) -> JSONResponse:
         api_logger.warning("client.unregister: TApps sync failed: %r", tapps_exc)
 
     api_logger.info(
-        "client.unregister: OK user=%s fid_suffix=...%s finish_ok=%s",
+        "client.unregister: OK user=%s fid_suffix=...%s logout_ok=%s",
         user_id,
         fid[-8:] if len(fid) >= 8 else "***",
         finish_ok,
@@ -538,7 +804,6 @@ async def unregister_fid(payload: _TokenPayload) -> JSONResponse:
             "user_id": user_id,
             "fid_registered": False,
             "token_finished": finish_ok,
-            "timestamp": get_timestamp(),
         },
     )
 
@@ -554,12 +819,12 @@ async def unregister_fid(payload: _TokenPayload) -> JSONResponse:
 )
 @log_exceptions(api_logger)
 async def app_update_check(payload: _TokenPayload) -> JSONResponse:
-    from ...ws.token_crypto import WsTokenData
+    from ...ws.token_crypto import WsTokenDataLegacy
 
     data, err = _decrypt_or_error(payload.token)
     if err is not None:
         return err
-    assert isinstance(data, WsTokenData)
+    assert isinstance(data, WsTokenDataLegacy)
 
     user_id = data.user_id
     fid = data.fcm_id
@@ -574,7 +839,6 @@ async def app_update_check(payload: _TokenPayload) -> JSONResponse:
                 "error": "server_misconfigured",
                 "message": "TEAMDROID_APP_ID is not configured",
                 "retry": None,
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -596,7 +860,6 @@ async def app_update_check(payload: _TokenPayload) -> JSONResponse:
                 "scs": 0,
                 "error": "check_timeout",
                 "retry": "sync-edit",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -613,7 +876,6 @@ async def app_update_check(payload: _TokenPayload) -> JSONResponse:
                 "error": "device_not_registered",
                 "message": "Active device session not found",
                 "retry": "register",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -640,13 +902,12 @@ async def app_update_check(payload: _TokenPayload) -> JSONResponse:
         content={
             "scs": 1,
             "result": info,
-            "timestamp": get_timestamp(),
         },
     )
 
 
 # ===========================================================================
-# 2.5. AUTH CODE — POST /send-code, POST /verify-code
+# 2.5. AUTH CODE — POST /send-code
 # ===========================================================================
 
 
@@ -685,56 +946,6 @@ async def send_code(params: dict[str, Any], request: Request) -> JSONResponse:
         content={
             "scs": 1,
             "result": result.get("result"),
-            "timestamp": result.get("timestamp") or get_timestamp(),
-        },
-    )
-
-
-@router.post(
-    "/verify-code",
-    summary="Запустить хранимую процедуру SQL Server для проверки кода",
-)
-@log_exceptions(api_logger)
-async def verify_code(params: dict[str, Any], request: Request) -> JSONResponse:
-    request_id = params.get("request_id")
-    code = params.get("code")
-
-    if request_id is not None and not str(request_id or "").strip():
-        return _error_response(400, "invalid_request_id")
-
-    if code is not None:
-        code_str = str(code or "").strip()
-        if len(code_str) < 4:
-            return _error_response(400, "invalid_code")
-        params["code"] = code_str
-
-    params["client_ip"] = _extract_client_ip(request)
-
-    try:
-        result = await asyncio.to_thread(
-            TeamdroidProcedureRepository.auth_finish,
-            params,
-        )
-    except Exception as proc_exc:  # noqa: BLE001
-        api_logger.error("❌ [client] verify_code procedure failed: %r", proc_exc, exc_info=True)
-        return _error_response(
-            500,
-            f"verify_code_proc_failed: {type(proc_exc).__name__}: {proc_exc}",
-        )
-
-    api_logger.debug(
-        "✅ [client] verify_code executed: proc=%s rows=%s raw=%r",
-        result.get("proc"),
-        result.get("rows_affected"),
-        result.get("raw"),
-    )
-
-    return JSONResponse(
-        status_code=200,
-        content={
-            "scs": 1,
-            "result": result.get("result"),
-            "timestamp": result.get("timestamp") or get_timestamp(),
         },
     )
 
@@ -787,7 +998,6 @@ class NoteRelayResponse(BaseModel):
     ctrl_code: int | None = Field(None)
     ctrl_text: str | None = Field(None)
     teamdroid_saved: bool = Field(False)
-    timestamp: str = Field(...)
 
 
 def _do_note(
@@ -863,7 +1073,6 @@ async def relay_note(
             content={
                 "scs": 0,
                 "error": f"validation_error: {val_exc}",
-                "timestamp": get_timestamp(),
             },
         )
     except Exception as note_exc:  # noqa: BLE001
@@ -873,7 +1082,6 @@ async def relay_note(
             content={
                 "scs": 0,
                 "error": f"{type(note_exc).__name__}: {note_exc}",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -889,7 +1097,6 @@ async def relay_note(
         ctrl_code=ctrl_code if isinstance(ctrl_code, int) else None,
         ctrl_text=ctrl_text if isinstance(ctrl_text, str) else None,
         teamdroid_saved=teamdroid_saved,
-        timestamp=get_timestamp(),
     )
 
     if isinstance(ctrl_code, int) and ctrl_code >= 400:
@@ -939,7 +1146,6 @@ async def sync_base_load(
                 "error": "too_many_iterations",
                 "message": "Too many Load calls without a successful Edit",
                 "retry": "sync-edit",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -986,7 +1192,6 @@ async def sync_base_load(
                 "status_code": 504,
                 "error": "load_timeout",
                 "retry": "sync-load",
-                "timestamp": get_timestamp(),
             },
         )
     except RuntimeError as e:
@@ -1000,7 +1205,6 @@ async def sync_base_load(
                     "error": "device_session_not_found",
                     "message": "Device session not found; re-register via /client/register",
                     "retry": "register",
-                    "timestamp": get_timestamp(),
                 },
             )
         raise
@@ -1035,7 +1239,6 @@ async def sync_base_load(
                 "error": "invalid_sql_payload",
                 "message": "SQL returned empty sid",
                 "retry": None,
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -1090,7 +1293,6 @@ async def sync_base_edit(
                 "scs": 0,
                 "status_code": 400,
                 "error": f"too many items (max {max_items})",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -1108,7 +1310,6 @@ async def sync_base_edit(
                     "error": "invalid_token",
                     "message": f"items[{idx}]: invalid token",
                     "retry": None,
-                    "timestamp": get_timestamp(),
                 },
             )
         if isinstance(ids, JSONResponse):
@@ -1170,7 +1371,6 @@ async def sync_base_edit(
                 "error": "invalid_edit",
                 "issues": issues,
                 "retry": "sync-load",
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -1183,7 +1383,6 @@ async def sync_base_edit(
                 "error": "nothing_to_commit",
                 "message": "items is empty; nothing to commit",
                 "retry": None,
-                "timestamp": get_timestamp(),
             },
         )
 
@@ -1229,7 +1428,6 @@ async def sync_base_edit(
                 ),
                 "merge_may_have_committed": True,
                 "retry": "sync-load",
-                "timestamp": get_timestamp(),
             },
         )
     except RuntimeError as e:
@@ -1255,7 +1453,6 @@ async def sync_base_edit(
                     ),
                     "failed_items": failed_rows_0based,
                     "retry": "sync-load",
-                    "timestamp": get_timestamp(),
                 },
             )
 
@@ -1279,7 +1476,6 @@ async def sync_base_edit(
                     "ok_indices": ok_indices,
                     "total_items": len(sql_items),
                     "retry": None,
-                    "timestamp": get_timestamp(),
                 },
             )
 
@@ -1329,7 +1525,6 @@ async def sync_base_edit(
             failed_items=[],
             error=None,
             retry=None,
-            timestamp=get_timestamp(),
         ).model_dump(),
     )
 
@@ -1383,7 +1578,6 @@ async def sync_stats() -> JSONResponse:
                 "load_timeout_sec": int(getattr(settings, "APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC", 30)),
                 "edit_timeout_sec": int(getattr(settings, "APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC", 20)),
             },
-            "timestamp": get_timestamp(),
         },
     )
 
@@ -1414,7 +1608,6 @@ async def client_health() -> JSONResponse:
             "max_limit": int(getattr(settings, "APP_CLIENT_SYNC_BASE_MAX_LIMIT", 50_000)),
             "load_timeout_sec": int(getattr(settings, "APP_CLIENT_SYNC_BASE_LOAD_TIMEOUT_SEC", 30)),
             "edit_timeout_sec": int(getattr(settings, "APP_CLIENT_SYNC_BASE_EDIT_TIMEOUT_SEC", 20)),
-            "timestamp": get_timestamp(),
         },
     )
 

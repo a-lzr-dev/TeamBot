@@ -5,10 +5,9 @@
 - ``grpc``      — проверять через Tinode gRPC (production);
 - ``avanpost``  — проверять через Teamdroid SQL Server (production).
 
-CHANGED (v2): режим ``avanpost`` использует
-``TeamdroidProcedureRepository.verify_token_with_sync`` (4-tuple),
-sync-часть отбрасывается. Метод ``verify_token`` (3-tuple) удалён
-из репозитория — обратной совместимости нет.
+Режим ``avanpost`` использует ``TeamdroidProcedureRepository.verify_token``
+(3-tuple: ``ok, err, prm_raw``). ``prm_raw`` — сырая JSON-строка из
+колонки prm процедуры, без разбора на ``upd``/``snc``/``prm``.
 
 Используется простой in-memory кеш с TTL, чтобы не дёргать SQL Server
 на каждое подключение.
@@ -22,13 +21,6 @@ send-text/send-files.
 единый формат plaintext, все обязательные поля (usi, ver, code)
 проверяются на уровне ``decrypt_ws_token``. Токен без обязательных
 полей отвергается до обращения к Teamdroid SQL Server.
-
-Безопасность режима ``avanpost``
---------------------------------
-Проверка токена через
-``TeamdroidProcedureRepository.verify_token_with_sync`` — процедура
-требует непустые usi/api/dvc/tkn/cip; отсутствие usi обрабатывается
-как отказ (fail-closed).
 """
 
 from __future__ import annotations
@@ -56,13 +48,13 @@ class VerifiedToken:
     Attributes:
         user_id: Tinode user ID или None, если проверка не удалась.
         fcm_id: Firebase Installation ID.
-        update_json: сырой Result от SQL Server ({"fup":1,"prm":{...}}) или None.
+        prm_raw: сырая строка prm из процедуры (без разбора) или None.
         force_update: True, если scs=0 (обязательное обновление).
     """
 
     user_id: str | None
     fcm_id: str | None = None
-    update_json: str | None = None
+    prm_raw: str | None = None
     force_update: bool = False
 
     @property
@@ -137,10 +129,10 @@ async def _verify_token_in_teamdroid(
     """Проверяет токен в Teamdroid SQL Server (PA_mbl_TokenVerify_Exec).
 
     Возвращает:
-        (ok, update_json):
-            ok=True,  update_json=None    — валиден, обновления нет.
-            ok=True,  update_json="<json>"— валиден, есть (не критичное) обновление.
-            ok=False, update_json=<...>   — force_update или NoData.
+        (ok, prm_raw):
+            ok=True,  prm_raw=None    — валиден, prm не отдан.
+            ok=True,  prm_raw="<json>"— валиден, есть prm (обновление/sync).
+            ok=False, prm_raw=<...>   — force_update или NoData.
     """
     if not fcm_id or not user_id:
         return False, None
@@ -174,10 +166,8 @@ async def _verify_token_in_teamdroid(
         return False, None
 
     try:
-        # CHANGED: verify_token_with_sync возвращает 4-tuple;
-        # sync-часть (4-й элемент) в WS-хендшейке не нужна.
-        ok, err, update_json, _sync_package = await asyncio.to_thread(
-            TeamdroidProcedureRepository.verify_token_with_sync,
+        ok, err, prm_raw = await asyncio.to_thread(
+            TeamdroidProcedureRepository.verify_token,
             user_id=user_id,
             fcm_id=fcm_id,
             app_id=int(effective_app_id),
@@ -187,20 +177,20 @@ async def _verify_token_in_teamdroid(
             app_version_code=_safe_int(app_version_code),
         )
     except Exception as exc:  # noqa: BLE001
-        api_logger.error("auth(teamdroid): verify_token_with_sync raised: %r", exc, exc_info=True)
+        api_logger.error("auth(teamdroid): verify_token raised: %r", exc, exc_info=True)
         return False, None
 
     if not ok:
         api_logger.warning(
-            "auth(teamdroid): rejected user=%s fcm=%s... err=%s update=%s",
+            "auth(teamdroid): rejected user=%s fcm=%s... err=%s prm=%s",
             user_id,
             (fcm_id or "")[-6:],
             err,
-            (update_json or "")[:120],
+            (prm_raw or "")[:120],
         )
-        return False, update_json
+        return False, prm_raw
 
-    return True, update_json
+    return True, prm_raw
 
 
 # ============================================================
@@ -326,7 +316,7 @@ async def _verify_via_avanpost(
     )
 
     app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
-    ok, update_json = await _verify_token_in_teamdroid(
+    ok, prm_raw = await _verify_token_in_teamdroid(
         fcm_id=payload.fcm_id,
         user_id=payload.user_id,
         app_version=payload.app_version,
@@ -337,24 +327,24 @@ async def _verify_via_avanpost(
     )
 
     api_logger.info(
-        "auth(teamdroid): verify ok=%s user=%s update=%s",
+        "auth(teamdroid): verify ok=%s user=%s prm=%s",
         ok,
         payload.user_id,
-        (update_json or "")[:200],
+        (prm_raw or "")[:200],
     )
 
     if not ok:
         return VerifiedToken(
             user_id=None,
             fcm_id=payload.fcm_id,
-            update_json=update_json,
-            force_update=bool(update_json),
+            prm_raw=prm_raw,
+            force_update=bool(prm_raw),
         )
 
     return VerifiedToken(
         user_id=payload.user_id,
         fcm_id=payload.fcm_id,
-        update_json=update_json,
+        prm_raw=prm_raw,
         force_update=False,
     )
 

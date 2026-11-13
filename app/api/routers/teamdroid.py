@@ -32,11 +32,11 @@ CHANGED (перенос в client.py):
     app/api/routers/client.py и защищены набором
     APP_CLIENT_SYNC_INGEST_API_KEYS:
 
-        POST   /api/v1/client/register       (было /api/v1/push/register_fid)
+        POST   /api/v1/client/register
         DELETE /api/v1/client/register
-        POST   /api/v1/client/send-code      (было /api/v1/teamdroid/send-code)
-        POST   /api/v1/client/verify-code    (было /api/v1/teamdroid/verify-code)
-        POST   /api/v1/client/note           (было /api/v1/teamdroid/note)
+        POST   /api/v1/client/send-code
+        POST   /api/v1/client/login
+        POST   /api/v1/client/note
 
     Из этого модуля они удалены, чтобы не было двух конкурирующих
     путей и двух разных наборов API-ключей. TeamdroidClient.note()

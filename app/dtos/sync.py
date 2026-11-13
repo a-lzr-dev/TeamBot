@@ -23,9 +23,9 @@ CHANGED (v7):
 
 Семантика `prm[i]` (в реальном пакете):
     {
-        "dt":  int,          # DataTypeId
-        "exp": int | null,   # 1 = DELETE, null = UPSERT
-        "val": list[dict]    # JSON-массив записей; [] = пустой тип
+        "dt": int, # DataTypeId
+        "exp": int | null, # 1 = DELETE, null = UPSERT
+        "val": list[dict]  # JSON-массив записей; [] = пустой тип
     }
 
 Клиент разбирает `prm` сам. Сервер НЕ нормализует `val` в строку,
@@ -90,14 +90,14 @@ class SyncLoadRequest(BaseModel):
         None,
         alias="dtp",
         max_length=256,
-        description=("Список DataTypeId; null или [] = все типы. Клиент ДОЛЖЕН передавать явный непустой список."),
+        description="Список DataTypeId; null или [] = все типы. Клиент ДОЛЖЕН передавать явный непустой список.",
     )
     force: int = Field(
         0,
         alias="frc",
         ge=0,
         le=1,
-        description=("1 = игнорировать FDateProcess (полная перезагрузка). Отсутствие поля трактуется как 0."),
+        description="1 = игнорировать FDateProcess (полная перезагрузка). Отсутствие поля трактуется как 0.",
     )
 
     model_config = {"populate_by_name": True}
@@ -158,7 +158,7 @@ class SyncLoadResponse(BaseModel):
     sid: str = Field(..., description="UUIDv4 пакета (передавать в sync-edit)")
     prm: list[dict[str, Any]] = Field(
         default_factory=list,
-        description=("Сырой JSON из поля Result SQL-процедуры без изменений. Элементы: {dt, exp, val}."),
+        description="Сырой JSON из поля Result SQL-процедуры без изменений. Элементы: {dt, exp, val}.",
     )
 
 
@@ -217,7 +217,6 @@ class SyncEditResponse(BaseModel):
     )
     error: str | None = None
     retry: Literal["sync-load", "sync-edit", "register"] | None = None
-    timestamp: str
 
 
 __all__ = [

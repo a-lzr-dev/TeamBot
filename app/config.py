@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     TEAMDROID_SQL_TIMEOUT: int = 10
 
     TEAMDROID_SQL_PROC_AUTH_START: str = "ext.PA_mbl_AuthStart_Exec"
-    TEAMDROID_SQL_PROC_AUTH_FINISH: str = "ext.PA_mbl_AuthFinish_Exec"
+    TEAMDROID_SQL_PROC_AUTH_LOGIN: str = "ext.PA_mbl_AuthLogin_Exec"
     TEAMDROID_SQL_PROC_TOKEN_VERIFY: str = "ext.PA_mbl_TokenVerify_Exec"
     TEAMDROID_SQL_PROC_TOKEN_FINISH: str = "ext.PA_mbl_TokenFinish_Exec"
     TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD: str = "ext.PA_mbl_TokenDevices_Load"

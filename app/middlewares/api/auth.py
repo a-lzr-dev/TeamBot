@@ -24,7 +24,7 @@ Middleware для аутентификации запросов к API.
           POST   /api/v1/client/register
           DELETE /api/v1/client/register
           POST   /api/v1/client/send-code
-          POST   /api/v1/client/verify-code
+          POST   /api/v1/client/login
           POST   /api/v1/client/note
           GET    /api/v1/client/health
           GET    /api/v1/update/apk/{filename}   <-- закрытая раздача
@@ -97,7 +97,7 @@ _CLIENT_SYNC_INGEST_EXACT: frozenset[str] = frozenset(
     {
         "/api/v1/client/register",
         "/api/v1/client/send-code",
-        "/api/v1/client/verify-code",
+        "/api/v1/client/login",
         "/api/v1/client/note",
         "/api/v1/client/health",
         "/api/v1/client/update-check",
