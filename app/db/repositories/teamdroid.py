@@ -37,7 +37,8 @@ TEAMDROID_SQL_*:
         prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
                    None, если колонка NULL.
 
-Контракт ext.PA_mbl_AuthLogin_Exec (mid=1: логин+пароль, mid=2: request_id+код):
+Контракт ext.PA_mbl_AuthLogin_Exec (mid=1: логин+пароль, mid=2: request_id+код,
+mid=3: подтверждение креденшела):
 
     EXEC <proc> @Params = N'<json>'
 
@@ -47,18 +48,8 @@ TEAMDROID_SQL_*:
 
     Колонка prm — тот же JSON-массив, что и у TokenVerify.
 
-    Колонки sid/snc/dtp в контракте оставлены как legacy и
-    методом login НЕ читаются: sync-пакет приходит внутри prm.
-
     Python-парсер login возвращает 4-tuple:
       (ok, err, usi, prm_raw)
-        ok       — True при Success=1.
-        err      — текст ошибки (None при ok=True).
-        usi      — usrXXX из колонки usi (может быть заполнен и при
-                   Success=0, если SQL успел резолвнуть пользователя
-                   до force-update).
-        prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
-                   None, если колонка NULL.
 
     Ошибки (THROW):
       PRC_mbl_AuthLogin_BadAuth — неверные учётные данные;
@@ -72,6 +63,7 @@ TEAMDROID_SQL_*:
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 import re
@@ -116,6 +108,122 @@ def _as_str(v: Any) -> str | None:
     if isinstance(v, str):
         return v or None
     return str(v)
+
+
+def _normalize_file_ids(raw: list[int] | list[str] | str | None) -> list[int]:
+    """Приводит ids к списку int (для JSON-массива в @Params).
+
+    Принимает:
+      * list[int] / list[str]  — как есть;
+      * str "16660098"         — один id;
+      * str "[16660098,2]"     — JSON-массив (совместимость).
+    Отбрасывает None/0/отрицательные/непарсящиеся значения.
+    """
+    if raw is None:
+        return []
+
+    items: list[Any]
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        if s.startswith("["):
+            try:
+                parsed = json.loads(s)
+                items = list(parsed) if isinstance(parsed, list) else [parsed]
+            except (ValueError, TypeError):
+                items = [s]
+        else:
+            items = [s]
+    elif isinstance(raw, list | tuple | set):
+        items = raw
+    else:
+        items = [raw]
+
+    out: list[int] = []
+    seen: set[int] = set()
+    for it in items:
+        try:
+            v = int(str(it).strip())
+        except (ValueError, TypeError):
+            continue
+        if v <= 0 or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
+
+
+def _parse_files_rows(rows: list[pyodbc.Row]) -> list[dict[str, Any]]:
+    """Разбирает resultset ext.PA_mbl_Files_Load в список dict.
+
+    Процедура возвращает по одной строке на файл:
+        (fid INT, fnm NVARCHAR, fex NVARCHAR, fsz INT, fdt VARBINARY)
+
+    ``fdt`` (VARBINARY) кодируется в base64-строку.
+    """
+    files: list[dict[str, Any]] = []
+
+    for row in rows:
+        if len(row) < 5:
+            db_logger.warning("[file_load] unexpected row width=%d (expected 5)", len(row))
+            continue
+
+        raw_fdt = row[4]
+        if isinstance(raw_fdt, bytes):
+            fdt_b64: str | None = base64.b64encode(raw_fdt).decode("ascii")
+        elif raw_fdt is None:
+            fdt_b64 = None
+        else:
+            fdt_b64 = str(raw_fdt)
+
+        files.append(
+            {
+                "fid": _as_str(row[0]),
+                "fnm": _as_str(row[1]),
+                "fex": _as_str(row[2]),
+                "fsz": _int_or(row[3]),
+                "fdt": fdt_b64,
+            }
+        )
+
+    return files
+
+
+def _normalize_prm_to_str(value: Any) -> str | None:
+    """Приводит значение колонки prm к строке.
+
+    pyodbc/SQL Server иногда возвращает уже распарсенный JSON (dict/list),
+    если колонка пришла как объект. Дальше код ожидает строку: срез [:200],
+    ``json.loads(text)`` и т.п. Эта функция нормализует значение к ``str``
+    (или ``None``, если исходное значение NULL).
+
+    Замечание для PyCharm: используется ``repr()`` вместо ``str()``,
+    чтобы не срабатывало ложное предупреждение «Type 'None' doesn't define
+    '__str__'/'__repr__'» на ветке fallback.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace") or None
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return repr(value)
+
+
+def _bit(v: Any) -> bool:
+    """True, если значение — SQL BIT 1 или Python True."""
+    return v == 1 or v is True
+
+
+def _int_or(v: Any, default: int | None = None) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
 
 
 # ============================================================
@@ -199,54 +307,32 @@ class TeamdroidProcedureRepository:
     def verify_token(
         *,
         user_id: str,
-        fcm_id: str,
         app_id: int,
+        fcm_id: str,
         token_date: str | None,
         client_ip: str | None,
         app_version: str | None = None,
         app_version_code: int | None = None,
-    ) -> tuple[bool, str | None, str | None]:
-        """EXEC settings.TEAMDROID_SQL_PROC_TOKEN_VERIFY @Params = N'<json>'.
+    ) -> tuple[bool, str | None, dict[str, Any]]:
+        """EXEC ext.PA_mbl_TokenVerify_Exec @Params=N'<json>'.
 
-        Вызывает ext.PA_mbl_TokenVerify_Exec с @Params = N'<json>', где:
-
-            {
-              "usi": "usrXXXX",    -- Teamdroid user hash
-              "api": 1,            -- AppID (TEAMDROID_APP_ID)
-              "dvc": "...",        -- FID устройства
-              "tkn": "yyMMdd",     -- дата токена
-              "cip": "...",        -- IP клиента
-              "ver": "2.5.1",      -- versionName (опционально)
-              "vcd": 251           -- versionCode (опционально)
-            }
-
-        Процедура возвращает одну строку:
-
-            Success BIT,           -- 1 = OK, 0 = отказ (force-update)
-            prm NVARCHAR(MAX),     -- JSON-массив (см. docstring модуля)
-            sid VARCHAR(36),       -- legacy, не читается
-            snc DATETIME,          -- legacy, не читается
-            dtp NVARCHAR(MAX)      -- legacy, не читается
+        Выход:
+            Success BIT, prm NVARCHAR(MAX),
+            sid VARCHAR(36), snc DATETIME, dtp NVARCHAR(MAX)
 
         Возвращает:
-            (ok, err, prm_raw)
+            (ok, err, bundle)
               ok       — True при Success=1.
               err      — текст ошибки (None при ok=True).
-              prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
-                         None, если колонка NULL.
-
-        Ошибки (THROW):
-          PRC_mbl_TokenVerify_NoData — устройство/сессия не найдены.
-
-        При любой pyodbc/unexpected-ошибке возвращает
-        (False, "<описание>", None) — не бросает исключение.
+              bundle   — {"sid":..., "snc":..., "dtp":..., "prm":...}
+                         (те же ключи, что у load_base_data).
         """
         if not fcm_id:
-            return False, "empty_fcm_id", None
+            return False, "empty_fcm_id", {}
         if not user_id or not user_id.startswith("usr"):
-            return False, "invalid_user_id", None
+            return False, "invalid_user_id", {}
         if not app_id or int(app_id) <= 0:
-            return False, "invalid_app_id", None
+            return False, "invalid_app_id", {}
 
         params: dict[str, Any] = {
             "usi": user_id[:64],
@@ -264,20 +350,7 @@ class TeamdroidProcedureRepository:
                 db_logger.warning("[verify_token] invalid vcd: %r", app_version_code)
 
         proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_VERIFY
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
-
-        db_logger.debug(
-            "🔐 [verify_token] proc=%s user=%s fcm=%s api=%d tkn=%s ip=%s ver=%s vcd=%s",
-            proc_name,
-            user_id,
-            fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-            int(app_id),
-            params["tkn"],
-            params["cip"],
-            params.get("ver"),
-            params.get("vcd"),
-        )
-
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
         params_json = json.dumps(params, ensure_ascii=False)
 
         row: pyodbc.Row | None = None
@@ -298,59 +371,41 @@ class TeamdroidProcedureRepository:
         except pyodbc.Error as e:
             err_text = str(e)
             if "PRC_mbl_TokenVerify_NoData" in err_text or "50000" in err_text:
-                db_logger.warning(
-                    "⚠️ [verify_token] THROW NoData user=%s fcm=%s...: %s",
-                    user_id,
-                    fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-                    err_text,
-                )
-                return False, "PRC_mbl_TokenVerify_NoData", None
-
-            db_logger.error(
-                "❌ [verify_token] pyodbc error user=%s: %s",
-                user_id,
-                err_text,
-                exc_info=True,
-            )
-            return False, f"pyodbc: {err_text}", None
-
+                return False, "PRC_mbl_TokenVerify_NoData", {}
+            return False, f"pyodbc: {err_text}", {}
         except Exception as e:  # noqa: BLE001
-            db_logger.error(
-                "❌ [verify_token] unexpected error user=%s: %r",
-                user_id,
-                e,
-                exc_info=True,
-            )
-            return False, repr(e), None
+            return False, repr(e), {}
 
         if row is None:
-            db_logger.warning("⚠️ [verify_token] procedure returned no rows for user=%s", user_id)
-            return False, "no_rows", None
+            return False, "no_rows", {}
 
-        raw_success: Any = row[0]
-        raw_prm: Any = row[1] if len(row) > 1 else None
+        ok = bool(row[0] == 1 or row[0] is True)
+        raw_prm = row[1] if len(row) > 1 else None
+        raw_sid = row[2] if len(row) > 2 else None
+        raw_snc = row[3] if len(row) > 3 else None
+        raw_dtp = row[4] if len(row) > 4 else None
 
-        ok = bool(raw_success == 1 or raw_success is True)
+        # Нормализация prm к str: pyodbc/SQL Server может вернуть dict/list,
+        # если колонка пришла как распарсенный JSON. Дальше код ожидает
+        # строку (срез [:200], json.loads и т.п.).
+        prm_normalized: str | None = _normalize_prm_to_str(raw_prm)
 
-        prm_raw = _as_str(raw_prm)
+        bundle: dict[str, Any] = {
+            "sid": raw_sid,
+            "snc": raw_snc,
+            "dtp": raw_dtp,
+            "prm": prm_normalized,
+        }
 
         if not ok:
-            db_logger.warning(
-                "⚠️ [verify_token] force update user=%s prm=%s",
-                user_id,
-                (prm_raw or "")[:200],
-            )
-            return False, "force_update", prm_raw
+            db_logger.warning("⚠️ [verify_token] rejected user=%s", user_id)
+            return False, "force_update", bundle
 
-        db_logger.info(
-            "✅ [verify_token] OK user=%s prm_len=%d",
-            user_id,
-            len(prm_raw) if prm_raw else 0,
-        )
-        return True, None, prm_raw
+        db_logger.info("✅ [verify_token] OK user=%s", user_id)
+        return True, None, bundle
 
     # ============================================================
-    # LOGIN (mid=1: логин+пароль, mid=2: request_id+код)
+    # LOGIN (mid=1|2|3)
     # ============================================================
 
     @staticmethod
@@ -359,64 +414,34 @@ class TeamdroidProcedureRepository:
         mid: int,
         pr1: str,
         pr2: str,
+        app_id: int,
         fcm_id: str,
         token_date: str | None,
         client_ip: str | None,
         app_version: str | None,
         app_version_code: int | None,
-        app_id: int,
-    ) -> tuple[bool, str | None, str | None, str | None]:
-        """mid=1|2: проверка учётных данных + TokenVerify внутри SQL.
+    ) -> tuple[bool, str | None, str | None, dict[str, Any]]:
+        """EXEC ext.PA_mbl_AuthLogin_Exec @Params=N'<json>'.
 
-        Вызывает TEAMDROID_SQL_PROC_AUTH_LOGIN (ext.PA_mbl_AuthLogin_Exec)
-        с @Params = N'<json>', где:
+        mid:
+            1 — логин+пароль
+            2 — request_id + код
+            3 — подтверждение креденшела (login, password+":"+code)
 
-            {
-              "mid": 1 | 2,        -- 1=логин+пароль, 2=request_id+код
-              "pr1": "..." ,       -- логин | request_id
-              "pr2": "..." ,       -- пароль | код
-              "dvc": "..." ,       -- FID устройства
-              "tkn": "yyMMdd",     -- дата токена
-              "cip": "..." ,       -- IP клиента
-              "ver": "2.5.1",      -- versionName (опционально)
-              "vcd": 251,          -- versionCode (опционально)
-              "api": 1             -- AppID (TEAMDROID_APP_ID)
-            }
-
-        Процедура возвращает одну строку:
-
-            Success BIT,           -- 1 = OK, 0 = отказ (force-update)
-            Usi VARCHAR(64),       -- usrXXXX
-            prm NVARCHAR(MAX),     -- JSON-массив (см. docstring модуля)
-            sid VARCHAR(36),       -- legacy, не читается
-            snc DATETIME,          -- legacy, не читается
-            dtp NVARCHAR(MAX)      -- legacy, не читается
+        Выход:
+            Success BIT, Usi NVARCHAR(64), prm NVARCHAR(MAX),
+            sid VARCHAR(36), snc DATETIME, dtp NVARCHAR(MAX)
 
         Возвращает:
-            (ok, err, usi, prm_raw)
-              ok       — True при Success=1.
-              err      — текст ошибки (None при ok=True).
-              usi      — usrXXX из колонки usi (может быть заполнен и при
-                         Success=0, если SQL успел резолвнуть пользователя
-                         до force-update).
-              prm_raw  — СЫРАЯ строка из колонки prm (без парсинга).
-                         None, если колонка NULL.
-
-        Ошибки (THROW):
-          PRC_mbl_AuthLogin_BadAuth — неверные учётные данные;
-          PRC_mbl_AuthLogin_NoData  — сессия устройства не найдена.
-
-        При любой pyodbc/unexpected-ошибке возвращает
-        (False, "<описание>", None, None) — не бросает исключение.
+            (ok, err, usi, bundle)
+              bundle — {"sid":..., "snc":..., "dtp":..., "prm":...}
         """
-        if mid not in (1, 2):
-            return False, f"invalid_mid:{mid!r}", None, None
-        if not fcm_id:
-            return False, "empty_dvc", None, None
-        if not pr1 or not pr2:
-            return False, "empty_pr1_or_pr2", None, None
+        if mid not in (1, 2, 3):
+            return False, f"invalid_mid:{mid!r}", None, {}
+        if not fcm_id or not pr1 or not pr2:
+            return False, "empty_credentials", None, {}
         if not app_id or int(app_id) <= 0:
-            return False, "invalid_app_id", None, None
+            return False, "invalid_app_id", None, {}
 
         params: dict[str, Any] = {
             "mid": int(mid),
@@ -436,19 +461,7 @@ class TeamdroidProcedureRepository:
                 pass
 
         proc_name = settings.TEAMDROID_SQL_PROC_AUTH_LOGIN
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
-
-        db_logger.debug(
-            "🔑 [login] proc=%s mid=%s pr1_len=%d pr2_len=%d dvc=%s api=%d ip=%r",
-            proc_name,
-            mid,
-            len(pr1),
-            len(pr2),
-            fcm_id[-6:] if len(fcm_id) >= 6 else "***",
-            int(app_id),
-            client_ip,
-        )
-
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
         params_json = json.dumps(params, ensure_ascii=False)
 
         row: pyodbc.Row | None = None
@@ -468,57 +481,44 @@ class TeamdroidProcedureRepository:
                     raise
         except pyodbc.Error as e:
             err_text = str(e)
-
             if "PRC_mbl_AuthLogin_BadAuth" in err_text:
-                db_logger.warning("⚠️ [login] BadAuth mid=%s: %s", mid, err_text)
-                return False, "invalid_credentials", None, None
-
+                return False, "invalid_credentials", None, {}
             if "PRC_mbl_AuthLogin_NoData" in err_text or "50000" in err_text:
-                db_logger.warning("⚠️ [login] NoData mid=%s: %s", mid, err_text)
-                return False, "PRC_mbl_AuthLogin_NoData", None, None
-
-            db_logger.error("❌ [login] pyodbc error: %s", err_text, exc_info=True)
-            return False, f"pyodbc: {err_text}", None, None
-        except Exception as e:
-            db_logger.error("❌ [login] unexpected error: %r", e, exc_info=True)
-            return False, repr(e), None, None
+                return False, "PRC_mbl_AuthLogin_NoData", None, {}
+            return False, f"pyodbc: {err_text}", None, {}
+        except Exception as e:  # noqa: BLE001
+            return False, repr(e), None, {}
 
         if row is None:
-            return False, "no_rows", None, None
+            return False, "no_rows", None, {}
 
-        raw_success: Any = row[0]
-        raw_usi: Any = row[1] if len(row) > 1 else None
-        raw_prm: Any = row[2] if len(row) > 2 else None
+        ok = bool(row[0] == 1 or row[0] is True)
+        raw_usi = row[1] if len(row) > 1 else None
+        raw_prm = row[2] if len(row) > 2 else None
+        raw_sid = row[3] if len(row) > 3 else None
+        raw_snc = row[4] if len(row) > 4 else None
+        raw_dtp = row[5] if len(row) > 5 else None
 
-        ok = bool(raw_success == 1 or raw_success is True)
+        # Нормализация prm к str: pyodbc/SQL Server может вернуть dict/list,
+        # если колонка пришла как распарсенный JSON.
+        prm_normalized: str | None = _normalize_prm_to_str(raw_prm)
 
         result_usi = _as_str(raw_usi)
         if result_usi is not None and not result_usi.startswith("usr"):
-            db_logger.warning("⚠️ [login] invalid usi in result: %r", raw_usi)
             result_usi = None
 
-        prm_raw = _as_str(raw_prm)
+        bundle: dict[str, Any] = {
+            "sid": raw_sid,
+            "snc": raw_snc,
+            "dtp": raw_dtp,
+            "prm": prm_normalized,
+        }
 
         if not ok:
-            db_logger.warning(
-                "⚠️ [login] force-update mid=%s has_prm=%s usi=%r",
-                mid,
-                prm_raw is not None,
-                result_usi,
-            )
-            return False, "force_update", result_usi, prm_raw
-
+            return False, "force_update", result_usi, bundle
         if not result_usi:
-            db_logger.warning("⚠️ [login] Success=1, но usi=NULL")
-            return False, "no_usi_in_result", None, None
-
-        db_logger.info(
-            "✅ [login] OK mid=%s usi=%s prm_len=%d",
-            mid,
-            result_usi,
-            len(prm_raw) if prm_raw else 0,
-        )
-        return True, None, result_usi, prm_raw
+            return False, "no_usi_in_result", None, {}
+        return True, None, result_usi, bundle
 
     # ============================================================
     # LOGOUT (TokenFinish)
@@ -528,8 +528,8 @@ class TeamdroidProcedureRepository:
     def logout(
         *,
         usi: str,
-        fcm_id: str,
         app_id: int,
+        fcm_id: str,
     ) -> tuple[bool, str | None]:
         """mid=0: завершение сессии устройства (TokenFinish).
 
@@ -542,10 +542,6 @@ class TeamdroidProcedureRepository:
             }
 
         Процедура возвращает одну строку: Success BIT.
-
-        При отсутствии активной сессии процедура делает RETURN -1
-        (без THROW). pyodbc увидит либо пустой resultset, либо
-        строку с Success=0 — трактуем как "logout не выполнен".
 
         Возвращает:
             (ok, err)
@@ -564,7 +560,7 @@ class TeamdroidProcedureRepository:
         }
 
         proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_FINISH
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         db_logger.debug(
             "🔚 [logout] proc=%s usi=%s dvc=%s api=%d",
@@ -622,7 +618,7 @@ class TeamdroidProcedureRepository:
     @staticmethod
     def load_token_devices() -> dict[str, set[str]]:
         proc_name = settings.TEAMDROID_SQL_PROC_TOKEN_DEVICES_LOAD
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
         if not app_id:
@@ -719,7 +715,7 @@ class TeamdroidProcedureRepository:
 
         app_id = int(getattr(settings, "TEAMDROID_APP_ID", 0) or 0)
         proc_name = settings.TEAMDROID_SQL_PROC_EDIT_MSG_STATUS_DELIVERY
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         base = {
             "tpc": topic[:100],
@@ -825,8 +821,8 @@ class TeamdroidProcedureRepository:
     def app_update_check(
         *,
         user_id: str,
-        fcm_id: str,
         app_id: int,
+        fcm_id: str,
     ) -> str | None:
         if not fcm_id:
             return None
@@ -836,7 +832,7 @@ class TeamdroidProcedureRepository:
             return None
 
         proc_name = settings.TEAMDROID_SQL_PROC_APP_UPDATE_CHECK
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         params: dict[str, Any] = {
             "usi": user_id[:64],
@@ -942,10 +938,10 @@ class TeamdroidProcedureRepository:
         records: list[dict[str, Any]],
     ) -> dict[str, Any]:
         if not records:
-            return {"success": True, "rows": 0, "error": None}
+            return {"scs": 1, "rows": 0, "error": None}
 
         proc_name = settings.TEAMDROID_SQL_PROC_APP_UPDATE_OFFERED
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         params_json = json.dumps(records, ensure_ascii=False)
 
@@ -972,7 +968,7 @@ class TeamdroidProcedureRepository:
                     raise
 
             db_logger.info("✅ [app_update_offered_batch] recorded %d rows", len(records))
-            return {"success": True, "rows": len(records), "error": None}
+            return {"scs": 1, "rows": len(records), "error": None}
 
         except pyodbc.Error as e:
             err_text = str(e)
@@ -986,14 +982,14 @@ class TeamdroidProcedureRepository:
                     proc_name,
                     err_text,
                 )
-                return {"success": False, "rows": 0, "error": err_text}
+                return {"scs": 0, "rows": 0, "error": err_text}
 
             db_logger.error(
                 "❌ [app_update_offered_batch] pyodbc error: %s",
                 err_text,
                 exc_info=True,
             )
-            return {"success": False, "rows": 0, "error": f"pyodbc: {err_text}"}
+            return {"scs": 0, "rows": 0, "error": f"pyodbc: {err_text}"}
 
         except Exception as e:  # noqa: BLE001
             db_logger.error(
@@ -1001,12 +997,12 @@ class TeamdroidProcedureRepository:
                 e,
                 exc_info=True,
             )
-            return {"success": False, "rows": 0, "error": repr(e)}
+            return {"scs": 0, "rows": 0, "error": repr(e)}
 
     @staticmethod
     def list_outdated_sessions() -> list[dict[str, Any]]:
         proc_name = settings.TEAMDROID_SQL_PROC_APP_UPDATE_CHECK_ALL
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         result: list[dict[str, Any]] = []
         try:
@@ -1061,13 +1057,11 @@ class TeamdroidProcedureRepository:
     def load_base_data(
         *,
         user_id: str,
-        fcm_id: str,
         app_id: int,
-        data_types: list[int] | None = None,
-        limit: int | None = None,
-        force: bool = False,
+        fcm_id: str,
         client_ip: str | None = None,
-        debug: bool = False,
+        data_types: list[int] | None = None,
+        force: bool = False,
     ) -> dict[str, Any]:
         if not user_id or not user_id.startswith("usr"):
             raise ValueError("invalid usi")
@@ -1077,18 +1071,13 @@ class TeamdroidProcedureRepository:
             raise ValueError("invalid api")
 
         proc_name = settings.TEAMDROID_SQL_PROC_SYNC_BASE_LOAD
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
-
-        if limit is None:
-            limit = int(getattr(settings, "APP_CLIENT_SYNC_BASE_DEFAULT_LIMIT", 1000) or 1000)
-        if limit < 1:
-            limit = 1
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         params: dict[str, Any] = {
             "usi": user_id[:64],
             "api": int(app_id),
             "dvc": fcm_id[:255],
-            "lmt": int(limit),
+            "cip": (client_ip or "")[:64],
             "frc": 1 if force else 0,
         }
         if data_types:
@@ -1101,11 +1090,9 @@ class TeamdroidProcedureRepository:
             user_id,
             fcm_id[-6:] if len(fcm_id) >= 6 else "***",
             int(app_id),
-            int(limit),
             1 if force else 0,
             params.get("dtp"),
             client_ip,
-            debug,
         )
 
         _sync_base_stats.load_calls += 1
@@ -1115,10 +1102,7 @@ class TeamdroidProcedureRepository:
         try:
             with teamdroid_sql_cursor() as cur:
                 try:
-                    if debug:
-                        cur.execute(f"EXEC {proc_name} @Params = ?, @Debug = 1", params_json)
-                    else:
-                        cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
 
                     while True:
                         if cur.description is not None:
@@ -1277,12 +1261,20 @@ class TeamdroidProcedureRepository:
         return {"sid": sid, "snc": snc, "dtp": dtp, "prm": prm}
 
     @staticmethod
-    def edit_base_data(items: list[dict[str, Any]]) -> None:
+    def edit_base_data(items: list[dict[str, Any]]) -> dict[str, Any]:
+        """EXEC ext.PA_mbl_SyncBaseData_Edit @Params=N'<json>'.
+
+        Возвращает тот же формат, что и load_base_data:
+            {"sid": str|None, "snc": str|None, "dtp": list[int], "prm": list[dict]}
+
+        Новая процедура возвращает (sid, snc, dtp, Result) — новый пакет,
+        который нужно передать клиенту и зарегистрировать в реестре.
+        """
         if not items:
-            return
+            return {"sid": None, "snc": None, "dtp": [], "prm": []}
 
         proc_name = settings.TEAMDROID_SQL_PROC_SYNC_BASE_EDIT
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
 
         normalized: list[dict[str, Any]] = []
         for idx, item in enumerate(items):
@@ -1291,49 +1283,38 @@ class TeamdroidProcedureRepository:
             api = item.get("api")
             dtp = item.get("dtp") or []
             ts = item.get("ts")
-
             if not usi.startswith("usr"):
                 raise ValueError(f"items[{idx}]: invalid usi {usi!r}")
             if not dvc:
                 raise ValueError(f"items[{idx}]: empty dvc")
-            if not isinstance(api, int) or api <= 0:
-                if api is None:
-                    raise ValueError(f"items[{idx}]: invalid api (got None)")
-                raise ValueError(f"items[{idx}]: invalid api {api!s}")
+            if api is None:
+                raise ValueError(f"items[{idx}]: invalid api (got None)")
+            if not isinstance(api, int) or isinstance(api, bool) or api <= 0:
+                api_repr = "invalid_type" if not isinstance(api, int) else f"non-positive:{api}"
+                raise ValueError(f"items[{idx}]: invalid api ({api_repr})")
             if not isinstance(dtp, list) or not dtp:
                 raise ValueError(f"items[{idx}]: dtp must be non-empty list")
             if not isinstance(ts, str) or not ts:
                 raise ValueError(f"items[{idx}]: ts must be non-empty ISO string")
-
-            api_int: int = int(api)
-            usi_str: str = str(usi)
-            dvc_str: str = str(dvc)
-
             normalized.append(
                 {
-                    "usi": usi_str[:64],
-                    "api": api_int,
-                    "dvc": dvc_str[:255],
+                    "usi": usi[:64],
+                    "api": int(api),
+                    "dvc": dvc[:255],
                     "dtp": [int(t) for t in dtp],
                     "ts": _normalize_ts_for_sql(ts),
                 }
             )
 
         params_json = json.dumps(normalized, ensure_ascii=False)
-        db_logger.debug(
-            "[sync_base.edit] proc=%s items=%d types=%s ts=%r",
-            proc_name,
-            len(normalized),
-            [len(n["dtp"]) for n in normalized],
-            normalized[0]["ts"] if normalized else None,
-        )
-
         _sync_base_stats.edit_calls += 1
 
+        row: pyodbc.Row | None = None
         try:
             with teamdroid_sql_cursor() as cur:
                 try:
                     cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    row = cur.fetchone() if cur.description is not None else None
                     while cur.nextset():
                         pass
                     cur.connection.commit()
@@ -1341,26 +1322,17 @@ class TeamdroidProcedureRepository:
                     try:
                         cur.connection.rollback()
                     except pyodbc.Error as rb_exc:
-                        db_logger.error(
-                            "[sync_base.edit] rollback failed: %r",
-                            rb_exc,
-                            exc_info=True,
-                        )
+                        db_logger.error("[sync_base.edit] rollback failed: %r", rb_exc, exc_info=True)
                     raise
         except pyodbc.Error as e:
             err_text = str(e)
             if "PRC_mbl_SyncBaseDataEdit_BadTs" in err_text:
                 _sync_base_stats.edit_bad_ts += 1
-                db_logger.warning("[sync_base.edit] BadTs proc=%s: %s", proc_name, err_text)
                 raise RuntimeError(f"PRC_mbl_SyncBaseDataEdit_BadTs: {err_text}") from e
-
             if "PRC_mbl_SyncBaseDataEdit_NoData" in err_text or "50000" in err_text:
                 _sync_base_stats.edit_errors += 1
-                db_logger.warning("[sync_base.edit] NoData proc=%s: %s", proc_name, err_text)
                 raise RuntimeError(f"PRC_mbl_SyncBaseDataEdit_NoData: {err_text}") from e
-
             _sync_base_stats.edit_errors += 1
-            db_logger.error("[sync_base.edit] pyodbc error proc=%s: %s", proc_name, err_text, exc_info=True)
             raise
         except Exception:
             _sync_base_stats.edit_errors += 1
@@ -1369,12 +1341,76 @@ class TeamdroidProcedureRepository:
         _sync_base_stats.edit_items += len(normalized)
         _sync_base_stats.edit_types += sum(len(n["dtp"]) for n in normalized)
 
+        if row is None:
+            db_logger.warning("[sync_base.edit] no rows returned")
+            return {"sid": None, "snc": None, "dtp": [], "prm": []}
+
+        raw_sid = row[0] if len(row) > 0 else None
+        raw_snc = row[1] if len(row) > 1 else None
+        raw_dtp = row[2] if len(row) > 2 else None
+        raw_prm = row[3] if len(row) > 3 else None
+
+        def _s(v: Any) -> str | None:
+            if v is None:
+                return None
+            if isinstance(v, bytes):
+                return v.decode("utf-8", errors="replace") or None
+            if isinstance(v, str):
+                return v or None
+            return str(v)
+
+        def _d(v: Any) -> list[int]:
+            if v is None:
+                return []
+            parsed = v
+            if isinstance(v, bytes):
+                parsed = v.decode("utf-8", errors="replace")
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except (ValueError, TypeError):
+                    return []
+            if not isinstance(parsed, list):
+                return []
+            out: list[int] = []
+            for x in parsed:
+                try:
+                    out.append(int(x))
+                except (ValueError, TypeError):
+                    continue
+            return out
+
+        def _p(v: Any) -> list[dict[str, Any]]:
+            if v is None:
+                return []
+            parsed = v
+            if isinstance(v, bytes):
+                parsed = v.decode("utf-8", errors="replace")
+            if isinstance(parsed, str):
+                try:
+                    parsed = json.loads(parsed)
+                except (ValueError, TypeError):
+                    return []
+            if not isinstance(parsed, list):
+                return []
+            return [p for p in parsed if isinstance(p, dict)]
+
+        bundle_prm: list[dict[str, Any]] = _p(raw_prm)
+
+        bundle: dict[str, Any] = {
+            "sid": _s(raw_sid),
+            "snc": _s(raw_snc),
+            "dtp": _d(raw_dtp),
+            "prm": bundle_prm,
+        }
         db_logger.info(
-            "[sync_base.edit] proc=%s committed items=%d types=%d",
-            proc_name,
-            len(normalized),
-            sum(len(n["dtp"]) for n in normalized),
+            "[sync_base.edit] OK sid=%s snc=%r dtp=%s prm_rows=%d",
+            bundle["sid"],
+            bundle["snc"],
+            bundle["dtp"],
+            len(bundle_prm),
         )
+        return bundle
 
     # ============================================================
     # DIAGNOSTICS
@@ -1400,13 +1436,13 @@ class TeamdroidProcedureRepository:
     # ============================================================
 
     @staticmethod
-    def _validate_proc_name(proc_name: str) -> None:
+    def validate_proc_name(proc_name: str) -> None:
         if not _PROC_NAME_RE.match(proc_name):
             raise ValueError(f"Invalid procedure name: {proc_name!r}")
 
     @staticmethod
     def _run_json_proc(proc_name: str, params: dict[str, Any]) -> dict[str, Any]:
-        TeamdroidProcedureRepository._validate_proc_name(proc_name)
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
         params_json = json.dumps(params, ensure_ascii=False)
 
         with teamdroid_sql_cursor() as cur:
@@ -1440,7 +1476,7 @@ class TeamdroidProcedureRepository:
                 cur.connection.commit()
 
                 return {
-                    "success": True,
+                    "scs": 1,
                     "proc": proc_name,
                     "result": result_obj,
                     "raw": raw_cell,
@@ -1459,4 +1495,247 @@ class TeamdroidProcedureRepository:
                 raise
 
 
-__all__ = ["TeamdroidProcedureRepository"]
+class TeamdroidFileProcedureRepository:
+    """Хранимки для опубликованных файлов и сообщений (SQL Server).
+
+    Все методы синхронные (pyodbc) — вызывать через asyncio.to_thread().
+    Контракт: EXEC <proc> @Params = N'<json>'.
+
+    Важно: состояние загрузок (TAppUploads) живет в PostgreSQL и здесь
+    НЕ обрабатывается. Этот класс — только про уже опубликованные
+    файлы (ext.Files / ext.UploadBlobs) и сообщения (ext.Msgs).
+    """
+
+    # ------------------------------------------------------------------
+    # LOW-LEVEL
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _exec(
+        proc_name: str,
+        params: dict[str, Any],
+    ) -> tuple[bool, list[pyodbc.Row], str | None]:
+        """EXEC proc; возвращает (sql_ok, rows_first_resultset, sql_error)."""
+        TeamdroidProcedureRepository.validate_proc_name(proc_name)
+        params_json = json.dumps(params, ensure_ascii=False)
+
+        rows: list[pyodbc.Row] = []
+        try:
+            with teamdroid_sql_cursor() as cur:
+                try:
+                    cur.execute(f"EXEC {proc_name} @Params = ?", params_json)
+                    if cur.description is not None:
+                        rows = cur.fetchall()
+                    while cur.nextset():
+                        pass
+                    cur.connection.commit()
+                except Exception:
+                    try:
+                        cur.connection.rollback()
+                    except pyodbc.Error as rb_exc:
+                        db_logger.error("[%s] rollback failed: %r", proc_name, rb_exc, exc_info=True)
+                    raise
+        except pyodbc.Error as e:
+            return False, [], str(e)
+        except Exception as e:
+            return False, [], repr(e)
+        return True, rows, None
+
+    # ------------------------------------------------------------------
+    # FILES
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def file_load(
+        *,
+        user_id: str,
+        app_id: int,
+        fcm_id: str,
+        client_ip: str | None = None,
+        fids: list[int] | list[str] | str,
+    ) -> dict[str, Any]:
+        """ext.PA_mbl_Files_Load → {"scs": 1, "fls": [{fid, fnm, fex, fsz, fdt}, ...]}.
+
+        Контракт процедуры:
+            EXEC ext.PA_mbl_Files_Load @Params = N'<json>'
+
+            @Params = {
+              "usi": "usrXXX",
+              "api": 18,
+              "dvc": "<fcm_id>",
+              "cip": "1.2.3.4",
+              "ids": [16660098, 16727692]
+            }
+
+            Выход: resultset (fid INT, fnm NVARCHAR, fex NVARCHAR, fsz INT, fdt VARBINARY)
+                   — ОДНА строка на каждый найденный файл (UNION двух ветвей).
+                   THROW 50000 'PRC_mbl_Files_NoData' если сессия/IP не найдены.
+
+        Returns:
+            {"scs": 1, "fls": [{"fid","fnm","fex","fsz","fdt"}, ...]}
+            {"scs": 0, "err": "...", "dtl": "..."}
+        """
+        if not user_id or not user_id.startswith("usr"):
+            return {"scs": 0, "err": "invalid_usi"}
+        if not app_id or int(app_id) <= 0:
+            return {"scs": 0, "err": "invalid_app_id"}
+        if not fcm_id:
+            return {"scs": 0, "err": "empty_dvc"}
+
+        file_ids = _normalize_file_ids(fids)
+        if not file_ids:
+            return {"scs": 0, "err": "empty_ids"}
+
+        params: dict[str, Any] = {
+            "usi": user_id[:64],
+            "api": int(app_id),
+            "dvc": fcm_id[:255],
+            "cip": (client_ip or "")[:64],
+            "ids": file_ids,
+        }
+
+        ok, rows, sql_err = TeamdroidFileProcedureRepository._exec(settings.TEAMDROID_SQL_PROC_FILES_LOAD, params)
+        if not ok:
+            if sql_err and "PRC_mbl_Files_NoData" in sql_err:
+                db_logger.warning(
+                    "[file_load] NoData user=%s dvc=%s... api=%d ip=%r ids=%s",
+                    user_id,
+                    fcm_id[-6:] if len(fcm_id) >= 6 else "***",
+                    int(app_id),
+                    client_ip,
+                    file_ids,
+                )
+                return {"scs": 0, "err": "no_data", "dtl": sql_err}
+            db_logger.error("[file_load] SQL error user=%s: %r", user_id, sql_err, exc_info=True)
+            return {"scs": 0, "err": "sql_error", "dtl": sql_err}
+
+        files = _parse_files_rows(rows)
+        if not files:
+            return {"scs": 0, "err": "not_found"}
+
+        db_logger.info(
+            "[file_load] OK user=%s ids=%s files=%d",
+            user_id,
+            file_ids,
+            len(files),
+        )
+        return {"scs": 1, "fls": files}
+
+    # ------------------------------------------------------------------
+    # MESSAGES
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def msg_send(
+        *,
+        user_id: str,
+        app_id: int,
+        fcm_id: str,
+        client_ip: str | None = None,
+        msgs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """ext.PA_mbl_MsgOut_Exec → {ok, dt, msg: [...], err}.
+
+        items: [{"idk": "msg-0001", "tpc": "grpXXX", "tid": 1,
+                 "txt": "...", "fdt": "...",
+                 "fls": [{"idk":"...","fnm":"...","fex":"...","fsz":5,"sha":null,"fdt":"<base64>"}]},
+                ...]
+
+        Процедура возвращает ОДНУ строку (scs BIT, dt DATETIME, rst NVARCHAR(MAX)),
+        где rst — JSON-массив элементов:
+
+            {
+              "idk": "<клиентский idk сообщения>",
+              "fid": <TAvanpostChatsMsgs.fid / TRSAppUsersObjectsChatsLinksMsgs.FK_Parent>,
+              "pid": <TAvanpostChatsMsgs.pid / FK_Chat>,
+              "lid": <TAvanpostChatsMsgs.lid / FK_ContactMsg / TRSAppContactsMsgs.FID>,
+              "seq": <TAvanpostChatsMsgs.seq / TRSAppUsersObjectsValues.FValue(FK_Link=7)>,
+              "lnk": {"fid": <TRSAppContactsMsgs.FID>,
+                      "lid": <TRSAppMsgs.FID>,
+                      "tid": <FK_Type>,
+                      "src": <FK_ContactSource>,
+                      "fdt": "<ISO>"},
+              "fls": [{"idk": "<TRSAppContactsMsgsFiles.FCode>",
+                       "lid": <TRSAppFiles.FID>}, ...]
+            }
+
+        Возвращает:
+            {"scs": 1, "prm": [...]}
+        или
+            {"scs": 0, "err": "<код>", "dtl": "<текст>"}
+        """
+        if not user_id or not user_id.startswith("usr"):
+            return {"scs": 0, "err": "invalid_usi"}
+        if not msgs:
+            return {"scs": 0, "err": "empty_msgs"}
+
+        params: dict[str, Any] = {
+            "usi": user_id[:64],
+            "api": int(app_id),
+            "dvc": fcm_id[:255],
+            "cip": (client_ip or "")[:64],
+            "msg": msgs,
+        }
+
+        ok, rows, sql_err = TeamdroidFileProcedureRepository._exec(settings.TEAMDROID_SQL_PROC_MSG_SEND, params)
+        if not ok:
+            db_logger.error("[msg_send] SQL error user=%s: %r", user_id, sql_err, exc_info=True)
+            return {"scs": 0, "err": "sql_error", "dtl": sql_err}
+        if not rows:
+            return {"scs": 0, "err": "no_rows"}
+
+        row = rows[0]
+        success = _bit(row[0])
+        dt_raw = row[1] if len(row) > 1 else None
+        rst_raw = row[2] if len(row) > 2 else None
+
+        dt_text: str | None = None
+        if isinstance(dt_raw, dt.datetime):
+            dt_text = dt_raw.strftime("%Y-%m-%dT%H:%M:%S")
+        elif isinstance(dt_raw, str) and dt_raw:
+            dt_text = dt_raw
+
+        # rst приходит как NVARCHAR(MAX) (строка JSON). pyodbc на некоторых
+        # драйверах может вернуть уже распарсенный объект — нормализуем.
+        msg_list: list[dict[str, Any]] = []
+        if rst_raw is not None:
+            parsed: Any = rst_raw
+            if isinstance(rst_raw, bytes):
+                parsed = rst_raw.decode("utf-8", errors="replace")
+            if isinstance(parsed, str):
+                text = parsed.strip()
+                if text:
+                    try:
+                        parsed = json.loads(text)
+                    except (ValueError, TypeError):
+                        db_logger.warning(
+                            "[msg_send] rst is not valid JSON user=%s len=%d",
+                            user_id,
+                            len(text),
+                        )
+                        parsed = None
+                else:
+                    parsed = None
+            if isinstance(parsed, list):
+                for item in parsed:
+                    if isinstance(item, dict):
+                        msg_list.append(item)
+
+        if not success:
+            err_code = "rejected"
+            db_logger.warning("[msg_send] rejected user=%s dt=%r", user_id, dt_text)
+            return {"scs": 0, "err": err_code}
+
+        db_logger.info(
+            "[msg_send] OK user=%s items_in=%d items_out=%d",
+            user_id,
+            len(msgs),
+            len(msg_list),
+        )
+        return {"scs": 1, "prm": msg_list}
+
+
+__all__ = [
+    "TeamdroidProcedureRepository",
+    "TeamdroidFileProcedureRepository",
+]

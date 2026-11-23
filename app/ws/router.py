@@ -37,64 +37,20 @@ from fastapi import WebSocket, WebSocketDisconnect
 from ..config import settings
 from ..db.repositories import TeamdroidProcedureRepository
 from ..logger import api_logger
-from .auth import VerifiedToken, verify_ws_token
+from ..middlewares import AuthMiddleware
+from ..middlewares.api.auth import extract_websocket_client_ip
+from .auth import verify_ws_token
 from .push_notification_service import push_notification_service
 
 
 def _extract_token(websocket: WebSocket) -> str | None:
-    token = websocket.query_params.get("token")
+    token = websocket.query_params.get(settings.API_KEY_HEADER)
     if token:
         return token
     auth = websocket.headers.get("authorization", "")
     if auth.startswith("Bearer "):
         return auth[7:].strip()
     return None
-
-
-def _extract_fid(websocket: WebSocket) -> str | None:
-    """Достаёт FID (Firebase Installation ID) из query ``?fid=``."""
-    fid = websocket.query_params.get("fid")
-    if fid:
-        return fid.strip()
-    return None
-
-
-def _extract_client_ip(websocket: WebSocket) -> str | None:
-    """Определяет реальный IP клиента с учётом прокси.
-
-    Берём ПОСЛЕДНИЙ адрес из X-Forwarded-For (первый может быть
-    подделан клиентом, последний добавлен нашим доверенным прокси).
-    Если заголовка нет — X-Real-IP, затем websocket.client.host.
-    """
-    xff = websocket.headers.get("x-forwarded-for")
-    if xff:
-        parts = [p.strip() for p in xff.split(",") if p.strip()]
-        if parts:
-            return parts[-1][:64]
-
-    xri = websocket.headers.get("x-real-ip")
-    if xri:
-        return xri.strip()[:64]
-
-    client = websocket.client
-    if client is not None:
-        host = client.host or ""
-        return host[:64] or None
-    return None
-
-
-def _verified_for_trust_mode(websocket: WebSocket, token: str | None) -> VerifiedToken:
-    """В режиме ``trust`` разрешаем клиенту самому прислать user_id.
-
-    Допустимо только в development; проверка ``APP_ENV`` уже выполнена
-    внутри ``verify_ws_token``.
-    """
-    header_user = websocket.headers.get("x-user-id")
-    if header_user and header_user.startswith("usr"):
-        return VerifiedToken(user_id=header_user)
-    if token and token.startswith("usr") and len(token) > 5:
-        return VerifiedToken(user_id=token)
-    return VerifiedToken(user_id=None)
 
 
 async def ws_notify_handler(websocket: WebSocket) -> None:
@@ -106,34 +62,42 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
         websocket.headers.get("upgrade"),
     )
 
+    # Ручная проверка ingest-ключа (опционально)
+    api_key = websocket.headers.get(settings.API_KEY_HEADER)
+    if not api_key:
+        api_logger.warning("ws: missing ingest key, closing")
+        await websocket.close(code=4401, reason="missing_api_key")
+        return
+
+    valid_keys = list(getattr(settings, "APP_CLIENT_SYNC_INGEST_API_KEYS", []) or [])
+    if not valid_keys or not AuthMiddleware.is_valid_key_for(api_key, valid_keys):
+        api_logger.warning("ws: invalid ingest key, closing")
+        await websocket.close(code=4401, reason="invalid_api_key")
+        return
+
     token = _extract_token(websocket)
-    query_fid = _extract_fid(websocket)
-    client_ip = _extract_client_ip(websocket)
+    client_ip = extract_websocket_client_ip(websocket)
 
     mode = settings.ws_notify_verify_mode
     api_logger.info(
-        "ws: verify_mode=%s token_present=%s fcm_present=%s client_ip=%r",
+        "ws: verify_mode=%s token_present=%s client_ip=%r",
         mode,
         bool(token),
-        bool(query_fid),
         client_ip,
     )
 
-    if mode == "trust":
-        verified = _verified_for_trust_mode(websocket, token)
-    else:
-        verified = await verify_ws_token(token, client_ip=client_ip)
-
+    verified = await verify_ws_token(token, client_ip=client_ip)
     user_id = verified.user_id
-    fcm_id = query_fid or verified.fcm_id
+    fcm_id = verified.fcm_id
 
     # --- force update: отдать prm как есть и закрыть ---
     if verified.force_update:
         await websocket.accept()
         try:
-            if verified.prm_raw:
+            raw = verified.prm_raw
+            if isinstance(raw, str) and raw:
                 try:
-                    prm_obj = json.loads(verified.prm_raw)
+                    prm_obj = json.loads(raw)
                 except (ValueError, TypeError) as parse_exc:
                     api_logger.warning(
                         "ws: failed to parse prm_raw user=%s: %r",
@@ -166,11 +130,12 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
     await websocket.accept()
 
     # --- scs=1 + есть prm: отправить клиенту, затем зафиксировать vcd ---
-    if verified.prm_raw:
+    raw_prm = verified.prm_raw
+    if isinstance(raw_prm, str) and raw_prm:
         prm_obj: dict[str, Any] | None = None
         vcd_val: int | None = None
         try:
-            items = json.loads(verified.prm_raw)
+            items = json.loads(raw_prm)
         except (ValueError, TypeError):
             items = None
 
@@ -203,7 +168,7 @@ async def ws_notify_handler(websocket: WebSocket) -> None:
                     user_id,
                     sorted(prm_obj.keys()),
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 api_logger.warning(
                     "ws: failed to send update payload user=%s: %r",
                     user_id,

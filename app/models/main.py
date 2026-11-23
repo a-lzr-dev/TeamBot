@@ -793,7 +793,9 @@ class AppModel(BaseModel):
     FPlatform: Mapped[str | None] = mapped_column(String(50), nullable=True)
     FAppVersion: Mapped[str | None] = mapped_column(String(50), nullable=True)
     FUserID: Mapped[str | None] = mapped_column(String(64), nullable=True)  # usrXXX
-
+    # Per-device ключ = значение "tkn" из тела /register (sch=3).
+    # base64(iv‖ct‖tag) для 7 полей ≈ 120–180 символов.
+    FKey: Mapped[str | None] = mapped_column(String(512), nullable=True, unique=True)
     FIsActive: Mapped[bool] = mapped_column(Boolean, default=True)
     FLastSeenAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -806,6 +808,9 @@ class AppModel(BaseModel):
     Logs: Mapped[list["AppLogModel"]] = relationship("AppLogModel", back_populates="app", cascade="all, delete-orphan")
     LogRequests: Mapped[list["AppLogRequestModel"]] = relationship(
         "AppLogRequestModel", back_populates="app", cascade="all, delete-orphan"
+    )
+    Uploads: Mapped[list["AppUploadModel"]] = relationship(
+        "AppUploadModel", back_populates="app", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -956,6 +961,113 @@ class AppPushPendingModel(BaseModel):
     FSeq: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     FCreatedAt: Mapped[datetime] = mapped_column(DateTime, default=datetime_now)
     FAttemptCount: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AppUploadModel(BaseModel):
+    """Временная загрузка файла мобильного клиента (resumable upload).
+
+    Хранит состояние загрузки в PostgreSQL: позицию, размер, чек-сумму,
+    срок жизни и ссылку на клиента (TApps.FID). Байты файла лежат
+    во внешнем storage (local/S3) по ``FStorageKey``; в БД — только
+    метаданные и позиция.
+
+    После ``complete`` файл публикуется в SQL Server
+    (``ext.Files`` + ``ext.UploadBlobs``) через
+    ``TeamdroidFileProcedureRepository``, а запись помечается
+    ``completed`` с ``FRemoteFileID``.
+
+    Attributes:
+        FID: ID загрузки (PK)
+        FK_App: ID клиента (TApps.FID)
+        FFid: Строковый идентификатор клиента (дублируется для запросов)
+        FUserID: ID пользователя (usrXXX)
+        FUploadID: Внешний upload_id (уникален; сохраняется на Android)
+        FFileName: Оригинальное имя файла (санитизируется на сервере)
+        FFileExt: Расширение без точки
+        FFileSize: Ожидаемый размер, байт
+        FUploadedBytes: Уже загружено байт (источник истины для offset)
+        FChunkSize: Размер чанка, байт
+        FContentType: MIME-тип (определяется на сервере)
+        FSHA256: Ожидаемая чек-сумма от клиента (опционально)
+        FActualSHA256: Фактическая чек-сумма, посчитанная сервисом
+        FStatus: Статус (active|completed|cancelled|expired)
+        FStorageKey: Ключ/путь к временному файлу в storage
+        FRemoteFileID: ID файла, полученный от SQL Server после complete
+        FVersion: Версия строки (оптимистичная блокировка)
+        FCreatedAt: Дата создания
+        FUpdatedAt: Дата обновления
+        FExpiresAt: Срок хранения (истёкшие удаляет воркер)
+        FCompletedAt: Дата завершения
+    """
+
+    __tablename__ = "TAppUploads"
+    __table_args__ = (
+        PrimaryKeyConstraint("FID", name="PK_AppUploads"),
+        ForeignKeyConstraint(["FK_App"], ["TApps.FID"], ondelete="CASCADE", name="FK_AppUploads_App"),
+        UniqueConstraint("FUploadID", name="UK_AppUploads_UploadID"),
+        Index("IX_AppUploads_App_Status", "FK_App", "FStatus"),
+        Index("IX_AppUploads_Expires", "FExpiresAt"),
+        Index("IX_AppUploads_User", "FUserID"),
+        Index("IX_AppUploads_StorageKey", "FStorageKey"),
+        *_get_table_args(autoincrement=True),
+    )
+
+    FID: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    FK_App: Mapped[int] = mapped_column(Integer, nullable=False)
+    FFid: Mapped[str] = mapped_column(String(255), nullable=False)
+    FUserID: Mapped[str | None] = mapped_column(String(64), nullable=True)  # usrXXX
+
+    FUploadID: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    FFileName: Mapped[str] = mapped_column(String(255), nullable=False)
+    FFileExt: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    FFileSize: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    FUploadedBytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    FChunkSize: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    FContentType: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    FSHA256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    FActualSHA256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    FStatus: Mapped[str] = mapped_column(String(16), default="active", nullable=False)
+    FStorageKey: Mapped[str] = mapped_column(String(512), nullable=False)
+    FRemoteFileID: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    FVersion: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    FCreatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime_now)
+    FUpdatedAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime_now, onupdate=datetime_now)
+    FExpiresAt: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    FCompletedAt: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # ==================== СВЯЗИ ====================
+    app: Mapped["AppModel"] = relationship("AppModel", back_populates="Uploads")
+
+    # ==================== СВОЙСТВА ====================
+
+    @property
+    def remaining_bytes(self) -> int:
+        """Сколько байт осталось загрузить (0, если загрузка завершена)."""
+        return max(self.FFileSize - self.FUploadedBytes, 0)
+
+    @property
+    def is_complete(self) -> bool:
+        """True, если загружены все байты (но ещё не подтверждено)."""
+        return self.FUploadedBytes >= self.FFileSize
+
+    @property
+    def is_active(self) -> bool:
+        """True, если загрузка ещё принимает чанки."""
+        return self.FStatus == "active"
+
+    def __repr__(self) -> str:
+        return (
+            f"<AppUpload(id={self.FID}, uid={self.FUploadID}, "
+            f"user={self.FUserID or '-'} , bytes={self.FUploadedBytes}/{self.FFileSize}, "
+            f"status={self.FStatus})>"
+        )
 
 
 # ============================================================
@@ -1466,6 +1578,7 @@ __all__ = [
     "AppLogModel",
     "AppLogRequestModel",
     "AppPushPendingModel",
+    "AppUploadModel",
     # Модели периодических задач
     "PeriodicTaskModel",
     # Модели напоминаний

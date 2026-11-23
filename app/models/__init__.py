@@ -106,6 +106,7 @@ from .main import (
     # Модели мобильных клиентов
     AppModel,
     AppPushPendingModel,
+    AppUploadModel,
     # Модели рассылок
     BroadcastMessageLinkModel,
     BroadcastModel,
@@ -231,6 +232,7 @@ __all__ = [
     "AppPushPendingModel",
     "AppLogModel",
     "AppLogRequestModel",
+    "AppUploadModel",
     # Telegram - периодические задачи
     "PeriodicTaskModel",
     # Telegram - напоминания

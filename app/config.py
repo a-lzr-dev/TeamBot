@@ -92,6 +92,23 @@ class Settings(BaseSettings):
     TEAMDROID_SQL_PROC_NOTIFIES_LOAD: str = "ext.PA_mbl_Notifies_Load"
     TEAMDROID_SQL_PROC_NOTIFIES_SEND: str = "ext.PA_mbl_Notifies_Send"
 
+    # ============ FILES / UPLOADS / MESSAGES (chunked upload) ============
+    TEAMDROID_SQL_PROC_FILES_LOAD: str = "ext.PA_mbl_Files_Load"
+    TEAMDROID_SQL_PROC_MSG_SEND: str = "ext.PA_mbl_MsgOut_Exec"
+
+    # ---- Files / uploads (не-процедурные) ----
+    UPLOAD_CHUNK_SIZE: int = 1 * 1024 * 1024
+    UPLOAD_MIN_CHUNK_SIZE: int = 64 * 1024
+    UPLOAD_MAX_FILE_SIZE: int = 100 * 1024 * 1024
+    UPLOAD_ALLOWED_EXTENSIONS: list[str] = Field(
+        default_factory=lambda: ["pdf", "doc", "docx", "xls", "xlsx", "jpg", "jpeg", "png"]
+    )
+    UPLOAD_RETENTION_DAYS: int = 7
+    UPLOAD_STORAGE_BACKEND: str = "local"  # local | s3
+    UPLOAD_LOCAL_DIR: str = "./data/uploads"
+    UPLOAD_URL_PREFIX: str = "/api/v1/client/files"
+    UPLOAD_CLEANUP_INTERVAL_SEC: int = 300
+
     # ============ PUSH NOTIFICATIONS (WebSocket + FCM) ============
 
     WS_NOTIFY_ENABLED: bool = True
@@ -208,6 +225,8 @@ class Settings(BaseSettings):
         description="Максимум Firebase Installation ID на пользователя",
     )
 
+    APP_CLIENT_ERROR_DEVICE_NOT_REGISTERED: str = "no_dev"
+
     APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED: bool = True
     APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_BYTES: int = 1 * 1024 * 1024
     APP_CLIENT_SUPPORT_LOGS_MAX_BATCH_UNCOMPRESSED_BYTES: int = 4 * 1024 * 1024
@@ -236,6 +255,7 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
     API_KEYS: list[str] = Field(default_factory=lambda: [], description="Список API ключей для аутентификации запросов")
+    API_KEY_HEADER: str = "tkn"  # X-API-Key
     APP_ENV: str = "production"
     APP_DEBUG: bool = False
     API_RELOAD: bool = False

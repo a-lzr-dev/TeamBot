@@ -681,7 +681,7 @@ class APIManager:
         @log_exceptions(api_logger)
         async def debug_headers(request: Request) -> dict[str, Any]:
             headers = dict(request.headers)
-            for k in ("authorization", "x-api-key"):
+            for k in ("authorization", settings.API_KEY_HEADER):
                 if k in headers:
                     headers[k] = "***"
 
@@ -721,12 +721,17 @@ class APIManager:
                 # берём `path` явно и падаем в строковый литерал, а не в repr.
                 raw_path = getattr(route, "path", None)
                 path_repr = raw_path if isinstance(raw_path, str) else "<unknown>"
+
+                methods_list: list[str]
+                if isinstance(methods, set | frozenset | list | tuple):
+                    methods_list = sorted(str(m) for m in methods)
+                else:
+                    methods_list = []
+
                 info: dict[str, Any] = {
                     "path": path_repr,
                     "name": getattr(route, "name", None),
-                    "methods": (
-                        sorted(str(m) for m in methods) if isinstance(methods, set | frozenset | list | tuple) else []
-                    ),
+                    "methods": methods_list,
                 }
                 routes.append(info)
             return {

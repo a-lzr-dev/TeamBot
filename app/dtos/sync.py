@@ -25,7 +25,7 @@ CHANGED (v7):
     {
         "dt": int, # DataTypeId
         "exp": int | null, # 1 = DELETE, null = UPSERT
-        "val": list[dict]  # JSON-массив записей; [] = пустой тип
+        "val": list[dict] # JSON-массив записей; [] = пустой тип
     }
 
 Клиент разбирает `prm` сам. Сервер НЕ нормализует `val` в строку,
@@ -174,12 +174,12 @@ def _utcnow() -> datetime:
 class SyncEditItem(BaseModel):
     """Один элемент массива Edit.
 
-    Клиент передаёт только `token` + `sid`. `usi`/`api`/`dvc` извлекаются
+    Клиент передаёт только `tkn` + `sid`. `usi`/`api`/`dvc` извлекаются
     из расшифрованного WS-токена, `snc`/`dtp` — из in-memory реестра
     по `sid`.
     """
 
-    token: str = Field(..., min_length=1)
+    tkn: str = Field(..., min_length=1, description="WS-токен (расшифровывается на сервере)")
     sid: str = Field(
         ...,
         min_length=8,
@@ -188,35 +188,55 @@ class SyncEditItem(BaseModel):
     )
 
 
-class SyncEditRequest(BaseModel):
-    """Тело POST /client/sync-edit (список подтверждений)."""
+class SyncEditHeaderRequest(BaseModel):
+    """Тело sync-edit: только список sid. Токен — в заголовке tkn."""
 
-    items: list[SyncEditItem] = Field(..., min_length=1)
+    sid: list[str] = Field(..., min_length=1)
 
-
-SyncEditRequest.model_rebuild()
+    @field_validator("sid")
+    @classmethod
+    def _validate_sid(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for s in v:
+            s = (s or "").strip()
+            if not s:
+                raise ValueError("sid must be non-empty")
+            out.append(s)
+        return out
 
 
 class SyncEditResponse(BaseModel):
     """Ответ POST /client/sync-edit.
 
-    retry — подсказка клиенту:
-      * "sync-load" — перевызвать Load (invalid_edit / bad_ts /
-                      edit_timeout);
-      * "sync-edit" — повторить Edit (207 partial, failed_items);
-      * "register"  — перерегистрироваться (409 session lost);
-      * None        — действие не требуется.
+    ЕДИНЫЙ контракт с остальными каналами синхронизации
+    (/register, /login, /sync-load):
+
+        Изменений нет:
+            {"scs": 1, "cmi": N, "cmt": M}
+
+        Есть новый пакет (SQL вернул sid/snc/dtp/Result):
+            {"scs": 1, "sid": "<uuid>", "prm": [...], "cmi": N, "cmt": M}
+
+        Частичный отказ (HTTP 207):
+            {"scs": 1, "fli": [...], "oki": [...], "cmi": N, "cmt": M,
+             "err": "device_session_not_found", "rtr": null}
+
+        Полный отказ (HTTP 4xx/5xx):
+            {"scs": 0, "err": "<код>", "rtr": "..."?}
+
+    Клиент в ответ на ЛЮБОЙ из этих ответов присылает следующий
+    POST /sync-edit с {"itm": [{"tkn": "...", "sid": "..."}]}.
     """
 
     scs: int = Field(1, ge=0, le=1)
-    committed_items: int = 0
-    committed_types: int = 0
-    failed_items: list[int] = Field(
-        default_factory=list,
-        description="0-based индексы items, которые не удалось подтвердить",
-    )
-    error: str | None = None
-    retry: Literal["sync-load", "sync-edit", "register"] | None = None
+    sid: str | None = None
+    prm: list[dict[str, Any]] = Field(default_factory=list)
+    cmi: int = 0
+    cmt: int = 0
+    fli: list[int] = Field(default_factory=list)
+    oki: list[int] = Field(default_factory=list)
+    err: str | None = None
+    rtr: Literal["sync-load", "sync-edit", "register"] | None = None
 
 
 __all__ = [
@@ -224,7 +244,7 @@ __all__ = [
     "SyncLoadRow",
     "SyncLoadNoChangesResponse",
     "SyncLoadResponse",
-    "SyncEditRequest",
+    "SyncEditHeaderRequest",
     "SyncEditItem",
     "SyncEditResponse",
 ]

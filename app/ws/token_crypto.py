@@ -1,32 +1,23 @@
 """Расшифровка WS-токенов мобильного клиента (AES-256-GCM).
 
-Поддерживаются ДВА формата токена:
+ЕДИНСТВЕННЫЙ поддерживаемый формат токена (7 полей):
 
-1. LEGACY (5 полей) — для /register, DELETE /register, /update-check,
-   /sync-load, /sync-edit:
+    fid|sch|prm1|prm2|yyMMdd|appVer|appCode
 
-       fid|usrXXXX|yyMMdd|ver|code
+где:
+    fid     — Firebase Installation ID, [A-Za-z0-9_\\-]{20,255}
+    sch     — "1" | "2" | "3":
+                "1" — login + password           (POST /login)
+                "2" — request_id + код           (POST /login)
+                "3" — post-login WS-токен        (все остальные эндпоинты)
+                      prm1 = usi (usrXXX), prm2 = ""
+    prm1    — логин (sch=1) | request_id (sch=2) | usi (sch=3)
+    prm2    — пароль (sch=1) | код (sch=2)      | "" (sch=3)
+    yyMMdd  — 6 цифр, дата токена ([-31; +1] дней от «сегодня» UTC)
+    appVer  — versionName, [A-Za-z0-9._\\-+ ]{1,32}
+    appCode — versionCode, десятичное число > 0
 
-   Пример plaintext: ``dX4f..._fid|usrABCdef123|260115|2.5.1|251``
-
-2. NEW (7 полей) — для POST /login:
-
-       fid|sch|prm1|prm2|yyMMdd|appVer|appCode
-
-   где:
-       fid     — UUID Firebase, [A-Za-z0-9_\\-]{20,}
-       sch     — "1" (логин+пароль) | "2" (request_id + код)
-       prm1    — логин (sch=1) | request_id (sch=2)
-       prm2    — пароль (sch=1) | код (sch=2)
-       yyMMdd  — 6 цифр, дата токена
-       appVer  — versionName, клиент заменяет '|' → '_'
-       appCode — versionCode, десятичное число
-
-   В plaintext НЕТ usi. usi резолвится через
-   ext.PA_mbl_Login_Exec (см. TeamdroidProcedureRepository.login,
-   mid=1|2).
-
-Общая часть (для обоих форматов):
+Общая часть:
     Токен — это base64(iv(12) || ciphertext || tag(16)), где plaintext
     зашифрован AES-256-GCM с ключом WS_TOKEN_KEY_B64 (base64(32 байта)).
     Ключ ДОЛЖЕН совпадать с BuildConfig.WS_TOKEN_KEY в Android-клиенте.
@@ -35,8 +26,16 @@
     неверное число полей, невалидная дата, невалидный sch/appCode)
     функция возвращает ``None``.
 
+CHANGED (v3):
+  * ПОЛНОСТЬЮ УДАЛЕНА поддержка legacy 5-полевого формата
+    (fid|usrXXXX|yyMMdd|ver|code) и функции ``decrypt_ws_token_legacy`` /
+    ``WsTokenDataLegacy`` / ``decrypt_ws_token_any`` / ``WsTokenDataAny``.
+  * Единственный декриптор — ``decrypt_ws_token`` (7 полей).
+  * Для sch=3 в поле ``user_id`` возвращается usi из prm1; для sch=1|2
+    поле пустое (usi резолвится через /login).
+
 Безопасность:
-    * user_id в NEW-токене отсутствует — резолвится отдельно.
+    * Для sch=1|2 user_id в plaintext отсутствует.
     * Дата токена: [-31; +1] дней от «сегодня» (UTC).
     * Ключ и plaintext НЕ логируются.
 """
@@ -46,6 +45,7 @@ from __future__ import annotations
 import base64
 import binascii
 import datetime as dt
+import os
 import re
 from dataclasses import dataclass
 
@@ -65,60 +65,30 @@ _MAX_FCM_ID_LEN = 255
 _MAX_APP_VERSION_LEN = 32
 _MAX_TOKEN_DATE_LEN = 16
 
-# Ограничения для prm1/prm2 нового формата.
+# Ограничения для prm1/prm2.
 _MAX_PRM_LEN = 256
 
 # Ограничения для appCode.
 _MAX_APP_CODE_DIGITS = 10
 
-# ---- legacy: 5 полей ----
-_LEGACY_EXPECTED_PARTS = 5
-
-# ---- new: 7 полей ----
-_NEW_EXPECTED_PARTS = 7
+# 7 полей в plaintext.
+_EXPECTED_PARTS = 7
 
 
 # ============================================================
-# DATACLASSES
+# DATACLASS
 # ============================================================
-
-
-@dataclass(frozen=True)
-class WsTokenDataLegacy:
-    """Результат расшифровки LEGACY-токена (5 полей).
-
-    Используется в /register, DELETE /register, /update-check,
-    /sync-load, /sync-edit.
-
-    Attributes:
-        fcm_id: полный Firebase Installation ID (FID).
-        user_id: Tinode user id, начинается с "usr".
-        date: дата токена в формате yyMMdd.
-        app_version: versionName мобильного приложения.
-        app_version_code: versionCode мобильного приложения.
-    """
-
-    fcm_id: str
-    user_id: str
-    date: str
-    app_version: str
-    app_version_code: int
 
 
 @dataclass(frozen=True)
 class WsTokenData:
-    """Результат расшифровки NEW-токена (7 полей).
-
-    Используется в POST /login.
-
-    Поле ``user_id`` в plaintext отсутствует и здесь всегда пустое.
-    Вызывающий код (/login) обязан получить usi через
-    ``TeamdroidProcedureRepository.login(mid=1|2, ...)``.
+    """Результат расшифровки WS-токена (7 полей).
 
     Attributes:
         fcm_id: полный Firebase Installation ID (FID).
-        user_id: ВСЕГДА "" (резолвится отдельно).
-        sch: схема токена ("1" | "2").
+        user_id: usi (usrXXX) — только для sch=3; для sch=1|2 пустая строка
+                 (usi резолвится отдельно через /login).
+        sch: схема токена ("1" | "2" | "3").
         prm1: первый параметр (клиент заменил '|' → '_').
         prm2: второй параметр (клиент заменил '|' → '_').
         date: дата токена в формате yyMMdd.
@@ -134,6 +104,11 @@ class WsTokenData:
     date: str
     app_version: str
     app_version_code: int
+
+    @property
+    def has_usi(self) -> bool:
+        """True, если в токене есть валидный usi (только sch=3)."""
+        return self.sch == "3" and self.user_id.startswith("usr")
 
 
 # ============================================================
@@ -315,18 +290,18 @@ def _parse_app_code(value: str) -> int | None:
 
 
 def _parse_sch(value: str) -> str | None:
-    """Проверить sch: ровно "1" или "2"."""
-    if value not in ("1", "2"):
-        api_logger.warning("ws_token: invalid sch %r (expected '1' or '2')", value[:16])
+    """Проверить sch: "1", "2" или "3"."""
+    if value not in ("1", "2", "3"):
+        api_logger.warning("ws_token: invalid sch %r (expected '1', '2' or '3')", value[:16])
         return None
     return value
 
 
 def _parse_prm(value: str, name: str) -> str | None:
-    """Проверить prm1/prm2: непустой, без '|', длина <= 256."""
-    if not value:
-        api_logger.warning("ws_token: empty %s", name)
-        return None
+    """Проверить prm1/prm2: без '|', длина <= 256.
+
+    Пустая строка допустима для prm2 (sch=3 и часть sch=2).
+    """
     if "|" in value:
         api_logger.warning("ws_token: %s contains '|'", name)
         return None
@@ -337,97 +312,31 @@ def _parse_prm(value: str, name: str) -> str | None:
 
 
 # ============================================================
-# LEGACY: 5 ПОЛЕЙ — fid|usrXXXX|yyMMdd|ver|code
-# ============================================================
-
-
-def decrypt_ws_token_legacy(token_b64: str) -> WsTokenDataLegacy | None:
-    """Расшифровать и провалидировать LEGACY WS-токен (5 полей).
-
-    Формат plaintext:
-        fid|usrXXXX|yyMMdd|ver|code
-
-    Возвращает ``None`` при любой ошибке.
-    """
-    text, _blob_len = _decrypt_to_plaintext(token_b64)
-    if text is None:
-        return None
-
-    parts = text.split("|")
-    if len(parts) != _LEGACY_EXPECTED_PARTS:
-        api_logger.warning(
-            "ws_token[legacy]: unexpected parts count %d (expected %d)",
-            len(parts),
-            _LEGACY_EXPECTED_PARTS,
-        )
-        return None
-
-    fcm_id_raw, user_id_raw, date_raw, ver_raw, code_raw = parts
-
-    fcm_id = _parse_fcm_id(fcm_id_raw.strip())
-    if fcm_id is None:
-        return None
-
-    user_id = _parse_user_id(user_id_raw.strip())
-    if user_id is None:
-        return None
-
-    date_str = date_raw.strip()
-    if not _parse_date(date_str):
-        return None
-
-    app_version = _parse_app_version(ver_raw.strip())
-    if app_version is None:
-        return None
-
-    app_version_code = _parse_app_code(code_raw.strip())
-    if app_version_code is None:
-        return None
-
-    api_logger.info(
-        "ws_token[legacy]: OK fcm=%s... user=%s ver=%s code=%d date=%s",
-        fcm_id[-6:],
-        user_id,
-        app_version,
-        app_version_code,
-        date_str,
-    )
-
-    return WsTokenDataLegacy(
-        fcm_id=fcm_id,
-        user_id=user_id,
-        date=date_str,
-        app_version=app_version,
-        app_version_code=app_version_code,
-    )
-
-
-# ============================================================
-# NEW: 7 ПОЛЕЙ — fid|sch|prm1|prm2|yyMMdd|appVer|appCode
+# ДЕКРИПТОР
 # ============================================================
 
 
 def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
-    """Расшифровать и провалидировать NEW WS-токен (7 полей).
+    """Расшифровать и провалидировать WS-токен (7 полей).
 
     Формат plaintext:
         fid|sch|prm1|prm2|yyMMdd|appVer|appCode
 
-    Возвращает ``None`` при любой ошибке.
+    Для sch=3: prm1 = usi (usrXXX), prm2 = ''.
+    В этом случае WsTokenData.user_id заполняется из prm1.
 
-    Поле ``user_id`` не заполняется — usi резолвится через
-    ``TeamdroidProcedureRepository.login(mid=1|2, ...)``.
+    Возвращает ``None`` при любой ошибке.
     """
     text, _blob_len = _decrypt_to_plaintext(token_b64)
     if text is None:
         return None
 
     parts = text.split("|")
-    if len(parts) != _NEW_EXPECTED_PARTS:
+    if len(parts) != _EXPECTED_PARTS:
         api_logger.warning(
-            "ws_token[new]: unexpected parts count %d (expected %d)",
+            "ws_token: unexpected parts count %d (expected %d)",
             len(parts),
-            _NEW_EXPECTED_PARTS,
+            _EXPECTED_PARTS,
         )
         return None
 
@@ -449,6 +358,15 @@ def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
     if prm2 is None:
         return None
 
+    # sch=3 — post-login WS-токен: prm1=usi, prm2=''.
+    user_id = ""
+    if sch == "3":
+        parsed_usi = _parse_user_id(prm1)
+        if not parsed_usi:
+            api_logger.warning("ws_token: sch=3 but prm1 is not a valid usi: %r", prm1)
+            return None
+        user_id = parsed_usi
+
     date_str = date_raw.strip()
     if not _parse_date(date_str):
         return None
@@ -462,7 +380,7 @@ def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
         return None
 
     api_logger.info(
-        "ws_token[new]: OK fcm=%s... sch=%s prm1_len=%d prm2_len=%d ver=%s code=%d date=%s",
+        "ws_token: OK fcm=%s... sch=%s prm1_len=%d prm2_len=%d ver=%s code=%d date=%s user=%r",
         fcm_id[-6:],
         sch,
         len(prm1),
@@ -470,11 +388,12 @@ def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
         app_version,
         app_version_code,
         date_str,
+        user_id or None,
     )
 
     return WsTokenData(
         fcm_id=fcm_id,
-        user_id="",
+        user_id=user_id,
         sch=sch,
         prm1=prm1,
         prm2=prm2,
@@ -484,9 +403,90 @@ def decrypt_ws_token(token_b64: str) -> WsTokenData | None:
     )
 
 
+def encrypt_ws_token(data: WsTokenData) -> str:
+    """Собрать 7-полевой WS-токен и зашифровать (обратное decrypt_ws_token).
+
+    Формат plaintext:  fid|sch|prm1|prm2|yyMMdd|appVer|appCode
+    Результат — та же строка, что decrypt_ws_token примет обратно.
+
+    Шифрование: AES-256-GCM, key = WS_TOKEN_KEY_B64 (base64(32 байта)),
+    blob = iv(12) || ciphertext || tag(16), token = base64url(blob).
+
+    IV генерируется случайно на каждый вызов (как требует AES-GCM).
+    Поэтому encrypt_ws_token(d) != encrypt_ws_token(d) побайтово —
+    это НОРМАЛЬНО. Вызывать функцию нужно ОДИН раз на токен и
+    использовать результат и для TApps.FKey, и для ответа клиенту.
+    """
+    # --- 1. Валидация входных полей (те же правила, что в decrypt) ---
+    if not _parse_fcm_id((data.fcm_id or "").strip()):
+        raise ValueError("encrypt_ws_token: invalid fcm_id")
+
+    sch = _parse_sch((data.sch or "").strip())
+    if sch is None:
+        raise ValueError("encrypt_ws_token: invalid sch")
+
+    prm1 = _parse_prm((data.prm1 or "").strip(), "prm1")
+    if prm1 is None:
+        raise ValueError("encrypt_ws_token: invalid prm1")
+
+    prm2 = _parse_prm((data.prm2 or "").strip(), "prm2")
+    if prm2 is None:
+        raise ValueError("encrypt_ws_token: invalid prm2")
+
+    if sch == "3":
+        # Для sch=3 prm1 ОБЯЗАН быть валидным usi, prm2 = "".
+        if _parse_user_id(prm1) is None:
+            raise ValueError("encrypt_ws_token: sch=3 requires usi in prm1")
+        if prm2 != "":
+            raise ValueError("encrypt_ws_token: sch=3 requires prm2=''")
+
+    if not _parse_date((data.date or "").strip()):
+        raise ValueError("encrypt_ws_token: invalid date (yyMMdd)")
+
+    app_version = _parse_app_version((data.app_version or "").strip())
+    if app_version is None:
+        raise ValueError("encrypt_ws_token: invalid app_version")
+
+    app_code = _parse_app_code(str(data.app_version_code))
+    if app_code is None:
+        raise ValueError("encrypt_ws_token: invalid app_version_code")
+
+    # --- 2. Собрать plaintext ---
+    plaintext = "|".join(
+        [
+            data.fcm_id.strip(),
+            sch,
+            prm1,
+            prm2,
+            data.date.strip(),
+            app_version,
+            str(app_code),
+        ]
+    ).encode("utf-8")
+
+    # --- 3. Зашифровать AES-256-GCM ---
+    key = _load_key()  # 32 байта, тот же, что в decrypt
+    iv = os.urandom(_IV_LEN)  # 12 байт, случайный на каждый вызов
+    blob = AESGCM(key).encrypt(iv, plaintext, associated_data=None)
+
+    # --- 4. base64url (без padding, как у клиента) ---
+    token = base64.urlsafe_b64encode(blob).decode("ascii").rstrip("=")
+
+    api_logger.info(
+        "ws_token: encrypt OK fcm=%s... sch=%s prm1_len=%d prm2_len=%d ver=%s code=%d date=%s",
+        data.fcm_id[-6:],
+        sch,
+        len(prm1),
+        len(prm2),
+        app_version,
+        app_code,
+        data.date.strip(),
+    )
+    return token
+
+
 __all__ = [
     "WsTokenData",
-    "WsTokenDataLegacy",
     "decrypt_ws_token",
-    "decrypt_ws_token_legacy",
+    "encrypt_ws_token",
 ]

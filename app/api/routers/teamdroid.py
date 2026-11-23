@@ -76,7 +76,7 @@ import re
 import struct
 import threading
 from collections.abc import Iterator, Mapping
-from typing import Any, cast
+from typing import Any
 
 import grpc
 import pyodbc
@@ -1151,12 +1151,12 @@ class TeamdroidClient:
         )
 
         client_msg = pb_mod.ClientMsg()
-        del_field = getattr(client_msg, "del", None)
+        del_field: Any = getattr(client_msg, "del", None)
         if del_field is None:
             del_field = getattr(client_msg, "delete", None)
         if del_field is None:
             raise RuntimeError("ClientMsg has neither 'del' nor 'delete' field — check model_pb2")
-        cast("Any", del_field).CopyFrom(del_msg)
+        del_field.CopyFrom(del_msg)
         self._send(client_msg)
         ctrl = self._wait_ctrl(msg_id, timeout=settings.TEAMDROID_CTRL_TIMEOUT)
         api_logger.debug(
@@ -1309,15 +1309,15 @@ def _set_pub_mime(pub: Any, mime: str) -> None:
     if head is None:
         return
 
-    head_obj = cast("Any", head)
+    head_any: Any = head
     mime_bytes = f'"{mime}"'.encode()
 
     try:
-        head_obj["mime"] = mime_bytes
+        head_any["mime"] = mime_bytes
     except TypeError:
         try:
-            head_obj.SetInParent()
-            head_obj["mime"] = mime_bytes
+            head_any.SetInParent()
+            head_any["mime"] = mime_bytes
         except Exception as pub_mime_exc:
             api_logger.warning("[teamdroid] failed to set pub mime: %r", pub_mime_exc)
 
@@ -1542,10 +1542,9 @@ def _ctrl_to_dict(ctrl: Any) -> dict[str, Any]:
         result["params"] = _params_to_dict(params)
 
     try:
-        descriptor = getattr(ctrl, "DESCRIPTOR", None)
+        descriptor: Any = getattr(ctrl, "DESCRIPTOR", None)
         if descriptor is not None:
-            descriptor_obj = cast("Any", descriptor)
-            for field in descriptor_obj.fields:
+            for field in descriptor.fields:
                 if field.name in result:
                     continue
                 field_value: Any = getattr(ctrl, field.name, None)

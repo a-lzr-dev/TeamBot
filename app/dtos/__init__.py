@@ -8,8 +8,8 @@ from .error import (
 )
 from .reminder import ReminderNotificationDTO
 from .sync import (
+    SyncEditHeaderRequest,
     SyncEditItem,
-    SyncEditRequest,
     SyncLoadResponse,
     SyncLoadRow,
 )
@@ -31,6 +31,6 @@ __all__ = [
     # Sync DTOs
     "SyncLoadRow",
     "SyncLoadResponse",
-    "SyncEditRequest",
+    "SyncEditHeaderRequest",
     "SyncEditItem",
 ]

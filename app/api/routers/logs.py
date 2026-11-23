@@ -1,9 +1,9 @@
 """Роутер диагностических логов мобильных клиентов.
 
 Эндпоинты:
-- POST /api/v1/logs/batch                — приём батча (X-API-Key из APP_CLIENT_SUPPORT_INGEST_API_KEYS)
+- POST /api/v1/logs/batch                — приём батча (settings.API_KEY_HEADER из APP_CLIENT_SUPPORT_INGEST_API_KEYS)
 - POST /api/v1/logs/request              — создать запрос логов (admin)
-- POST /api/v1/logs/request/{id}/decline — клиент отказался (X-API-Key)
+- POST /api/v1/logs/request/{id}/decline — клиент отказался (settings.API_KEY_HEADER)
 - GET  /api/v1/logs                      — чтение логов (admin)
 - GET  /api/v1/logs/requests             — чтение запросов (admin)
 
@@ -285,7 +285,9 @@ async def ingest_batch(
     from ...db.repositories import AppRepository
     from ...logger import api_logger
 
-    app = await AppRepository.get_or_create_app(session, fid)
+    app = await AppRepository.get_app_by_fid(session, fid)
+    if app is None:
+        raise HTTPException(status_code=404, detail="unknown fid; register device first")
 
     # rate limit по байтам/сутки (принятые логи)
     if getattr(settings, "APP_CLIENT_SUPPORT_LOGS_BYTES_PER_DAY", 0) > 0:
@@ -410,7 +412,7 @@ async def create_logs_request(
     from ...db.repositories import AppRepository
     from ...logger import api_logger
 
-    # admin-проверка уже сделана AuthMiddleware (X-API-Key из API_KEYS)
+    # admin-проверка уже сделана AuthMiddleware (settings.API_KEY_HEADER из API_KEYS)
     app = await AppRepository.get_app_by_fid(session, payload.install_id)
     if app is None:
         raise HTTPException(status_code=404, detail="install_id not found")

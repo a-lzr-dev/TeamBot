@@ -331,14 +331,7 @@ class PushNotificationService:
                 for user_id, fids in loaded.items():
                     for fid in fids:
                         app = await AppRepository.get_app_by_fid(session, fid)
-                        if app is None:
-                            await AppRepository.get_or_create_app(session, fid, user_id=user_id)
-                            api_logger.info(
-                                "push_service: created TApps for restored fid=%s user=%s",
-                                fid[-8:],
-                                user_id,
-                            )
-                        elif app.FUserID != user_id:
+                        if app is not None and app.FUserID != user_id:
                             api_logger.warning(
                                 "push_service: TApps.FUserID mismatch fid=%s db=%r sql=%r — updating",
                                 fid[-8:],

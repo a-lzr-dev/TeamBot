@@ -1,7 +1,7 @@
 """Роутер для отдачи APK-файлов мобильного клиента.
 
 URL:
-    GET /api/v1/update/apk/{filename}     — ЗАКРЫТАЯ папка (нужен X-API-Key)
+    GET /api/v1/update/apk/{filename}     — ЗАКРЫТАЯ папка (нужен settings.API_KEY_HEADER)
     GET /api/v1/update/public/{filename}  — ОТКРЫТАЯ папка (без ключа)
 
 Аутентификация:
@@ -164,7 +164,7 @@ def _read_full(file_path: Path) -> bytes:
 
 
 # ============================================================
-# ЗАКРЫТАЯ раздача (требует X-API-Key)
+# ЗАКРЫТАЯ раздача (требует settings.API_KEY_HEADER)
 # ============================================================
 
 
@@ -176,7 +176,7 @@ def _read_full(file_path: Path) -> bytes:
 async def download_apk(filename: str, request: Request) -> Response:
     """Отдать APK-файл из ЗАКРЫТОЙ директории обновлений.
 
-    Требует X-API-Key (проверяется в AuthMiddleware, канал client-sync).
+    Требует settings.API_KEY_HEADER (проверяется в AuthMiddleware, канал client-sync).
 
     Range-запросы обрабатываются так же, как в /public (см. ниже),
     потому что Android DownloadManager шлёт их и сюда тоже.
@@ -236,7 +236,7 @@ async def download_apk(filename: str, request: Request) -> Response:
 
 
 # ============================================================
-# ПУБЛИЧНАЯ раздача (без X-API-Key)
+# ПУБЛИЧНАЯ раздача (без settings.API_KEY_HEADER)
 # ============================================================
 
 
@@ -249,7 +249,7 @@ async def download_public_file(
     filename: str,
     request: Request,
 ) -> Response:
-    """Отдать файл из ОТКРЫТОЙ директории обновлений БЕЗ X-API-Key.
+    """Отдать файл из ОТКРЫТОЙ директории обновлений БЕЗ settings.API_KEY_HEADER.
 
     URL: GET /api/v1/update/public/{filename}
 

@@ -27,39 +27,44 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+
+# import json
 import time
 from dataclasses import dataclass
 from typing import Any
 
 from ..config import settings
-from ..db.repositories import TeamdroidProcedureRepository
+
+# from ..db.repositories import TeamdroidProcedureRepository
 from ..logger import api_logger
-from .token_crypto import decrypt_ws_token
+from ..middlewares.api.auth import VerifiedToken, verify_token
+
+# from .token_crypto import decrypt_ws_token
 
 # ============================================================
 # Результат проверки
 # ============================================================
 
 
-@dataclass(frozen=True)
-class VerifiedToken:
-    """Результат проверки WS-токена.
-
-    Attributes:
-        user_id: Tinode user ID или None, если проверка не удалась.
-        fcm_id: Firebase Installation ID.
-        prm_raw: сырая строка prm из процедуры (без разбора) или None.
-        force_update: True, если scs=0 (обязательное обновление).
-    """
-
-    user_id: str | None
-    fcm_id: str | None = None
-    prm_raw: str | None = None
-    force_update: bool = False
-
-    @property
-    def ok(self) -> bool:
-        return bool(self.user_id and self.user_id.startswith("usr")) and not self.force_update
+# @dataclass(frozen=True)
+# class VerifiedToken:
+#     """Результат проверки WS-токена.
+#
+#     Attributes:
+#         user_id: Tinode user ID или None, если проверка не удалась.
+#         fcm_id: Firebase Installation ID.
+#         prm_raw: сырая строка prm из процедуры (без разбора) или None.
+#         force_update: True, если scs=0 (обязательное обновление).
+#     """
+#
+#     user_id: str | None
+#     fcm_id: str | None = None
+#     prm_raw: str | None = None
+#     force_update: bool = False
+#
+#     @property
+#     def ok(self) -> bool:
+#         return bool(self.user_id and self.user_id.startswith("usr")) and not self.force_update
 
 
 # ============================================================
@@ -102,14 +107,37 @@ def _as_str_or_none(value: Any) -> str | None:
     return str(value)
 
 
-def _safe_int(value: Any) -> int | None:
-    """Безопасно приводит к int (None, если нельзя)."""
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
+# def _safe_int(value: Any) -> int | None:
+#     """Безопасно приводит к int (None, если нельзя)."""
+#     if value is None:
+#         return None
+#     try:
+#         return int(value)
+#     except (ValueError, TypeError):
+#         return None
+#
+#
+# def _prm_preview(value: Any, limit: int = 200) -> str:
+#     """Короткое строковое представление ``prm`` для логов.
+#
+#     Принимает любое значение (str, bytes, dict, list, None).
+#     Возвращает строку длиной не более ``limit``.
+#
+#     Принимает ``Any`` на входе намеренно: вызывающий код передаёт сюда
+#     ``prm_raw`` (``Any | None``), и явный ``Any`` в сигнатуре не даёт
+#     статическому анализатору «доказать» ``None`` и подсветить
+#     ``repr(None)``.
+#     """
+#     if value is None:
+#         return ""
+#     if isinstance(value, str):
+#         return value[:limit]
+#     if isinstance(value, bytes):
+#         return value.decode("utf-8", errors="replace")[:limit]
+#     try:
+#         return json.dumps(value, ensure_ascii=False)[:limit]
+#     except (TypeError, ValueError):
+#         return repr(value)[:limit]
 
 
 # ============================================================
@@ -117,80 +145,80 @@ def _safe_int(value: Any) -> int | None:
 # ============================================================
 
 
-async def _verify_token_in_teamdroid(
-    fcm_id: str | None,
-    user_id: str | None,
-    app_version: str | None,
-    app_version_code: int | str | None,
-    app_id: int | None,
-    token_date: str | None,
-    client_ip: str | None,
-) -> tuple[bool, str | None]:
-    """Проверяет токен в Teamdroid SQL Server (PA_mbl_TokenVerify_Exec).
-
-    Возвращает:
-        (ok, prm_raw):
-            ok=True,  prm_raw=None    — валиден, prm не отдан.
-            ok=True,  prm_raw="<json>"— валиден, есть prm (обновление/sync).
-            ok=False, prm_raw=<...>   — force_update или NoData.
-    """
-    if not fcm_id or not user_id:
-        return False, None
-    if not user_id.startswith("usr"):
-        return False, None
-
-    env = (settings.APP_ENV or "").lower()
-    is_dev = env in ("development", "dev")
-    api_logger.debug(
-        "auth(teamdroid): ENTER env=%s is_dev=%s app_version_code=%r user=%s",
-        env,
-        is_dev,
-        app_version_code,
-        user_id,
-    )
-
-    if is_dev:
-        api_logger.info(
-            "auth(teamdroid): dev mode, accepting token by shape (fcm=%s..., usi=%s...)",
-            (fcm_id or "")[-6:],
-            user_id,
-        )
-        return True, None
-
-    effective_app_id = app_id
-    if effective_app_id is None:
-        effective_app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
-
-    if not effective_app_id:
-        api_logger.error("auth(teamdroid): TEAMDROID_APP_ID is 0")
-        return False, None
-
-    try:
-        ok, err, prm_raw = await asyncio.to_thread(
-            TeamdroidProcedureRepository.verify_token,
-            user_id=user_id,
-            fcm_id=fcm_id,
-            app_id=int(effective_app_id),
-            token_date=token_date,
-            client_ip=client_ip,
-            app_version=app_version,
-            app_version_code=_safe_int(app_version_code),
-        )
-    except Exception as exc:  # noqa: BLE001
-        api_logger.error("auth(teamdroid): verify_token raised: %r", exc, exc_info=True)
-        return False, None
-
-    if not ok:
-        api_logger.warning(
-            "auth(teamdroid): rejected user=%s fcm=%s... err=%s prm=%s",
-            user_id,
-            (fcm_id or "")[-6:],
-            err,
-            (prm_raw or "")[:120],
-        )
-        return False, prm_raw
-
-    return True, prm_raw
+# async def _verify_token_in_teamdroid(
+#     fcm_id: str | None,
+#     user_id: str | None,
+#     app_version: str | None,
+#     app_version_code: int | str | None,
+#     app_id: int | None,
+#     token_date: str | None,
+#     client_ip: str | None,
+# ) -> tuple[bool, str | None]:
+#     """Проверяет токен в Teamdroid SQL Server (PA_mbl_TokenVerify_Exec).
+#
+#     Возвращает:
+#         (ok, prm_raw):
+#             ok=True,  prm_raw=None    — валиден, prm не отдан.
+#             ok=True,  prm_raw="<json>"— валиден, есть prm (обновление/sync).
+#             ok=False, prm_raw=<...>   — force_update или NoData.
+#     """
+#     if not fcm_id or not user_id:
+#         return False, None
+#     if not user_id.startswith("usr"):
+#         return False, None
+#
+#     env = (settings.APP_ENV or "").lower()
+#     is_dev = env in ("development", "dev")
+#     api_logger.debug(
+#         "auth(teamdroid): ENTER env=%s is_dev=%s app_version_code=%r user=%s",
+#         env,
+#         is_dev,
+#         app_version_code,
+#         user_id,
+#     )
+#
+#     if is_dev:
+#         api_logger.info(
+#             "auth(teamdroid): dev mode, accepting token by shape (fcm=%s..., usi=%s...)",
+#             (fcm_id or "")[-6:],
+#             user_id,
+#         )
+#         return True, None
+#
+#     effective_app_id = app_id
+#     if effective_app_id is None:
+#         effective_app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
+#
+#     if not effective_app_id:
+#         api_logger.error("auth(teamdroid): TEAMDROID_APP_ID is 0")
+#         return False, None
+#
+#     try:
+#         ok, err, prm_raw = await asyncio.to_thread(
+#             TeamdroidProcedureRepository.verify_token,
+#             user_id=user_id,
+#             app_id=int(effective_app_id),
+#             fcm_id=fcm_id,
+#             token_date=token_date,
+#             client_ip=client_ip,
+#             app_version=app_version,
+#             app_version_code=_safe_int(app_version_code),
+#         )
+#     except Exception as exc:  # noqa: BLE001
+#         api_logger.error("auth(teamdroid): verify_token raised: %r", exc, exc_info=True)
+#         return False, None
+#
+#     if not ok:
+#         api_logger.warning(
+#             "auth(teamdroid): rejected user=%s fcm=%s... err=%s prm=%s",
+#             user_id,
+#             (fcm_id or "")[-6:],
+#             err,
+#             _prm_preview(prm_raw, limit=120),
+#         )
+#         return False, prm_raw
+#
+#     return True, prm_raw
 
 
 # ============================================================
@@ -298,55 +326,13 @@ async def _verify_via_avanpost(
     token: str,
     client_ip: str | None = None,
 ) -> VerifiedToken:
-    """Проверка токена через Teamdroid SQL Server."""
-    api_logger.debug("auth(teamdroid): decrypt start client_ip=%r", client_ip)
+    """Проверка через Teamdroid SQL Server + upsert TApps.
 
-    payload = decrypt_ws_token(token)
-    if payload is None:
-        api_logger.warning("auth(teamdroid): decrypt_ws_token returned None -> REJECT")
-        return VerifiedToken(user_id=None)
-
-    api_logger.info(
-        "auth(teamdroid): payload user=%s fcm=%s... ver=%s code=%s date=%s",
-        payload.user_id,
-        payload.fcm_id[-6:] if len(payload.fcm_id) >= 6 else "***",
-        payload.app_version,
-        payload.app_version_code,
-        payload.date,
-    )
-
-    app_id = getattr(settings, "TEAMDROID_APP_ID", 0)
-    ok, prm_raw = await _verify_token_in_teamdroid(
-        fcm_id=payload.fcm_id,
-        user_id=payload.user_id,
-        app_version=payload.app_version,
-        app_version_code=payload.app_version_code,
-        app_id=app_id,
-        token_date=payload.date,
-        client_ip=client_ip,
-    )
-
-    api_logger.info(
-        "auth(teamdroid): verify ok=%s user=%s prm=%s",
-        ok,
-        payload.user_id,
-        (prm_raw or "")[:200],
-    )
-
-    if not ok:
-        return VerifiedToken(
-            user_id=None,
-            fcm_id=payload.fcm_id,
-            prm_raw=prm_raw,
-            force_update=bool(prm_raw),
-        )
-
-    return VerifiedToken(
-        user_id=payload.user_id,
-        fcm_id=payload.fcm_id,
-        prm_raw=prm_raw,
-        force_update=False,
-    )
+    Вся логика (расшифровка, ``PA_mbl_TokenVerify_Exec``, запись
+    ``TApps``) — в ``middleware.api.auth.verify_token``.
+    """
+    api_logger.debug("auth(teamdroid): verify start client_ip=%r", client_ip)
+    return await verify_token(token, client_ip=client_ip, ensure_tapps=True)
 
 
 # ============================================================

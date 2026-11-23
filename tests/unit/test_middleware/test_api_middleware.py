@@ -15,6 +15,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.middlewares.api import (
     AuthMiddleware,
     ExceptionHandlerMiddleware,
@@ -27,7 +28,7 @@ class TestAPIMiddleware:
     Набор тестов для проверки корректности работы API middleware.
 
     Тестируются три основных middleware:
-    1. AuthMiddleware — проверка аутентификации по X-API-Key;
+    1. AuthMiddleware — проверка аутентификации по settings.API_KEY_HEADER;
     2. MetricsMiddleware — сбор метрик запросов;
     3. ExceptionHandlerMiddleware — глобальный перехват исключений.
     """
@@ -62,7 +63,7 @@ class TestAPIMiddleware:
         app.add_middleware(AuthMiddleware)
 
         with TestClient(app) as client:
-            response = client.get("/test", headers={"X-API-Key": "test-api-key-123"})
+            response = client.get("/test", headers={settings.API_KEY_HEADER: "test-api-key-123"})
             assert response.status_code == 200
 
     def test_auth_middleware_missing_key(self, app):
@@ -86,7 +87,7 @@ class TestAPIMiddleware:
         app.add_middleware(AuthMiddleware)
 
         with TestClient(app) as client:
-            response = client.get("/test", headers={"X-API-Key": "invalid"})
+            response = client.get("/test", headers={settings.API_KEY_HEADER: "invalid"})
             if response.status_code == 200:
                 pytest.skip("Auth middleware may be disabled in test environment")
             assert response.status_code == 403
