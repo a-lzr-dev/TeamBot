@@ -107,6 +107,10 @@ def _is_dev_env() -> bool:
 # Регулярка для /api/v1/logs/request/<uuid>/decline
 _LOGS_DECLINE_RE = re.compile(r"^/api/v1/logs/request/[^/]+/decline$")
 
+# GET /api/v1/client/files/{fid}?exp=...&sig=... — Mode 2
+# (скачивание подготовленного файла по подписанной ссылке).
+_FILE_SIGNED_PATH_RE = re.compile(r"^/api/v1/client/files/[A-Za-z0-9_-]+$")
+
 # Точный путь приёма батча диагностических логов
 _LOGS_BATCH_PATH = "/api/v1/logs/batch"
 
@@ -205,6 +209,22 @@ def _is_logs_ingest_path(path: str) -> bool:
     if _LOGS_DECLINE_RE.match(path):
         return True
     return False
+
+
+def _is_signed_file_link(request: Request) -> bool:
+    """Проверка, что запрос — скачивание по подписанной ссылке.
+
+    Подписанная ссылка (Mode 2 в ``file_download``) аутентифицируется
+    параметрами ``exp`` и ``sig`` (HMAC-SHA256, см. ``_verify_file_link``),
+    а не заголовком ``tkn``. Android DownloadManager/OkHttp не умеют
+    добавлять заголовок при переходе по URL, поэтому middleware должен
+    пропускать такой запрос без ключа — иначе клиент получает 401
+    и падает с NPE в AvanpostHttpClient.
+    """
+    if not _FILE_SIGNED_PATH_RE.match(request.url.path):
+        return False
+    qp = request.query_params
+    return bool(qp.get("exp") and qp.get("sig"))
 
 
 def extract_request_client_ip(request: Request) -> str:
@@ -578,6 +598,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         #    вложенные пути публичными, не затрагивая соседние ветки.
         if self._is_public_path(path):
             api_logger.debug(f"🔓 Public path: {path}")
+            return await call_next(request)
+
+        # 1.1. Скачивание по подписанной ссылке (Mode 2).
+        #      Аутентификация — HMAC exp+sig внутри file_download,
+        #      а не API-ключ. Без этого Android получает 401 и NPE.
+        if _is_signed_file_link(request):
+            api_logger.debug(f"🔓 Signed file link: {path}")
             return await call_next(request)
 
         client_ip = self._get_client_ip(request)

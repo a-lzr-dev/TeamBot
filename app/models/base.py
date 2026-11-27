@@ -54,6 +54,43 @@ def datetime_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def datetime_now_aware() -> datetime:
+    """Текущее время UTC с tzinfo (aware).
+
+    Для сравнений с колонками ``DateTime(timezone=True)``
+    (например, ``AppUploadModel.FExpiresAt``).
+    """
+    return datetime.now(UTC)
+
+
+def as_aware_utc(dt: datetime | None) -> datetime | None:
+    """Нормализовать datetime к aware-UTC.
+
+    - ``None`` → ``None``;
+    - naive → считается UTC (``replace(tzinfo=UTC)``);
+    - aware → приведение к UTC (``astimezone(UTC)``).
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def is_expired(expires_at: datetime | None, now: datetime | None = None) -> bool:
+    """Проверить, истёк ли срок ``expires_at`` относительно ``now``.
+
+    Оба значения нормализуются к aware-UTC, поэтому naive/aware-смесь
+    больше не даёт ``TypeError``. ``None`` в ``expires_at`` → ``False``
+    (нет срока — не истёк).
+    """
+    exp = as_aware_utc(expires_at)
+    if exp is None:
+        return False
+    cur = as_aware_utc(now) if now is not None else datetime_now_aware()
+    return exp <= cur
+
+
 # ============================================================
 # 2. БАЗОВАЯ МОДЕЛЬ SQLALCHEMY
 # ============================================================

@@ -141,24 +141,25 @@ class AppRepository:
         IntegrityError, вызывающий код обрабатывает как «уже существует».
         """
         now = datetime_now()
-        model = AppUploadModel.__new__(AppUploadModel)
-        model.FK_App = fk_app
-        model.FFid = fid
-        model.FUserID = user_id
-        model.FUploadID = upload_id
-        model.FFileName = file_name[:255]
-        model.FFileExt = (file_ext or "")[:16]
-        model.FFileSize = file_size
-        model.FUploadedBytes = 0
-        model.FChunkSize = chunk_size
-        model.FContentType = content_type
-        model.FSHA256 = sha256
-        model.FStatus = "active"
-        model.FStorageKey = storage_key
-        model.FVersion = 0
-        model.FCreatedAt = now
-        model.FUpdatedAt = now
-        model.FExpiresAt = now + timedelta(days=retention_days)
+        model = AppUploadModel(
+            FK_App=fk_app,
+            FFid=fid,
+            FUserID=user_id,
+            FUploadID=upload_id,
+            FFileName=file_name[:255],
+            FFileExt=(file_ext or "")[:16],
+            FFileSize=file_size,
+            FUploadedBytes=0,
+            FChunkSize=chunk_size,
+            FContentType=content_type,
+            FSHA256=sha256,
+            FStatus="active",
+            FStorageKey=storage_key,
+            FVersion=0,
+            FCreatedAt=now,
+            FUpdatedAt=now,
+            FExpiresAt=now + timedelta(days=retention_days),
+        )
 
         session.add(model)
         await session.flush()
@@ -623,18 +624,19 @@ class AppRepository:
     ) -> AppLogRequestModel:
         expires_at = datetime_now() + timedelta(seconds=ttl_sec)
 
-        model = AppLogRequestModel.__new__(AppLogRequestModel)
-        model.FID = request_id
-        model.FK_App = app_id
-        model.FFid = fid
-        model.FUserID = user_id
-        model.FMaxBytes = max_bytes
-        model.FSinceTs = since_ts
-        model.FLevels = ",".join(str(x) for x in levels) if levels else None
-        model.FForceAll = force_all
-        model.FTtlSec = ttl_sec
-        model.FExpiresAt = expires_at
-        model.FCreatedBy = created_by
+        model = AppLogRequestModel(
+            FID=request_id,
+            FK_App=app_id,
+            FFid=fid,
+            FUserID=user_id,
+            FMaxBytes=max_bytes,
+            FSinceTs=since_ts,
+            FLevels=",".join(str(x) for x in levels) if levels else None,
+            FForceAll=force_all,
+            FTtlSec=ttl_sec,
+            FExpiresAt=expires_at,
+            FCreatedBy=created_by,
+        )
 
         session.add(model)
         await session.flush()

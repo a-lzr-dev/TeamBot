@@ -24,7 +24,7 @@
 
     4. With auth by TApps:
 
-    auth: API_KEY_HEADER -> TApps
+    auth: API_KEY_HEADER -> TApps.FKey
     complete: edit TApps.FLastSeenAt
 
     POST   /api/v1/client/send-code               — запуск аутентификации по номеру телефона
@@ -102,6 +102,7 @@ from ...dtos.sync import (
 from ...logger import api_logger
 from ...middlewares.api.auth import extract_request_client_ip, upsert_tapps, verify_token
 from ...models import datetime_now
+from ...models.base import is_expired
 from ...services.sync_session_registry import sync_session_registry
 from ...utils.decorators import log_exceptions
 from ...ws.push_notification_service import push_notification_service
@@ -386,9 +387,9 @@ def _client_download_path(file_id: str) -> Path:
 
 
 def _file_link_secret() -> bytes:
-    secret = getattr(settings, "CLIENT_FILE_LINK_SECRET", "")
+    secret = getattr(settings, "APP_CLIENT_FILE_LINK_SECRET", "")
     if not secret:
-        raise RuntimeError("CLIENT_FILE_LINK_SECRET is not configured")
+        raise RuntimeError("APP_CLIENT_FILE_LINK_SECRET is not configured")
     return str(secret).encode("utf-8")
 
 
@@ -1910,12 +1911,47 @@ async def upload_create(payload: UploadCreateRequest) -> JSONResponse:
                 return _upload_error("not_found", err_detail="device not registered")
 
             existing = await AppRepository.upload_get_by_upload_id(session, upload_id)
+
             if existing is not None:
                 if existing.FUserID != user_id:
                     return _upload_error("forbidden")
+
+                existing_path = _storage_path(existing.FStorageKey)
+
+                # Повторный запрос: запись есть, но физический файл потерян.
+                if not existing_path.is_file():
+                    api_logger.error(
+                        "client.upload_create: DB row exists but storage file missing uid=%s status=%s path=%s",
+                        upload_id,
+                        existing.FStatus,
+                        existing_path,
+                    )
+                    return _upload_error(
+                        "not_found",
+                        err_detail="upload record exists but storage file is missing; use a new uid",
+                    )
+
+                # Не переиспользуем уже завершённую загрузку для новой отправки.
+                if existing.FStatus != "active":
+                    return _upload_error(
+                        "already_final",
+                        err_detail=f"upload_id already has status={existing.FStatus}; use a new uid",
+                    )
+
+                # Проверяем, что повторный запрос относится к тому же файлу.
+                if existing.FFileSize != payload.fsz or existing.FFileName != payload.fnm:
+                    return _upload_error(
+                        "bad_params",
+                        err_detail="upload_id already exists with different file metadata",
+                    )
+
                 return JSONResponse(
                     status_code=200,
-                    content={"scs": 1, "id": existing.FUploadID, "chs": existing.FChunkSize},
+                    content={
+                        "scs": 1,
+                        "id": existing.FUploadID,
+                        "chs": existing.FChunkSize,
+                    },
                 )
 
             await AppRepository.upload_create(
@@ -1988,7 +2024,7 @@ async def upload_patch(
                 return _upload_error("forbidden", offst=row.FUploadedBytes)
             if row.FStatus != "active":
                 return _upload_error(row.FStatus, offst=row.FUploadedBytes)
-            if row.FExpiresAt <= datetime_now():
+            if is_expired(row.FExpiresAt):
                 return _upload_error("expired", offst=row.FUploadedBytes)
 
             cur = row.FUploadedBytes
@@ -2078,7 +2114,7 @@ async def upload_head(upload_id: str, request: Request) -> Response:
             return Response(status_code=404)
         if row.FUserID != user_id:
             return Response(status_code=403)
-        if row.FStatus == "expired" or row.FExpiresAt <= datetime_now():
+        if row.FStatus == "expired" or is_expired(row.FExpiresAt):
             return Response(status_code=410)
         if row.FStatus != "active":
             return Response(status_code=409)
@@ -2124,7 +2160,7 @@ async def upload_complete(
                 )
             if row.FStatus != "active":
                 return _upload_error(row.FStatus)
-            if row.FExpiresAt <= datetime_now():
+            if is_expired(row.FExpiresAt):
                 return _upload_error("expired")
             if row.FUploadedBytes != row.FFileSize:
                 return _upload_error(
@@ -2505,7 +2541,9 @@ async def file_download(file_id: str, request: Request) -> Response:
     expires = int(time.time()) + ttl
     signature = _sign_file_link(file_id, expires)
 
-    download_url = f"{str(request.base_url).rstrip('/')}/api/v1/client/files/{file_id}?exp={expires}&sig={signature}"
+    base = getattr(settings, "APP_UPDATE_PUBLIC_URL", None) or str(request.base_url).rstrip("/")
+    download_url = f"{base}/api/v1/client/files/{file_id}?exp={expires}&sig={signature}"
+    #    download_url = f"{str(request.base_url).rstrip('/')}/api/v1/client/files/{file_id}?exp={expires}&sig={signature}"
 
     #    fnm = file_row.get("fnm") or file_id
     #    fex = (file_row.get("fex") or "").lstrip(".")
@@ -2586,7 +2624,7 @@ async def message_send(
             files_payload[uid] = {
                 "hex": raw.hex(),  # стиль 2 в TRY_CONVERT(..., 2)
                 "fsz": len(raw),
-                "sha": up.FSHA256,
+                "sha": hashlib.md5(raw).hexdigest(),  # p.FSHA256,
                 "fnm": up.FFileName,
                 "fex": up.FFileExt or "",
             }
@@ -2633,7 +2671,7 @@ async def message_send(
         )
     except TimeoutError:
         return _fail(504, "msg_out_timeout", "MsgOut timeout", rtr="sync-edit")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         api_logger.error("client.msgs: procedure error: %r", exc, exc_info=True)
         return _fail(502, "sql_error", str(exc))
 

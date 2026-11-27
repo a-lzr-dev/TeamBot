@@ -1085,7 +1085,7 @@ class TeamdroidProcedureRepository:
 
         params_json = json.dumps(params, ensure_ascii=False)
         db_logger.debug(
-            "[sync_base.load] proc=%s usi=%s dvc=%s api=%d lmt=%d frc=%d dtp=%r ip=%r debug=%s",
+            "[sync_base.load] proc=%s usi=%s dvc=%s api=%d frc=%d dtp=%r ip=%r",
             proc_name,
             user_id,
             fcm_id[-6:] if len(fcm_id) >= 6 else "***",

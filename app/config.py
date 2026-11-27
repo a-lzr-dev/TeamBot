@@ -225,6 +225,8 @@ class Settings(BaseSettings):
         description="Максимум Firebase Installation ID на пользователя",
     )
 
+    APP_CLIENT_FILE_LINK_SECRET: str = "secret"
+
     APP_CLIENT_ERROR_DEVICE_NOT_REGISTERED: str = "no_dev"
 
     APP_CLIENT_SUPPORT_LOGS_INGEST_ENABLED: bool = True
@@ -246,6 +248,7 @@ class Settings(BaseSettings):
 
     APP_UPDATE_APK_DIR: str = "/app/update/apk"
     APP_UPDATE_PUBLIC_DIR: str = "/app/update/public"
+    APP_UPDATE_PUBLIC_URL: str = "https://avanpost.aps-solver.com"
     APP_UPDATE_POLLING_ENABLED: bool = True
     APP_UPDATE_CHECK_INTERVAL_SEC: int = 300
     APP_UPDATE_NOTIFY_COOLDOWN_SEC: int = 12 * 3600
